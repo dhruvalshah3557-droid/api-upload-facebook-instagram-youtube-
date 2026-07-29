@@ -35,36 +35,41 @@ class SheetsReader:
         headers = self.worksheet.row_values(1)
         return {h.strip().lower(): idx + 1 for idx, h in enumerate(headers)}
 
+    def _col_letter(self, col_idx):
+        letter = ""
+        while col_idx > 0:
+            col_idx -= 1
+            letter = chr(ord("A") + col_idx % 26) + letter
+            col_idx //= 26
+        return letter
+
     def _ensure_status_columns(self):
         headers = self.worksheet.row_values(1)
+        needs_update = False
         if self.STATUS_COL not in headers:
-            col_letter = chr(ord("A") + len(headers))
-            self.worksheet.update(f"{col_letter}1", self.STATUS_COL)
             headers.append(self.STATUS_COL)
+            needs_update = True
         if self.NOTES_COL not in headers:
-            col_letter = chr(ord("A") + len(headers))
-            self.worksheet.update(f"{col_letter}1", self.NOTES_COL)
+            headers.append(self.NOTES_COL)
+            needs_update = True
+        if needs_update:
+            self.worksheet.resize(cols=len(headers))
+            self.worksheet.update(f"A1:{self._col_letter(len(headers))}1", [headers])
         self.col_map = self._build_col_map()
-
-    def _col_letter(self, col_name):
-        idx = self.col_map.get(col_name.lower())
-        if not idx:
-            return None
-        return chr(ord("A") + idx - 1)
 
     def get_pending_posts(self):
         all_records = self.worksheet.get_all_records()
-        status_col_header = self.STATUS_COL.lower()
         pending = []
         for idx, row in enumerate(all_records, start=2):
-            status = str(row.get(status_col_header, "")).strip().lower()
+            status = str(row.get(self.STATUS_COL, "")).strip().lower()
             if status and status != "pending":
                 continue
 
-            platform = str(row.get("platform", "both")).strip().lower()
-            media_url = str(row.get("media url", "")).strip()
-            caption = str(row.get("caption", "")).strip()
-            hashtags = str(row.get("hashtags", "")).strip()
+            platform = str(row.get("Platform", "both")).strip().lower()
+            platform = "both" if platform in ("all", "both") else platform
+            media_url = str(row.get("Media URL", "")).strip()
+            caption = str(row.get("Caption", "")).strip()
+            hashtags = str(row.get("Hashtags", "")).strip()
             full_caption = f"{caption}\n\n{hashtags}" if hashtags else caption
 
             if not media_url:
@@ -79,9 +84,11 @@ class SheetsReader:
         return pending
 
     def update_status(self, row, status, notes=""):
-        status_col = self._col_letter(self.STATUS_COL)
-        notes_col = self._col_letter(self.NOTES_COL)
-        if status_col:
-            self.worksheet.update(f"{status_col}{row}", status)
-        if notes_col and notes:
-            self.worksheet.update(f"{notes_col}{row}", notes)
+        status_idx = self.col_map.get(self.STATUS_COL.lower())
+        notes_idx = self.col_map.get(self.NOTES_COL.lower())
+        if status_idx:
+            col = self._col_letter(status_idx)
+            self.worksheet.update(f"{col}{row}", [[status]])
+        if notes_idx and notes:
+            col = self._col_letter(notes_idx)
+            self.worksheet.update(f"{col}{row}", [[notes]])
