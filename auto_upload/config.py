@@ -7,6 +7,7 @@ load_dotenv()
 
 class Config:
     GOOGLE_SHEET_CREDENTIALS = os.getenv("GOOGLE_SHEET_CREDENTIALS", "credentials/service_account.json")
+    GOOGLE_SHEET_URL = os.getenv("GOOGLE_SHEET_URL", "")
     GOOGLE_SHEET_NAME = os.getenv("GOOGLE_SHEET_NAME", "AutoUpload")
     GOOGLE_SHEET_WORKSHEET = os.getenv("GOOGLE_SHEET_WORKSHEET", "Sheet1")
 
