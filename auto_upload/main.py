@@ -20,25 +20,42 @@ logging.basicConfig(
 logger = logging.getLogger("main")
 
 
-def upload_to_platform(media_url, caption, platform):
-    results = {}
-    if platform in ("facebook", "both"):
-        fb = FacebookUploader()
-        try:
-            results["facebook"] = fb.upload(media_url, caption)
-            logger.info(f"Facebook upload succeeded")
-        except Exception as e:
-            results["facebook"] = f"FAILED: {e}"
-            logger.error(f"Facebook upload failed: {e}")
+def upload_to_all_pages(media_url, caption, platform):
+    pages = Config.get_pages()
+    if not pages:
+        logger.error("No Facebook pages found. Check FB_ACCESS_TOKEN.")
+        return {"error": "No pages found"}
 
-    if platform in ("instagram", "both"):
-        ig = InstagramUploader()
-        try:
-            results["instagram"] = ig.upload(media_url, caption)
-            logger.info(f"Instagram upload succeeded")
-        except Exception as e:
-            results["instagram"] = f"FAILED: {e}"
-            logger.error(f"Instagram upload failed: {e}")
+    logger.info(f"Uploading to {len(pages)} page(s) for platform={platform}")
+    results = {}
+
+    for page in pages:
+        name = page["name"]
+        page_id = page["page_id"]
+        page_token = page["page_token"]
+        ig_id = page.get("ig_user_id", "")
+
+        if platform in ("facebook", "both"):
+            fb = FacebookUploader(page_id, page_token, name)
+            try:
+                fb.upload(media_url, caption)
+                results[f"{name}_fb"] = "ok"
+                logger.info(f"[{name}] Facebook done")
+            except Exception as e:
+                results[f"{name}_fb"] = str(e)
+                logger.error(f"[{name}] Facebook failed: {e}")
+
+        if platform in ("instagram", "both") and ig_id:
+            ig = InstagramUploader(ig_id, page_token, name)
+            try:
+                ig.upload(media_url, caption)
+                results[f"{name}_ig"] = "ok"
+                logger.info(f"[{name}] Instagram done")
+            except Exception as e:
+                results[f"{name}_ig"] = str(e)
+                logger.error(f"[{name}] Instagram failed: {e}")
+        elif platform in ("instagram", "both") and not ig_id:
+            logger.warning(f"[{name}] No Instagram account linked, skipping IG")
 
     return results
 
@@ -60,25 +77,9 @@ def process_pending():
         row = post["row"]
         logger.info(f"Row {row}: {post['platform']} - {post['media_url']}")
         try:
-            results = upload_to_platform(post["media_url"], post["caption"], post["platform"])
-
-            fb_ok = "FAILED" not in str(results.get("facebook", ""))
-            ig_ok = "FAILED" not in str(results.get("instagram", ""))
-
-            if post["platform"] == "both":
-                if fb_ok and ig_ok:
-                    sheets.update_status(row, "uploaded", "Both platforms done")
-                elif fb_ok:
-                    sheets.update_status(row, "partial", "FB ok, IG failed")
-                elif ig_ok:
-                    sheets.update_status(row, "partial", "IG ok, FB failed")
-                else:
-                    sheets.update_status(row, "failed", "Both failed")
-            else:
-                ok = fb_ok if post["platform"] == "facebook" else ig_ok
-                sheets.update_status(row, "uploaded" if ok else "failed", str(results))
-
-            time.sleep(5)
+            results = upload_to_all_pages(post["media_url"], post["caption"], post["platform"])
+            sheets.update_status(row, "uploaded", str(results))
+            time.sleep(10)
         except Exception as e:
             logger.error(f"Row {row} failed: {e}")
             sheets.update_status(row, "failed", str(e))
