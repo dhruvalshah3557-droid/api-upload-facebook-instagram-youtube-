@@ -50,5 +50,7 @@ class InstagramUploader:
     def upload(self, media_url, caption, product_id=""):
         is_video = any(ext in media_url.lower() for ext in [".mp4", ".mov", ".avi", ".mkv", ".webm"])
         container_id = self._create_media_container(media_url, caption, is_video, product_id)
-        time.sleep(5)
+        wait = 30 if is_video else 5
+        logger.info(f"[{self.page_name}] Waiting {wait}s for media processing...")
+        time.sleep(wait)
         return self._publish_container(container_id)
