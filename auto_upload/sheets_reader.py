@@ -71,6 +71,8 @@ class SheetsReader:
             elif platform in ("youtube", "yt"):
                 platform = "youtube"
             media_url = str(row.get("Media URL", "")).strip()
+            product_url = str(row.get("Product URL", "")).strip()
+            product_id = str(row.get("Product ID", "")).strip()
             caption = str(row.get("Caption", "")).strip()
             hashtags = str(row.get("Hashtags", "")).strip()
             full_caption = f"{caption}\n\n{hashtags}" if hashtags else caption
@@ -82,6 +84,8 @@ class SheetsReader:
             pending.append({
                 "row": idx,
                 "media_url": media_url,
+                "product_url": product_url,
+                "product_id": product_id,
                 "caption": full_caption,
                 "title": title,
                 "platform": platform,

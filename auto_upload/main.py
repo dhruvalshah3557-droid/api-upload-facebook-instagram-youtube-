@@ -12,6 +12,8 @@ from sheets_reader import SheetsReader
 from facebook_uploader import FacebookUploader
 from instagram_uploader import InstagramUploader
 from youtube_uploader import YouTubeUploader
+from product_scraper import ProductScraper
+from caption_generator import generate_caption, generate_hashtags
 
 logging.basicConfig(
     level=logging.INFO,
@@ -21,7 +23,22 @@ logging.basicConfig(
 logger = logging.getLogger("main")
 
 
-def upload_to_all_pages(media_url, caption, title, platform):
+def get_product_info(product_url):
+    scraper = ProductScraper()
+    return scraper.scrape(product_url)
+
+
+def make_page_caption(caption, hashtags, product_info, page_name):
+    if caption and hashtags:
+        return f"{caption}\n\n{hashtags}"
+    if caption:
+        return caption
+    auto_caption = generate_caption(product_info, page_name)
+    auto_hashtags = generate_hashtags(product_info, page_name)
+    return f"{auto_caption}\n\n{auto_hashtags}"
+
+
+def upload_to_all_pages(media_url, caption, title, platform, product_url="", product_id=""):
     pages = Config.get_pages()
     results = {}
 
@@ -29,22 +46,25 @@ def upload_to_all_pages(media_url, caption, title, platform):
     should_ig = platform in ("instagram", "both", "all")
     should_yt = platform in ("youtube", "all")
 
+    product_info = get_product_info(product_url) if product_url else {"title": "", "description": "", "keywords": []}
+
     if should_fb or should_ig:
         if not pages:
-            logger.error("No Facebook pages found. Check FB_ACCESS_TOKEN.")
+            logger.error("No Facebook pages found.")
             results["pages_error"] = "No pages found"
         else:
-            logger.info(f"Uploading to {len(pages)} page(s) for FB/IG")
+            logger.info(f"Uploading to {len(pages)} page(s)")
             for page in pages:
                 name = page["name"]
                 page_id = page["page_id"]
                 page_token = page["page_token"]
                 ig_id = page.get("ig_user_id", "")
+                page_caption = make_page_caption(caption, "", product_info, name)
 
                 if should_fb:
                     fb = FacebookUploader(page_id, page_token, name)
                     try:
-                        fb.upload(media_url, caption)
+                        fb.upload(media_url, page_caption, product_id)
                         results[f"{name}_fb"] = "ok"
                         logger.info(f"[{name}] Facebook done")
                     except Exception as e:
@@ -54,14 +74,14 @@ def upload_to_all_pages(media_url, caption, title, platform):
                 if should_ig and ig_id:
                     ig = InstagramUploader(ig_id, page_token, name)
                     try:
-                        ig.upload(media_url, caption)
+                        ig.upload(media_url, page_caption, product_id)
                         results[f"{name}_ig"] = "ok"
                         logger.info(f"[{name}] Instagram done")
                     except Exception as e:
                         results[f"{name}_ig"] = str(e)
                         logger.error(f"[{name}] Instagram failed: {e}")
                 elif should_ig and not ig_id:
-                    logger.warning(f"[{name}] No Instagram account linked, skipping IG")
+                    logger.warning(f"[{name}] No Instagram linked, skipping IG")
 
     if should_yt:
         try:
@@ -93,7 +113,14 @@ def process_pending():
         row = post["row"]
         logger.info(f"Row {row}: {post['platform']} - {post['media_url']}")
         try:
-            results = upload_to_all_pages(post["media_url"], post["caption"], post["title"], post["platform"])
+            results = upload_to_all_pages(
+                post["media_url"],
+                post["caption"],
+                post["title"],
+                post["platform"],
+                post.get("product_url", ""),
+                post.get("product_id", ""),
+            )
             sheets.update_status(row, "uploaded", str(results))
             time.sleep(10)
         except Exception as e:

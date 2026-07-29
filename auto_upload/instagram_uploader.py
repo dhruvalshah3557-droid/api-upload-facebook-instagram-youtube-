@@ -15,13 +15,15 @@ class InstagramUploader:
         self.access_token = access_token
         self.page_name = page_name
 
-    def _create_media_container(self, media_url, caption, is_video=False):
+    def _create_media_container(self, media_url, caption, is_video=False, product_id=""):
         params = {"access_token": self.access_token, "caption": caption}
         if is_video:
             params["media_type"] = "REELS"
             params["video_url"] = media_url
         else:
             params["image_url"] = media_url
+        if product_id:
+            params["product_tags"] = f"[{{\"product_id\":\"{product_id}\"}}]"
 
         url = f"{FB_GRAPH_URL}/{self.ig_user_id}/media"
         logger.info(f"[{self.page_name}] Creating IG {'video' if is_video else 'image'} container")
@@ -45,8 +47,8 @@ class InstagramUploader:
         logger.error(f"[{self.page_name}] Publish failed: {result}")
         raise Exception(result.get("error", {}).get("message", str(result)))
 
-    def upload(self, media_url, caption):
+    def upload(self, media_url, caption, product_id=""):
         is_video = any(ext in media_url.lower() for ext in [".mp4", ".mov", ".avi", ".mkv", ".webm"])
-        container_id = self._create_media_container(media_url, caption, is_video)
+        container_id = self._create_media_container(media_url, caption, is_video, product_id)
         time.sleep(5)
         return self._publish_container(container_id)
