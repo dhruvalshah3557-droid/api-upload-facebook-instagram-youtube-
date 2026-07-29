@@ -1,10 +1,10 @@
-import os
 import pickle
 import logging
+from pathlib import Path
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
+from googleapiclient.http import MediaIoBaseUpload
 import requests
 import io
 import mimetypes
@@ -12,8 +12,10 @@ import mimetypes
 logger = logging.getLogger(__name__)
 
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
-TOKEN_FILE = "credentials/youtube_token.pickle"
-CLIENT_SECRET_FILE = "credentials/youtube_client_secret.json"
+CRED_DIR = Path(__file__).parent / "credentials"
+TOKEN_FILE = CRED_DIR / "youtube_token.pickle"
+CLIENT_SECRET_FILE = CRED_DIR / "youtube_client_secret.json"
+AUTH_CODE_FILE = CRED_DIR / "youtube_auth_code.txt"
 
 
 class YouTubeUploader:
@@ -22,7 +24,7 @@ class YouTubeUploader:
 
     def _authenticate(self):
         creds = None
-        if os.path.exists(TOKEN_FILE):
+        if TOKEN_FILE.exists():
             with open(TOKEN_FILE, "rb") as f:
                 creds = pickle.load(f)
 
@@ -30,15 +32,39 @@ class YouTubeUploader:
             if creds and creds.expired and creds.refresh_token:
                 creds.refresh(Request())
             else:
-                if not os.path.exists(CLIENT_SECRET_FILE):
+                if not CLIENT_SECRET_FILE.exists():
                     raise FileNotFoundError(
-                        f"YouTube OAuth client secret not found at: {CLIENT_SECRET_FILE}\n"
-                        "1. Go to https://console.cloud.google.com/apis/credentials\n"
-                        "2. Create OAuth 2.0 Client ID (Desktop app)\n"
-                        "3. Download JSON and save as credentials/youtube_client_secret.json"
+                        f"YouTube OAuth client secret not found at: {CLIENT_SECRET_FILE}"
                     )
-                flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRET_FILE, SCOPES)
-                creds = flow.run_local_server(port=0)
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    str(CLIENT_SECRET_FILE), SCOPES
+                )
+                flow.redirect_uri = "urn:ietf:wg:oauth:2.0:oob"
+                auth_url, _ = flow.authorization_url(
+                    access_type="offline", include_granted_scopes="true"
+                )
+                print("\n" + "=" * 60)
+                print("YOUTUBE AUTH REQUIRED - Visit this URL:")
+                print("=" * 60)
+                print(auth_url)
+                print("\nAfter authorizing, paste the code in this file:")
+                print(str(AUTH_CODE_FILE))
+                print("=" * 60 + "\n")
+
+                if not AUTH_CODE_FILE.exists():
+                    raise RuntimeError(
+                        f"Please:\n"
+                        f"1. Open the URL above in your browser\n"
+                        f"2. Authorize the app\n"
+                        f"3. Copy the code and save it to:\n"
+                        f"   {AUTH_CODE_FILE}\n"
+                        f"4. Run the tool again"
+                    )
+                with open(AUTH_CODE_FILE) as f:
+                    code = f.read().strip()
+                creds = flow.fetch_token(code=code)
+                creds = flow.credentials
+                AUTH_CODE_FILE.unlink(missing_ok=True)
             with open(TOKEN_FILE, "wb") as f:
                 pickle.dump(creds, f)
 
