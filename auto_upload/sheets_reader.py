@@ -66,11 +66,15 @@ class SheetsReader:
                 continue
 
             platform = str(row.get("Platform", "both")).strip().lower()
-            platform = "both" if platform in ("all", "both") else platform
+            if platform in ("all",):
+                platform = "all"
+            elif platform in ("youtube", "yt"):
+                platform = "youtube"
             media_url = str(row.get("Media URL", "")).strip()
             caption = str(row.get("Caption", "")).strip()
             hashtags = str(row.get("Hashtags", "")).strip()
             full_caption = f"{caption}\n\n{hashtags}" if hashtags else caption
+            title = (caption or "Video")[:100]
 
             if not media_url:
                 continue
@@ -79,6 +83,7 @@ class SheetsReader:
                 "row": idx,
                 "media_url": media_url,
                 "caption": full_caption,
+                "title": title,
                 "platform": platform,
             })
         return pending

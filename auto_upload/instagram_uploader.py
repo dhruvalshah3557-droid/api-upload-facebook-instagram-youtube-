@@ -18,7 +18,7 @@ class InstagramUploader:
     def _create_media_container(self, media_url, caption, is_video=False):
         params = {"access_token": self.access_token, "caption": caption}
         if is_video:
-            params["media_type"] = "VIDEO"
+            params["media_type"] = "REELS"
             params["video_url"] = media_url
         else:
             params["image_url"] = media_url
