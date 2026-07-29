@@ -1,0 +1,10 @@
+runtime: python312
+entrypoint: python main.py --loop
+
+env_variables:
+  GOOGLE_SHEET_NAME: "AutoUpload"
+  USE_SECRET_MANAGER: "true"
+
+automatic_scaling:
+  min_instances: 1
+  max_instances: 1

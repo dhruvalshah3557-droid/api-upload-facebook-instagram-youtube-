@@ -108,6 +108,8 @@
 **/.env
 **/.env.local
 **/.env.*.local
+**/credentials/*.json
+!**/credentials/.gitkeep
 *.pem
 *.key
 
