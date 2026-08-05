@@ -17,6 +17,9 @@ class Config:
     GOOGLE_CLOUD_PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT", "")
     USE_SECRET_MANAGER = os.getenv("USE_SECRET_MANAGER", "false").lower() == "true"
 
+    COLORDIAM_BASE_URL = os.getenv("COLORDIAM_BASE_URL", "https://www.colourdiam.com")
+    COLORDIAM_MAX_POSTS = int(os.getenv("COLORDIAM_MAX_POSTS", "5"))
+
     @classmethod
     def get_pages(cls):
         if not cls.FB_ACCESS_TOKEN:

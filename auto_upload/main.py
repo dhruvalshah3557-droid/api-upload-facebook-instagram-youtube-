@@ -14,6 +14,7 @@ from instagram_uploader import InstagramUploader
 from youtube_uploader import YouTubeUploader
 from product_scraper import ProductScraper
 from caption_generator import generate_caption, generate_hashtags
+from colourdiam_fetcher import ColourDiamFetcher
 
 logging.basicConfig(
     level=logging.INFO,
@@ -133,6 +134,70 @@ def run_once():
     process_pending()
 
 
+def process_auto_pull():
+    try:
+        sheets = SheetsReader()
+    except Exception as e:
+        logger.error(f"Sheets connection failed: {e}")
+        return
+
+    posted = sheets.get_posted_ids()
+    fetcher = ColourDiamFetcher()
+    try:
+        products = fetcher.get_featured_products()
+    except Exception as e:
+        logger.error(f"ColorDiam featured fetch failed: {e}")
+        return
+
+    if not products:
+        logger.info("No featured products found")
+        return
+
+    max_posts = int(getattr(Config, "COLORDIAM_MAX_POSTS", "5"))
+    logger.info(f"ColorDiam: {len(products)} featured product(s), {len(posted)} already posted, cap {max_posts}")
+    posted_count = 0
+
+    for product in products:
+        if posted_count >= max_posts:
+            logger.info(f"Reached ColorDiam cap of {max_posts} post(s)")
+            break
+        pid = product["id"]
+        if pid in posted:
+            logger.info(f"Product {pid} already posted, skipping")
+            continue
+
+        enriched = fetcher.enrich(product)
+        media_url = ColourDiamFetcher.media_url(enriched)
+        if not media_url:
+            logger.warning(f"Product {pid} has no media, skipping")
+            continue
+
+        product_info = {
+            "title": enriched.get("title", ""),
+            "description": enriched.get("description", ""),
+            "keywords": enriched.get("keywords", []),
+        }
+        caption, hashtags = sheets.get_caption_override(pid, product["url"])
+        full_caption = make_page_caption(caption or "", hashtags or "", product_info, "colour diam")
+        title = (enriched.get("title") or full_caption)[:100]
+
+        try:
+            results = upload_to_all_pages(
+                media_url,
+                full_caption,
+                title,
+                "all",
+                product_url=product["url"],
+                product_id=pid,
+            )
+            sheets.mark_posted(pid, results)
+            posted_count += 1
+            logger.info(f"Product {pid} posted: {results}")
+        except Exception as e:
+            logger.error(f"Product {pid} failed: {e}")
+            time.sleep(10)
+
+
 def run_loop():
     interval = 300
     logger.info(f"=== Auto Upload: Loop every {interval}s ===")
@@ -145,5 +210,7 @@ if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "once"
     if mode == "--loop":
         run_loop()
+    elif mode == "--auto-pull":
+        process_auto_pull()
     else:
         run_once()

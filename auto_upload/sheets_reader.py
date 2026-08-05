@@ -1,7 +1,14 @@
+import json
 import os
+import logging
+
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from config import Config
+
+logger = logging.getLogger(__name__)
+
+POSTED_STATUSES = {"uploaded", "posted", "done", "ok"}
 
 
 class SheetsReader:
@@ -101,3 +108,52 @@ class SheetsReader:
         if notes_idx and notes:
             col = self._col_letter(notes_idx)
             self.worksheet.update(f"{col}{row}", [[notes]])
+
+    def get_posted_ids(self):
+        posted = set()
+        if "product id" not in self.col_map:
+            return posted
+        try:
+            records = self.worksheet.get_all_records()
+        except Exception as e:
+            logger.warning(f"get_posted_ids failed: {e}")
+            return posted
+        for row in records:
+            pid = str(row.get("Product ID", "")).strip()
+            status = str(row.get(self.STATUS_COL, "")).strip().lower()
+            if pid and status in POSTED_STATUSES:
+                posted.add(pid)
+        return posted
+
+    def get_caption_override(self, pid, url=""):
+        if "product id" not in self.col_map:
+            return None, None
+        try:
+            records = self.worksheet.get_all_records()
+        except Exception as e:
+            logger.warning(f"get_caption_override failed: {e}")
+            return None, None
+        for row in records:
+            row_pid = str(row.get("Product ID", "")).strip()
+            if row_pid != str(pid):
+                continue
+            caption = str(row.get("Caption", "")).strip()
+            hashtags = str(row.get("Hashtags", "")).strip()
+            if caption or hashtags:
+                return caption or None, hashtags or None
+        return None, None
+
+    def mark_posted(self, pid, results):
+        headers = self.worksheet.row_values(1)
+        next_row = len(self.worksheet.get_all_values()) + 1
+        row_data = {
+            "Product ID": pid,
+            self.STATUS_COL: "uploaded",
+            self.NOTES_COL: json.dumps(results),
+        }
+        values = [row_data.get(h, "") for h in headers]
+        try:
+            col = self._col_letter(len(headers))
+            self.worksheet.update(f"A{next_row}:{col}{next_row}", [values])
+        except Exception as e:
+            logger.error(f"mark_posted failed for {pid}: {e}")
