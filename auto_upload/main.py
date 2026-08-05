@@ -188,7 +188,7 @@ def process_auto_pull():
                 title,
                 "all",
                 product_url=product["url"],
-                product_id=pid,
+                product_id="",
             )
             sheets.mark_posted(pid, results)
             posted_count += 1

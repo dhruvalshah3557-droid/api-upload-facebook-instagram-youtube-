@@ -1,0 +1,54 @@
+name: ColorDiam Auto-Pull Upload
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_posts:
+        description: "Max products to post this run"
+        required: false
+        default: "5"
+
+jobs:
+  auto-pull:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      COLORDIAM_MAX_POSTS: ${{ inputs.max_posts || '5' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          cd auto_upload
+          pip install -r requirements.txt
+
+      - name: Write credential files
+        shell: bash
+        run: |
+          cd auto_upload
+          mkdir -p credentials
+          if [ -n "$GOOGLE_SHEET_CREDENTIALS" ]; then
+            echo "$GOOGLE_SHEET_CREDENTIALS" > credentials/service_account.json
+          fi
+          if [ -n "$YOUTUBE_CLIENT_SECRET" ]; then
+            echo "$YOUTUBE_CLIENT_SECRET" > credentials/youtube_client_secret.json
+          fi
+          if [ -n "$YOUTUBE_TOKEN_PICKLE" ]; then
+            echo "$YOUTUBE_TOKEN_PICKLE" | base64 -d > credentials/youtube_token.pickle
+          fi
+        env:
+          GOOGLE_SHEET_CREDENTIALS: ${{ secrets.GOOGLE_SHEET_CREDENTIALS }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_TOKEN_PICKLE: ${{ secrets.YOUTUBE_TOKEN_PICKLE }}
+
+      - name: Run ColorDiam auto-pull
+        env:
+          FB_ACCESS_TOKEN: ${{ secrets.FB_ACCESS_TOKEN }}
+          GOOGLE_SHEET_URL: ${{ secrets.GOOGLE_SHEET_URL }}
+        run: |
+          cd auto_upload
+          python main.py --auto-pull
