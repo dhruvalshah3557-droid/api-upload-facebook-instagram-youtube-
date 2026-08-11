@@ -152,9 +152,36 @@ def run_loop():
         time.sleep(interval)
 
 
+def run_direct(media_url, caption, platform, product_url="", product_id=""):
+    logger.info(f"=== Auto Upload: Direct Upload ({platform}) {media_url} ===")
+    if not media_url:
+        logger.error("No media URL provided")
+        return
+    post = {
+        "media_url": media_url,
+        "title": (caption or "Video")[:100],
+        "facebook_caption": caption or "",
+        "instagram_caption": caption or "",
+        "youtube_caption": caption or "",
+        "hashtags": "",
+        "lang_captions": {},
+        "lang_hashtags": {},
+        "platform": platform,
+    }
+    results = upload_to_all_pages(post, platform, product_url, product_id)
+    logger.info(f"Direct upload results: {results}")
+
+
 if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "once"
     if mode == "--loop":
         run_loop()
+    elif mode == "--direct":
+        media_url = os.getenv("MEDIA_URL", "")
+        caption = os.getenv("CAPTION", "")
+        platform = os.getenv("PLATFORM", "both").lower()
+        product_url = os.getenv("PRODUCT_URL", "")
+        product_id = os.getenv("PRODUCT_ID", "")
+        run_direct(media_url, caption, platform, product_url, product_id)
     else:
         run_once()

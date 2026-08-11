@@ -4,6 +4,23 @@ on:
   schedule:
     - cron: "0 */6 * * *"
   workflow_dispatch:
+    inputs:
+      direct_media_url:
+        description: "Media URL to upload directly (optional)"
+        required: false
+      direct_caption:
+        description: "Caption for direct upload (optional)"
+        required: false
+      direct_platform:
+        description: "Platform: facebook/instagram/both/youtube/all"
+        required: false
+        default: "both"
+      direct_product_url:
+        description: "Product page URL for tagging (optional)"
+        required: false
+      direct_product_id:
+        description: "Product ID for tagging (optional)"
+        required: false
 
 concurrency:
   group: auto-upload
@@ -59,7 +76,17 @@ jobs:
           FB_ACCESS_TOKEN: ${{ secrets.FB_ACCESS_TOKEN }}
           GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
           USE_SECRET_MANAGER: ${{ secrets.USE_SECRET_MANAGER }}
-        run: python main.py
+          MEDIA_URL: ${{ inputs.direct_media_url }}
+          CAPTION: ${{ inputs.direct_caption }}
+          PLATFORM: ${{ inputs.direct_platform }}
+          PRODUCT_URL: ${{ inputs.direct_product_url }}
+          PRODUCT_ID: ${{ inputs.direct_product_id }}
+        run: |
+          if [ -n "$MEDIA_URL" ]; then
+            python main.py --direct
+          else
+            python main.py
+          fi
 
       - name: Upload log
         if: always()
