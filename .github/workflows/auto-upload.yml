@@ -1,0 +1,69 @@
+name: Auto Upload
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: auto-upload
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: auto_upload
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache YouTube OAuth token
+        uses: actions/cache@v4
+        with:
+          path: auto_upload/credentials/youtube_token.pickle
+          key: youtube-token-${{ runner.os }}
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write service account credentials
+        env:
+          GOOGLE_SHEET_CREDENTIALS_JSON: ${{ secrets.GOOGLE_SHEET_CREDENTIALS_JSON }}
+        run: echo "$GOOGLE_SHEET_CREDENTIALS_JSON" > credentials/service_account.json
+
+      - name: Write YouTube client secret
+        env:
+          YOUTUBE_CLIENT_SECRET_JSON: ${{ secrets.YOUTUBE_CLIENT_SECRET_JSON }}
+        run: echo "$YOUTUBE_CLIENT_SECRET_JSON" > credentials/youtube_client_secret.json
+
+      - name: Write YouTube auth code
+        env:
+          YOUTUBE_AUTH_CODE: ${{ secrets.YOUTUBE_AUTH_CODE }}
+        if: env.YOUTUBE_AUTH_CODE != ''
+        run: echo "$YOUTUBE_AUTH_CODE" > credentials/youtube_auth_code.txt
+
+      - name: Run auto upload
+        env:
+          GOOGLE_SHEET_CREDENTIALS: credentials/service_account.json
+          GOOGLE_SHEET_URL: ${{ secrets.GOOGLE_SHEET_URL }}
+          GOOGLE_SHEET_NAME: ${{ secrets.GOOGLE_SHEET_NAME }}
+          GOOGLE_SHEET_WORKSHEET: ${{ secrets.GOOGLE_SHEET_WORKSHEET }}
+          FB_ACCESS_TOKEN: ${{ secrets.FB_ACCESS_TOKEN }}
+          GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+          USE_SECRET_MANAGER: ${{ secrets.USE_SECRET_MANAGER }}
+        run: python main.py
+
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: auto-upload-log
+          path: /tmp/auto_upload.log

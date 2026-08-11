@@ -28,7 +28,17 @@ def get_product_info(product_url):
     return scraper.scrape(product_url)
 
 
-def make_page_caption(caption, hashtags, product_info, page_name):
+def make_page_caption(post, platform, page_name, product_info):
+    lang = get_lang(page_name)
+    lang_caption = post.get("lang_captions", {}).get(lang, "")
+    lang_hashtags = post.get("lang_hashtags", {}).get(lang, "")
+    hashtags = post.get("hashtags", "")
+
+    if lang_caption:
+        tags = lang_hashtags or hashtags
+        return f"{lang_caption}\n\n{tags}" if tags else lang_caption
+
+    caption = post.get("facebook_caption", "") if platform == "facebook" else post.get("instagram_caption", "")
     if caption and hashtags:
         return f"{caption}\n\n{hashtags}"
     if caption:
@@ -38,7 +48,8 @@ def make_page_caption(caption, hashtags, product_info, page_name):
     return f"{auto_caption}\n\n{auto_hashtags}"
 
 
-def upload_to_all_pages(media_url, caption, title, platform, product_url="", product_id=""):
+def upload_to_all_pages(post, platform, product_url="", product_id=""):
+    media_url = post["media_url"]
     pages = Config.get_pages()
     results = {}
 
@@ -59,7 +70,7 @@ def upload_to_all_pages(media_url, caption, title, platform, product_url="", pro
                 page_id = page["page_id"]
                 page_token = page["page_token"]
                 ig_id = page.get("ig_user_id", "")
-                page_caption = make_page_caption(caption, "", product_info, name)
+                page_caption = make_page_caption(post, "facebook", name, product_info)
 
                 if should_fb:
                     fb = FacebookUploader(page_id, page_token, name)
@@ -72,9 +83,10 @@ def upload_to_all_pages(media_url, caption, title, platform, product_url="", pro
                         logger.error(f"[{name}] Facebook failed: {e}")
 
                 if should_ig and ig_id:
+                    ig_caption = make_page_caption(post, "instagram", name, product_info)
                     ig = InstagramUploader(ig_id, page_token, name)
                     try:
-                        ig.upload(media_url, page_caption, product_id)
+                        ig.upload(media_url, ig_caption, product_id)
                         results[f"{name}_ig"] = "ok"
                         logger.info(f"[{name}] Instagram done")
                     except Exception as e:
@@ -86,7 +98,8 @@ def upload_to_all_pages(media_url, caption, title, platform, product_url="", pro
     if should_yt:
         try:
             yt = YouTubeUploader()
-            yt.upload(media_url, title, caption)
+            yt_caption = post.get("youtube_caption", "") or post.get("facebook_caption", "")
+            yt.upload(media_url, post.get("title", "Video"), yt_caption)
             results["youtube"] = "ok"
             logger.info("YouTube done")
         except Exception as e:
@@ -114,9 +127,7 @@ def process_pending():
         logger.info(f"Row {row}: {post['platform']} - {post['media_url']}")
         try:
             results = upload_to_all_pages(
-                post["media_url"],
-                post["caption"],
-                post["title"],
+                post,
                 post["platform"],
                 post.get("product_url", ""),
                 post.get("product_id", ""),

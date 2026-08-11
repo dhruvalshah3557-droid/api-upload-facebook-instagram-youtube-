@@ -12,6 +12,25 @@ class SheetsReader:
     STATUS_COL = "Status"
     NOTES_COL = "Notes"
 
+    LANG_DESC_COLS = {
+        "tl": ["Filipino Description"],
+        "my": ["Burmese Description"],
+        "th": ["Thai Description"],
+        "zh": ["Chinese Description"],
+        "ru": ["Russian Description"],
+        "ja": ["Japanese Description"],
+        "ko": ["Korean Description"],
+    }
+    LANG_TAG_COLS = {
+        "tl": ["Filipino Hashtag"],
+        "my": ["Burmese Hashtag"],
+        "th": ["Thai Hashtag"],
+        "zh": ["Chinese Hashtag"],
+        "ru": ["Russian Hashtag"],
+        "ja": ["Japanese Hashtag"],
+        "ko": ["Korean Hashtag"],
+    }
+
     def __init__(self):
         self.client = self._authenticate()
         if Config.GOOGLE_SHEET_URL:
@@ -57,6 +76,14 @@ class SheetsReader:
             self.worksheet.update(f"A1:{self._col_letter(len(headers))}1", [headers])
         self.col_map = self._build_col_map()
 
+    @staticmethod
+    def _pick(row, *names):
+        for name in names:
+            v = row.get(name)
+            if v is not None and str(v).strip():
+                return str(v).strip()
+        return ""
+
     def get_pending_posts(self):
         all_records = self.worksheet.get_all_records()
         pending = []
@@ -73,10 +100,22 @@ class SheetsReader:
             media_url = str(row.get("Media URL", "")).strip()
             product_url = str(row.get("Product URL", "")).strip()
             product_id = str(row.get("Product ID", "")).strip()
-            caption = str(row.get("Caption", "")).strip()
-            hashtags = str(row.get("Hashtags", "")).strip()
-            full_caption = f"{caption}\n\n{hashtags}" if hashtags else caption
-            title = (caption or "Video")[:100]
+            if not product_id:
+                product_id = str(row.get("STK", "")).strip()
+
+            facebook_caption = self._pick(row, "FACEBOOK CAPTION", "Facebook Caption")
+            instagram_caption = self._pick(row, "INSTAGRAM CAPTION", "Instagram Caption")
+            youtube_caption = self._pick(row, "YouTube Shorts Caption", "TikTok Caption")
+            hashtags = self._pick(row, "HASHTAGS", "Hashtags")
+
+            lang_captions = {}
+            for lang, cols in self.LANG_DESC_COLS.items():
+                lang_captions[lang] = self._pick(row, *cols)
+            lang_hashtags = {}
+            for lang, cols in self.LANG_TAG_COLS.items():
+                lang_hashtags[lang] = self._pick(row, *cols)
+
+            title = (facebook_caption or instagram_caption or "Video")[:100]
 
             if not media_url:
                 continue
@@ -86,7 +125,12 @@ class SheetsReader:
                 "media_url": media_url,
                 "product_url": product_url,
                 "product_id": product_id,
-                "caption": full_caption,
+                "facebook_caption": facebook_caption,
+                "instagram_caption": instagram_caption,
+                "youtube_caption": youtube_caption,
+                "hashtags": hashtags,
+                "lang_captions": lang_captions,
+                "lang_hashtags": lang_hashtags,
                 "title": title,
                 "platform": platform,
             })
