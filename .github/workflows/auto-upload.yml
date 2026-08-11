@@ -73,7 +73,7 @@ jobs:
           GOOGLE_SHEET_URL: ${{ secrets.GOOGLE_SHEET_URL }}
           GOOGLE_SHEET_NAME: ${{ secrets.GOOGLE_SHEET_NAME }}
           GOOGLE_SHEET_WORKSHEET: ${{ secrets.GOOGLE_SHEET_WORKSHEET }}
-          FB_ACCESS_TOKEN: ${{ secrets.FB_ACCESS_TOKEN }}
+          FB_ACCESS_TOKEN: ${{ secrets.FACEBOOKTOKEN || secrets.FACEBOOKDEBUGTOKEN }}
           GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
           USE_SECRET_MANAGER: ${{ secrets.USE_SECRET_MANAGER }}
           MEDIA_URL: ${{ inputs.direct_media_url }}
