@@ -1,0 +1,23 @@
+name: Verify FB Token
+
+on:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check FB token SHA-256
+        env:
+          FB_ACCESS_TOKEN: ${{ secrets.FACEBOOKTOKEN || secrets.FACEBOOKDEBUGTOKEN }}
+          EXPECTED: "7a9c3c60b94018305a785a2e9957d923476d6b2539980d5385dd14e9d39311f7"
+        run: |
+          HASH=$(printf '%s' "$FB_ACCESS_TOKEN" | sha256sum | cut -d' ' -f1)
+          echo "token sha256: $HASH"
+          if [ "$HASH" = "$EXPECTED" ]; then
+            echo "MATCH: token hash equals expected value"
+          else
+            echo "MISMATCH: token hash does not equal expected value"
+            exit 1
+          fi
