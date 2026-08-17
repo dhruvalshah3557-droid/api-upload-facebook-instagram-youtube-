@@ -24,7 +24,7 @@ jobs:
 
       - name: Dump pages
         env:
-          FB_ACCESS_TOKEN: ${{ secrets.FB_ACCESS_TOKEN }}
+          FB_ACCESS_TOKEN: ${{ secrets.FACEBOOKTOKEN || secrets.FACEBOOKDEBUGTOKEN }}
         run: python dump_pages.py > pages.json || true
 
       - name: Upload pages list
