@@ -2,7 +2,7 @@ name: Auto Upload
 
 on:
   schedule:
-    - cron: "0 */6 * * *"
+    - cron: "*/30 * * * *"
   workflow_dispatch:
     inputs:
       direct_media_url:
