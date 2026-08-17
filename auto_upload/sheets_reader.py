@@ -97,15 +97,13 @@ class SheetsReader:
                 platform = "all"
             elif platform in ("youtube", "yt"):
                 platform = "youtube"
-            media_url = str(row.get("Media URL", "")).strip()
-            product_url = str(row.get("Product URL", "")).strip()
-            product_id = str(row.get("Product ID", "")).strip()
-            if not product_id:
-                product_id = str(row.get("STK", "")).strip()
+            media_url = self._pick(row, "image1 link", "multiple model video link", "multiple model photo link", "Media URL")
+            product_url = self._pick(row, "Product URL")
+            product_id = self._pick(row, "Product ID", "sku", "STK")
 
             facebook_caption = self._pick(row, "FACEBOOK CAPTION", "Facebook Caption")
             instagram_caption = self._pick(row, "INSTAGRAM CAPTION", "Instagram Caption")
-            youtube_caption = self._pick(row, "YouTube Shorts Caption", "TikTok Caption")
+            youtube_caption = self._pick(row, "YouTube Shorts Caption", "YOUTUBE SHORTS CAPTION", "TikTok Caption", "TIKTOK CAPTION")
             hashtags = self._pick(row, "HASHTAGS", "Hashtags")
 
             lang_captions = {}
