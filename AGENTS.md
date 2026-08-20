@@ -4,59 +4,76 @@ Project facts and conventions for the `auto_upload` project. These are persisten
 
 ## Project
 
-- Social-media auto uploader (`auto_upload/`) that reads pending posts from a Google Sheet and publishes to Facebook, Instagram, and YouTube.
-- Code: `auto_upload/main.py`, `sheets_reader.py`, `facebook_uploader.py`, `instagram_uploader.py`, `youtube_uploader.py`, `caption_generator.py`, `product_scraper.py`, `config.py`.
+- Social-media auto uploader (`auto_upload/`) that publishes to Facebook, Instagram, and YouTube.
+- Code: `auto_upload/main.py`, `sheets_reader.py`, `job_generator.py`, `facebook_uploader.py`, `instagram_uploader.py`, `youtube_uploader.py`, `caption_generator.py`, `product_scraper.py`, `config.py`.
+
+## Workbook structure (authoritative)
+
+The uploader reads/writes ONE Google Sheets workbook:
+- URL: `https://docs.google.com/spreadsheets/d/1jjC4oaWsyqLzG6vT5EwJkVAgJCXGpz_7fWr6wb7OU3o/edit`
+- Sheet ID: `1jjC4oaWsyqLzG6vT5EwJkVAgJCXGpz_7fWr6wb7OU3o`
+
+Tabs (only these):
+- `UPLOAD GUIDE` — workflow rules (carousel order, tagging, safety). Read before changing uploader logic.
+- `Sheet1` — HUMAN PREVIEW ONLY. The uploader must NOT use Sheet1 as its data source.
+- `Source Import` — primary product/media/content source. One row per SKU. Headers in row 1.
+- `Accounts` — destination account settings (per-account tokens, language, formats, product_tagging). Headers in row 2 (row 1 blank).
+- `Publishing Queue` — upload jobs (read + status updates). Headers in row 2 (row 1 blank).
+- `Publishing Log` — upload result history (write-only). Headers in row 2 (row 1 blank).
+
+Flow: Source Import → Accounts → Publishing Queue → Publishing Log.
 
 ## Credentials / secrets
 
 - All real credentials are stored in **GitHub Secrets** (repo: `dhruvalshah3557-droid/api-upload-facebook-instagram-youtube-`), NOT in the repo or local env.
-- GitHub Secrets are write-only and cannot be read back via API. To access the Google Sheet locally, either:
-  - Share the sheet to anyone with the link (public read) and fetch via `https://docs.google.com/spreadsheets/d/<ID>/gviz/tq?tqx=out:json`, or
+- GitHub Secrets are write-only and cannot be read back via API. To access the workbook locally, either:
+  - Share the sheet to anyone with the link (public read) and fetch via `https://docs.google.com/spreadsheets/d/<ID>/gviz/tq?tqx=out:json&sheet=<Tab>`, or
   - Paste the service account JSON locally into `auto_upload/credentials/service_account.json` (gitignored).
-- GitHub Actions workflow: `.github/workflows/auto-upload.yml` — runs every 6h via cron + manual dispatch, materializes credentials from secrets, runs `python main.py` (NOT `--loop`; loop never exits in CI).
+- GitHub Actions workflow: `.github/workflows/auto-upload.yml` — runs every 2h via cron + manual dispatch, materializes credentials from secrets, runs `python main.py --generate` then `python main.py` (NOT `--loop`; loop never exits in CI).
+- Per-account tokens: `Accounts.credential_property_key` names an env var (e.g. `META_TOKEN_FB_ISR`). `Config.get_token()` reads it, falling back to the shared `FB_ACCESS_TOKEN`. The workflow maps each `META_TOKEN_*` to a GitHub secret.
+- The workbook is publicly readable: column maps can be re-verified with the gviz endpoint above without credentials.
 
-## Google Sheet
+## Source Import columns (1-based)
 
-- Sheet URL: `https://docs.google.com/spreadsheets/d/1kAD1ASXaaqrBmNHDVMYgj_cfW8pFJPEiRCY8ENutAvQ/edit`
-- Sheet ID: `1kAD1ASXaaqrBmNHDVMYgj_cfW8pFJPEiRCY8ENutAvQ`
-- ~999 rows of diamond jewellery stock; 101 columns (per-product SEO captions, multi-language descriptions, etc.).
+- `B` = STK/SKU (the product tag value; never use SR NO). STK arrives as a number (e.g. `298.0`); normalize with `_normalize_sku`.
+- `K:R` = product images `image1 link`..`image8 link`; the file whose name contains `center` is the MAIN image (fallback: first nonblank).
+- `S` = `video link` (product video → Reel + first carousel item when supported).
+- `T` = `multiple side image link` (side images; `center.*` URLs are removed).
+- `V/W/X` + `Y` = model images (`model image link 1/2/3`, `multiple model photo link`).
+- `Z/AA/AB` + `AC` = model videos (`model video link 1/2/3`, `multiple model video link`; AC deduped against Z:AB).
+- `AI` = `INSTAGRAM CAPTION`, `AJ` = `FACEBOOK CAPTION`, `BD` = `YouTube Shorts Caption`, `AR` = `HASHTAGS`.
+- Per-language: `<Lang> Description` / `<Lang> Hashtag` columns (Burmese, Thai, Filipino, Chinese, Russian, Japanese, Korean, plus israli/spanish/arabic).
+- `G` = `LAB` (value `NON CERTIFIED` blocks auto-publish — review only), `Status` = generated-content status (`Error: ...` / `429` rows are skipped as incomplete).
 
-## Page languages
+## Accounts sheet
 
-The auto-uploader supports per-page languages for auto-generated captions/hashtags in `caption_generator.py`.
+Columns include `account_id`, `platform`, `account_name`, `platform_account_id`, `primary_language`, `timezone`, `enabled`, `allowed_formats`, `min_gap_minutes`, `product_tagging`, `catalog_or_store_id`, `credential_property_key`, `approval_required`.
 
-Supported languages: `en`, `th`, `my`, `tl`, `zh`, `ru`, `ja`, `ko`.
+- Only `enabled = Yes` accounts are used. As of last check, all 13 Facebook accounts (FB-ISR/JPN/KOR/RUS/PH/JIYA/MMR/GLOBAL/BKK/TREND/LTD/CD/NFCD) are enabled; Instagram (IG-BKK/TREND/LTD/CD) and YouTube (YT-CD) accounts are disabled until IG business IDs / OAuth are connected.
+- `product_tagging = Yes` means every FB/IG post is tagged with the row's `STK`/SKU (Publishing Queue `stock_id_tag` / `tag_stock_id_used`). A rejected tag → `tagging_status = Failed` + exact API error in `error_message`.
 
-Page-name → language mapping (`PAGE_LANG_MAP` in `caption_generator.py`):
-- `colour diam philippines` / `colour diam ph` → Filipino (`tl`)
-- `colour diam myanmar` → Burmese (`my`)
-- `colour diam bangkok` / `colour diam thailand` → Thai (`th`)
-- `colour diam china` / `taiwan` / `hong kong` → Chinese (`zh`)
-- `colour diam russia` → Russian (`ru`)
-- `colour diam japan` / `japanese` → Japanese (`ja`)
-- `colour diam korea` / `korean` → Korean (`ko`)
-- default (Trending Jewel, Colour Diam, etc.) → English (`en`)
+## Publishing Queue
 
-Sheet columns used for per-language content: `Burmese Description`/`Burmese Hashtag`, `Thai Description`/`Thai Hashtag`, `Filipino Description`/`Filipino Hashtag`, `Chinese Description`/`Chinese Hashtag`, `Russian Description`/`Russian Hashtag`, `Japanese Description`/`Japanese Hashtag`, `Korean Description`/`Korean Hashtag`.
+Columns: `job_id, sku, account_id, media_selection, platform, format, language, scheduled_at, timezone, stock_id_tag, status, attempts, last_attempt_at, platform_post_id, published_url, error_message, notes, tagging_status, tag_stock_id_used, caption_final`.
 
-## Caption / hashtag column mapping
+- `media_selection` values: `carousel`, `product_video`, `model_video:<n>`.
+- `status` lifecycle: empty/pending → `uploaded` | `failed` (after `MAX_JOB_ATTEMPTS`) | `skipped` | `needs_review`.
+- `python main.py --generate` fills the queue idempotently from clean Source Import rows (carousel + product Reel + one job per model video, per enabled account). `python main.py` processes `MAX_JOBS_PER_RUN` (default 40) pending jobs per run.
 
-The sheet has no `Caption` column. `sheets_reader.py` reads platform + language captions per row; `main.py` picks per page language/platform:
-- Facebook caption ← `FACEBOOK CAPTION` (fallback `Facebook Caption`)
-- Instagram caption ← `INSTAGRAM CAPTION` (fallback `Instagram Caption`)
-- YouTube caption ← `YouTube Shorts Caption` (fallback `TikTok Caption`)
-- Hashtags ← `HASHTAGS` (fallback `Hashtags`)
-- Per-language: `lang_captions`/`lang_hashtags` ← `<Lang> Description`/`<Lang> Hashtag` columns (only ~24 rows have per-language hashtags; descriptions are filled for ~618)
-- Caption precedence in `make_page_caption` (`main.py`): page-language column → platform caption + hashtags → auto-generated (page language).
-- Per-language content counts (of 999 rows): Burmese/Thai/Filipino descriptions 618; Chinese/Russian/Japanese/Korean 24-48.
+## Publishing Log
+
+Columns: `job_id, attempt_time, result, platform_post_id, published_url, api_error_code, error_message, next_retry_at, raw_response_reference, notes`. Appended after every attempt.
 
 ## Upload behavior
 
-- `main.py` reads rows where `Status` is empty or `pending`, dispatches by `Platform` column (`facebook`/`instagram`/`both`/`youtube`/`all`), uploads, then writes `uploaded`/`failed` back to the sheet.
-- Product tagging: `product_id` comes from the `Product ID` column; if empty, falls back to the `STK` column (stock ID, ~487/999 rows, matches `productdetail/<STK>` URLs). Sent as `product_tags` to FB/IG. `Product Tags` column is SEO keywords, NOT used for tagging.
-- Media URL with video extension (`.mp4`/`.mov`/`.avi`/`.mkv`/`.webm`) → uploaded as video; otherwise as photo.
-- Instagram videos are posted as REELS with a 30s processing wait.
-- Run modes: `python main.py` (once) or `python main.py --loop` (poll every 300s; only for App Engine, not CI).
+- `main.py` reads pending jobs from Publishing Queue, resolves media from Source Import by SKU, builds the caption per account language, tags with the same SKU, uploads, then writes status back to the queue and an entry to the log.
+- Caption precedence (`build_caption`): account-language column → platform caption + hashtags → auto-generated (account language).
+- Carousel media order: product video → MAIN center image → side images (Facebook carousel posts images only; video is a separate Reel job).
+- Each model video is its OWN Reel/video job. Product video is its own job too.
+- Media with video extension (`.mp4`/`.mov`/`.avi`/`.mkv`/`.webm`) → video/Reel; otherwise photo/carousel.
+- Instagram videos are posted as REELS with a processing wait. Instagram carousels use the mixed children API (video children use `media_type=VIDEO`, not REELS).
+- Facebook carousels: children created via `/{page}/photos` with `published=false`, then published via `/{page}/feed` with `attached_media` + `message`.
+- Run modes: `python main.py` (once), `python main.py --generate` (populate queue), `python main.py --loop` (poll every 300s; only for App Engine, not CI), `python main.py --direct` (direct upload via env).
 - `auto_upload/dump_pages.py` + `.github/workflows/dump-pages.yml` dump all FB page names/IG ids via `me/accounts` (manual dispatch → `pages` artifact).
 
 ## Local dev

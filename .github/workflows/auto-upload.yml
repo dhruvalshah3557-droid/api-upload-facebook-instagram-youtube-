@@ -2,7 +2,7 @@ name: Auto Upload
 
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "0 */2 * * *"
   workflow_dispatch:
     inputs:
       direct_media_url:
@@ -19,7 +19,7 @@ on:
         description: "Product page URL for tagging (optional)"
         required: false
       direct_product_id:
-        description: "Product ID for tagging (optional)"
+        description: "Product ID / SKU for tagging (optional)"
         required: false
 
 concurrency:
@@ -72,8 +72,10 @@ jobs:
           GOOGLE_SHEET_CREDENTIALS: credentials/service_account.json
           GOOGLE_SHEET_URL: ${{ secrets.GOOGLE_SHEET_URL }}
           GOOGLE_SHEET_NAME: ${{ secrets.GOOGLE_SHEET_NAME }}
-          GOOGLE_SHEET_WORKSHEET: ${{ secrets.GOOGLE_SHEET_WORKSHEET }}
-          FB_ACCESS_TOKEN: ${{ secrets.FACEBOOKTOKEN || secrets.FACEBOOKDEBUGTOKEN }}
+          SOURCE_IMPORT_SHEET: ${{ secrets.SOURCE_IMPORT_SHEET || 'Source Import' }}
+          ACCOUNTS_SHEET: ${{ secrets.ACCOUNTS_SHEET || 'Accounts' }}
+          QUEUE_SHEET: ${{ secrets.QUEUE_SHEET || 'Publishing Queue' }}
+          LOG_SHEET: ${{ secrets.LOG_SHEET || 'Publishing Log' }}
           GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
           USE_SECRET_MANAGER: ${{ secrets.USE_SECRET_MANAGER }}
           MEDIA_URL: ${{ inputs.direct_media_url }}
@@ -81,10 +83,31 @@ jobs:
           PLATFORM: ${{ inputs.direct_platform }}
           PRODUCT_URL: ${{ inputs.direct_product_url }}
           PRODUCT_ID: ${{ inputs.direct_product_id }}
+          # Shared fallback token
+          FB_ACCESS_TOKEN: ${{ secrets.FACEBOOKTOKEN || secrets.FACEBOOKDEBUGTOKEN }}
+          # Per-account Meta tokens (page tokens; fall back to the shared token)
+          META_TOKEN_FB_ISR: ${{ secrets.META_TOKEN_FB_ISR || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_FB_JPN: ${{ secrets.META_TOKEN_FB_JPN || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_FB_KOR: ${{ secrets.META_TOKEN_FB_KOR || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_FB_RUS: ${{ secrets.META_TOKEN_FB_RUS || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_FB_PH: ${{ secrets.META_TOKEN_FB_PH || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_FB_JIYA: ${{ secrets.META_TOKEN_FB_JIYA || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_FB_MMR: ${{ secrets.META_TOKEN_FB_MMR || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_FB_GLOBAL: ${{ secrets.META_TOKEN_FB_GLOBAL || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_FB_BKK: ${{ secrets.META_TOKEN_FB_BKK || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_FB_TREND: ${{ secrets.META_TOKEN_FB_TREND || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_FB_LTD: ${{ secrets.META_TOKEN_FB_LTD || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_FB_CD: ${{ secrets.META_TOKEN_FB_CD || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_FB_NFCD: ${{ secrets.META_TOKEN_FB_NFCD || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_IG_BKK: ${{ secrets.META_TOKEN_IG_BKK || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_IG_TREND: ${{ secrets.META_TOKEN_IG_TREND || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_IG_LTD: ${{ secrets.META_TOKEN_IG_LTD || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_IG_CD: ${{ secrets.META_TOKEN_IG_CD || secrets.FACEBOOKTOKEN }}
         run: |
           if [ -n "$MEDIA_URL" ]; then
             python main.py --direct
           else
+            python main.py --generate
             python main.py
           fi
 

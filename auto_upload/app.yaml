@@ -2,7 +2,11 @@ runtime: python312
 entrypoint: python main.py --loop
 
 env_variables:
-  GOOGLE_SHEET_NAME: "AutoUpload"
+  GOOGLE_SHEET_URL: "https://docs.google.com/spreadsheets/d/1jjC4oaWsyqLzG6vT5EwJkVAgJCXGpz_7fWr6wb7OU3o/edit"
+  SOURCE_IMPORT_SHEET: "Source Import"
+  ACCOUNTS_SHEET: "Accounts"
+  QUEUE_SHEET: "Publishing Queue"
+  LOG_SHEET: "Publishing Log"
   USE_SECRET_MANAGER: "true"
 
 automatic_scaling:
