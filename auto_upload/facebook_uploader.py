@@ -7,12 +7,41 @@ logger = logging.getLogger(__name__)
 
 FB_GRAPH_URL = "https://graph.facebook.com/v19.0"
 
+_PAGE_TOKEN_CACHE = {}
+
 
 class FacebookUploader:
     def __init__(self, page_id, page_token, page_name=""):
         self.page_id = page_id
-        self.access_token = page_token
+        self.access_token = self._resolve_page_token(page_id, page_token)
         self.page_name = page_name
+
+    @classmethod
+    def _resolve_page_token(cls, page_id, token):
+        """Resolve a page-scoped token from a user token.
+
+        Publishing must be done as the page itself; a user token fails with
+        (#200) "Unpublished posts must be posted to a page as the page itself"
+        and (#100) "No permission to publish the video". Page tokens are
+        resolved via the Graph API and cached per page.
+        """
+        cached = _PAGE_TOKEN_CACHE.get(page_id)
+        if cached:
+            return cached
+        try:
+            resp = requests.get(
+                f"{FB_GRAPH_URL}/{page_id}",
+                params={"fields": "access_token", "access_token": token},
+                timeout=15,
+            )
+            data = resp.json()
+            resolved = data.get("access_token")
+            if resolved:
+                _PAGE_TOKEN_CACHE[page_id] = resolved
+                return resolved
+        except Exception:
+            pass
+        return token
 
     def upload_photo(self, media_url, caption, product_id=""):
         url = f"{FB_GRAPH_URL}/{self.page_id}/photos"
