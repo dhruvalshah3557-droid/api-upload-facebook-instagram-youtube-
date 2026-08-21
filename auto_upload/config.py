@@ -35,6 +35,9 @@ class Config:
 
     MAX_JOB_ATTEMPTS = int(_env("MAX_JOB_ATTEMPTS", "3"))
     MAX_JOBS_PER_RUN = int(_env("MAX_JOBS_PER_RUN", "40"))
+    # Cap on NEW jobs written to the queue per --generate run. Keeps Google
+    # Sheets write volume within quota; the queue fills across cron runs.
+    MAX_GENERATE_JOBS = int(_env("MAX_GENERATE_JOBS", "2500"))
     JOB_STATUS_FAILED = "failed"
     JOB_STATUS_UPLOADED = "uploaded"
     JOB_STATUS_SKIPPED = "skipped"
