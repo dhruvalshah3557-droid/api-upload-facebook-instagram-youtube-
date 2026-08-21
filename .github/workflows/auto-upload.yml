@@ -126,6 +126,7 @@ jobs:
           META_TOKEN_IG_RUS: ${{ secrets.META_TOKEN_IG_RUS || secrets.FACEBOOKTOKEN }}
           META_TOKEN_IG_KOR: ${{ secrets.META_TOKEN_IG_KOR || secrets.FACEBOOKTOKEN }}
           META_TOKEN_FB_INDO: ${{ secrets.META_TOKEN_FB_INDO || secrets.FACEBOOKTOKEN }}
+          # YouTube headless OAuth (refresh token from the Accounts sheet)
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_OAUTH_REFRESH_TOKEN: ${{ secrets.YOUTUBE_OAUTH_REFRESH_TOKEN }}
