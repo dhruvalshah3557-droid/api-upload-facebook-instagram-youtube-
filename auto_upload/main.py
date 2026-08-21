@@ -308,6 +308,12 @@ def run_generate(sheets=None):
             continue
         new_jobs.append(job)
         existing.add(key)
+        if len(new_jobs) >= Config.MAX_GENERATE_JOBS:
+            logger.info(
+                f"Generation cap reached ({Config.MAX_GENERATE_JOBS}); "
+                f"remaining jobs queued on later runs"
+            )
+            break
     sheets.append_jobs(new_jobs)
     logger.info(
         f"Queue generation: {len(new_jobs)} new job(s) appended, "
