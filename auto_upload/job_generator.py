@@ -43,21 +43,51 @@ def _make_job(sku, account_id, platform, fmt, media_selection, account):
     }
 
 
+def _make_review_job(sku, account, reason):
+    """A single needs_review placeholder job for sources that must not auto-publish."""
+    return {
+        "job_id": f"REVIEW-{sku}",
+        "sku": sku,
+        "account_id": account["account_id"],
+        "media_selection": "review",
+        "platform": "review",
+        "format": "review",
+        "language": account.get("primary_language", ""),
+        "scheduled_at": "",
+        "timezone": account.get("timezone", ""),
+        "stock_id_tag": sku,
+        "status": "needs_review",
+        "attempts": 0,
+        "last_attempt_at": "",
+        "platform_post_id": "",
+        "published_url": "",
+        "error_message": "",
+        "notes": reason,
+        "tagging_status": "Pending",
+        "tag_stock_id_used": "",
+        "caption_final": "",
+    }
+
+
 def generate_jobs(sources, accounts):
     """Build upload jobs from clean Source Import rows for enabled accounts.
 
     Carousel + product Reel/video + one job for EACH model video, per the
     UPLOAD GUIDE format rules. Unclean rows (NON CERTIFIED, API error) are
-    skipped with a review note.
+    blocked from auto-publish and surfaced as a needs_review queue entry.
     """
     jobs = []
     for sku, source in sources.items():
         clean, reason = _is_clean_source(source)
         if not clean:
-            logger.warning(f"SKU {sku}: skipped ({reason})")
+            logger.warning(f"SKU {sku}: blocked for auto-publish ({reason})")
+            for account in accounts:
+                if account.get("enabled"):
+                    jobs.append(_make_review_job(sku, account, reason))
+                    break
             continue
 
-        has_carousel_media = bool(source["images"] or source["video_url"])
+        has_carousel_media = bool(source["images"])
 
         for account in accounts:
             if not account.get("enabled"):

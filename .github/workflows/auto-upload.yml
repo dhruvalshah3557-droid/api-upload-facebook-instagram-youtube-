@@ -48,6 +48,11 @@ jobs:
           path: auto_upload/credentials/youtube_token.pickle
           key: youtube-token-${{ runner.os }}
 
+      - name: Install ffmpeg (for optional background-music mix)
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ffmpeg
+
       - name: Install dependencies
         run: pip install -r requirements.txt
 
@@ -103,6 +108,13 @@ jobs:
           META_TOKEN_IG_TREND: ${{ secrets.META_TOKEN_IG_TREND || secrets.FACEBOOKTOKEN }}
           META_TOKEN_IG_LTD: ${{ secrets.META_TOKEN_IG_LTD || secrets.FACEBOOKTOKEN }}
           META_TOKEN_IG_CD: ${{ secrets.META_TOKEN_IG_CD || secrets.FACEBOOKTOKEN }}
+          # YouTube headless OAuth (refresh token from the Accounts sheet)
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_OAUTH_REFRESH_TOKEN: ${{ secrets.YOUTUBE_OAUTH_REFRESH_TOKEN }}
+          # Optional background-music mix for silent Reels/Shorts
+          MIX_BACKGROUND_MUSIC: ${{ secrets.MIX_BACKGROUND_MUSIC }}
+          BACKGROUND_MUSIC_PATH: ${{ secrets.BACKGROUND_MUSIC_PATH }}
         run: |
           if [ -n "$MEDIA_URL" ]; then
             python main.py --direct

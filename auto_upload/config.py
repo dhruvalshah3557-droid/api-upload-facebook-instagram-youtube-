@@ -26,6 +26,7 @@ class Config:
     ACCOUNTS_SHEET = _env("ACCOUNTS_SHEET", "Accounts")
     QUEUE_SHEET = _env("QUEUE_SHEET", "Publishing Queue")
     LOG_SHEET = _env("LOG_SHEET", "Publishing Log")
+    UPLOAD_GUIDE_SHEET = _env("UPLOAD_GUIDE_SHEET", "UPLOAD GUIDE")
 
     FB_ACCESS_TOKEN = os.getenv("FB_ACCESS_TOKEN") or os.getenv("FACEBOOKTOKEN") or os.getenv("FACEBOOKDEBUGTOKEN")
 

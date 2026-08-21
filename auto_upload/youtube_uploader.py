@@ -1,14 +1,17 @@
 import pickle
 import logging
+import os
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
-import requests
 import io
 import mimetypes
+
+from media_prep import prepare_video
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +21,11 @@ TOKEN_FILE = CRED_DIR / "youtube_token.pickle"
 CLIENT_SECRET_FILE = CRED_DIR / "youtube_client_secret.json"
 AUTH_CODE_FILE = CRED_DIR / "youtube_auth_code.txt"
 LOOPBACK_REDIRECT_URI = "http://127.0.0.1:8080/"
+
+
+def _env(key, default=""):
+    value = os.getenv(key)
+    return value.strip() if value is not None and value.strip() else default
 
 
 def _extract_code(value):
@@ -31,10 +39,29 @@ def _extract_code(value):
 
 
 class YouTubeUploader:
-    def __init__(self):
-        self.service = self._authenticate()
+    def __init__(self, refresh_token=None, client_id=None, client_secret=None):
+        self.service = self._authenticate(refresh_token, client_id, client_secret)
 
-    def _authenticate(self):
+    def _authenticate(self, refresh_token=None, client_id=None, client_secret=None):
+        refresh_token = refresh_token or _env("YOUTUBE_OAUTH_REFRESH_TOKEN")
+        client_id = client_id or _env("YOUTUBE_CLIENT_ID")
+        client_secret = client_secret or _env("YOUTUBE_CLIENT_SECRET")
+
+        if refresh_token and client_id and client_secret:
+            logger.info("Authenticating YouTube with OAuth refresh token")
+            creds = Credentials(
+                token=None,
+                refresh_token=refresh_token,
+                token_uri="https://oauth2.googleapis.com/token",
+                client_id=client_id,
+                client_secret=client_secret,
+                scopes=SCOPES,
+            )
+            creds.refresh(Request())
+            with open(TOKEN_FILE, "wb") as f:
+                pickle.dump(creds, f)
+            return build("youtube", "v3", credentials=creds)
+
         creds = None
         if TOKEN_FILE.exists():
             with open(TOKEN_FILE, "rb") as f:
@@ -45,8 +72,10 @@ class YouTubeUploader:
                 creds.refresh(Request())
             else:
                 if not CLIENT_SECRET_FILE.exists():
-                    raise FileNotFoundError(
-                        f"YouTube OAuth client secret not found at: {CLIENT_SECRET_FILE}"
+                    raise RuntimeError(
+                        "YouTube OAuth is not configured. Set YOUTUBE_CLIENT_ID, "
+                        "YOUTUBE_CLIENT_SECRET and YOUTUBE_OAUTH_REFRESH_TOKEN "
+                        f"env vars, or place a client secret at {CLIENT_SECRET_FILE}"
                     )
                 flow = InstalledAppFlow.from_client_secrets_file(
                     str(CLIENT_SECRET_FILE), SCOPES
@@ -84,9 +113,8 @@ class YouTubeUploader:
 
     def _download_video(self, url):
         logger.info(f"Downloading video for YouTube: {url}")
-        resp = requests.get(url, stream=True, timeout=120)
-        resp.raise_for_status()
-        return io.BytesIO(resp.content), resp.headers.get("Content-Type", "")
+        name, content, content_type = prepare_video(url)
+        return io.BytesIO(content), content_type
 
     def upload(self, media_url, title, description="", tags=None):
         logger.info("Uploading to YouTube...")

@@ -5,7 +5,7 @@ Project facts and conventions for the `auto_upload` project. These are persisten
 ## Project
 
 - Social-media auto uploader (`auto_upload/`) that publishes to Facebook, Instagram, and YouTube.
-- Code: `auto_upload/main.py`, `sheets_reader.py`, `job_generator.py`, `facebook_uploader.py`, `instagram_uploader.py`, `youtube_uploader.py`, `caption_generator.py`, `product_scraper.py`, `config.py`.
+- Code: `auto_upload/main.py`, `sheets_reader.py`, `job_generator.py`, `facebook_uploader.py`, `instagram_uploader.py`, `youtube_uploader.py`, `caption_generator.py`, `product_scraper.py`, `config.py`, `media_prep.py`.
 
 ## Workbook structure (authoritative)
 
@@ -37,7 +37,7 @@ Flow: Source Import → Accounts → Publishing Queue → Publishing Log.
 
 - `B` = STK/SKU (the product tag value; never use SR NO). STK arrives as a number (e.g. `298.0`); normalize with `_normalize_sku`.
 - `K:R` = product images `image1 link`..`image8 link`; the file whose name contains `center` is the MAIN image (fallback: first nonblank).
-- `S` = `video link` (product video → Reel + first carousel item when supported).
+- `S` = `video link` (product video → its own Reel/video job; never embedded in carousels).
 - `T` = `multiple side image link` (side images; `center.*` URLs are removed).
 - `V/W/X` + `Y` = model images (`model image link 1/2/3`, `multiple model photo link`).
 - `Z/AA/AB` + `AC` = model videos (`model video link 1/2/3`, `multiple model video link`; AC deduped against Z:AB).
@@ -67,8 +67,9 @@ Columns: `job_id, attempt_time, result, platform_post_id, published_url, api_err
 ## Upload behavior
 
 - `main.py` reads pending jobs from Publishing Queue, resolves media from Source Import by SKU, builds the caption per account language, tags with the same SKU, uploads, then writes status back to the queue and an entry to the log.
-- Caption precedence (`build_caption`): account-language column → platform caption + hashtags → auto-generated (account language).
-- Carousel media order: product video → MAIN center image → side images (Facebook carousel posts images only; video is a separate Reel job).
+- Caption precedence (`build_caption`): primary_language translation + matching hashtags → fallback_language translation + matching hashtags → platform caption + hashtags → auto-generated (no cross-language mixing).
+- Carousel media order: MAIN center image → side images only. The product video is NEVER in a carousel — it is always its own separate Reel/video job (avoids duplicate posts).
+- Optional audio handling (`media_prep.py`): original video audio is preserved by default. When `MIX_BACKGROUND_MUSIC=true` + `BACKGROUND_MUSIC_PATH` are set and a video is silent, a low-volume (0.15) instrumental track is mixed in via ffmpeg before upload (FB video, IG Reel file upload, YouTube).
 - Each model video is its OWN Reel/video job. Product video is its own job too.
 - Media with video extension (`.mp4`/`.mov`/`.avi`/`.mkv`/`.webm`) → video/Reel; otherwise photo/carousel.
 - Instagram videos are posted as REELS with a processing wait. Instagram carousels use the mixed children API (video children use `media_type=VIDEO`, not REELS).

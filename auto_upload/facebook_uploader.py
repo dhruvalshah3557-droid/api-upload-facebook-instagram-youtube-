@@ -3,6 +3,8 @@ import logging
 
 import requests
 
+from media_prep import prepare_video
+
 logger = logging.getLogger(__name__)
 
 FB_GRAPH_URL = "https://graph.facebook.com/v19.0"
@@ -88,7 +90,7 @@ class FacebookUploader:
         if product_id:
             data["product_tags"] = json.dumps([{"product_id": product_id}])
         logger.info(f"[{self.page_name}] Posting video" + (" with product tag" if product_id else ""))
-        resp = requests.post(url, data=data, files={"source": self._download_media(media_url)}, timeout=600)
+        resp = requests.post(url, data=data, files={"source": prepare_video(media_url)}, timeout=600)
         result = resp.json()
         if "id" in result:
             logger.info(f"[{self.page_name}] Video posted: {result['id']}")

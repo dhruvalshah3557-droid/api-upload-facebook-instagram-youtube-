@@ -30,12 +30,15 @@ def _lang_code(primary_language):
 
 
 def resolve_media(job, source):
-    """Resolve the ordered media URLs for a job's media_selection."""
+    """Resolve the ordered media URLs for a job's media_selection.
+
+    Carousels are IMAGES ONLY (MAIN center image -> side images). The product
+    video is never included: it is published separately as its own Reel/video
+    job to avoid duplicate posts.
+    """
     selection = job.get("media_selection", "")
     if selection == "carousel":
         media = []
-        if source["video_url"]:
-            media.append(source["video_url"])
         if source["main_image"]:
             media.append(source["main_image"])
         media.extend(source["side_images"])
@@ -53,16 +56,25 @@ def resolve_media(job, source):
 
 
 def build_caption(job, source, account):
-    """Caption precedence: account-language content -> platform caption + hashtags -> auto."""
+    """Caption precedence enforcing account language.
+
+    Order: primary_language translation + matching hashtags -> fallback_language
+    translation + matching hashtags (explicitly allowed) -> platform caption +
+    hashtags. Caption and hashtags always come from the same language so posts
+    never mix languages.
+    """
     platform = job.get("platform", "")
     lang = _lang_code(account.get("primary_language", ""))
-    lang_caption = source.get("lang_captions", {}).get(lang, "")
-    lang_hashtags = source.get("lang_hashtags", {}).get(lang, "")
+    fallback = _lang_code(account.get("fallback_language", ""))
+
+    lang_captions = source.get("lang_captions", {})
+    lang_hashtags = source.get("lang_hashtags", {})
     hashtags = source.get("hashtags", "")
 
-    if lang_caption:
-        tags = lang_hashtags or hashtags
-        return f"{lang_caption}\n\n{tags}" if tags else lang_caption
+    for code in (lang, fallback):
+        if code and lang_captions.get(code):
+            tags = lang_hashtags.get(code) or hashtags
+            return f"{lang_captions[code]}\n\n{tags}" if tags else lang_captions[code]
 
     if platform == "facebook":
         caption = source.get("facebook_caption", "")
@@ -98,10 +110,6 @@ def _tag_value(job):
 
 def publish_job(job, source, account):
     """Publish one job and return (post_id, published_url)."""
-    token = Config.get_token(account.get("credential_property_key", ""))
-    if not token:
-        raise Exception("No access token configured for this account")
-
     media = resolve_media(job, source)
     if not media:
         raise Exception("No media resolved for job")
@@ -112,6 +120,9 @@ def publish_job(job, source, account):
     tag = _tag_value(job) if account.get("product_tagging") else ""
 
     if platform == "facebook":
+        token = Config.get_token(account.get("credential_property_key", ""))
+        if not token:
+            raise Exception("No access token configured for this account")
         uploader = FacebookUploader(account["platform_account_id"], token, account.get("account_name", ""))
         if format_type == "carousel":
             images = _carousel_images(media)
@@ -126,6 +137,9 @@ def publish_job(job, source, account):
         return post_id, url
 
     if platform == "instagram":
+        token = Config.get_token(account.get("credential_property_key", ""))
+        if not token:
+            raise Exception("No access token configured for this account")
         uploader = InstagramUploader(account["platform_account_id"], token, account.get("account_name", ""))
         if format_type == "carousel":
             post = uploader.upload_carousel(media, caption, tag)
@@ -136,14 +150,37 @@ def publish_job(job, source, account):
         return post_id, url
 
     if platform == "youtube":
-        uploader = YouTubeUploader()
+        yt_key = account.get("credential_property_key", "") or "YOUTUBE_OAUTH_REFRESH_TOKEN"
+        yt_token = os.getenv(yt_key) or os.getenv("YOUTUBE_OAUTH_REFRESH_TOKEN")
+        if not yt_token:
+            raise Exception(
+                "No YouTube OAuth refresh token configured "
+                f"(set {yt_key} / YOUTUBE_OAUTH_REFRESH_TOKEN)"
+            )
+        uploader = YouTubeUploader(refresh_token=yt_token)
         title = (job.get("title") or source.get("product_name") or "Video")[:100]
-        response = uploader.upload(media[0], title, caption)
+        description = caption
+        product_link = source.get("product_link", "")
+        if product_link:
+            description = f"{description}\n\nProduct: {product_link}" if description else f"Product: {product_link}"
+        response = uploader.upload(media[0], title, description)
         post_id = response.get("id", "")
         url = f"https://youtu.be/{post_id}"
         return post_id, url
 
     raise Exception(f"Unsupported platform: {platform}")
+
+
+def read_upload_guide(sheets):
+    """Read the UPLOAD GUIDE before uploading and log its safety rules."""
+    guide_rows = sheets.get_upload_guide()
+    if not guide_rows:
+        logger.error(f"UPLOAD GUIDE could not be read: {sheets.guide_error or 'tab empty'}")
+        return []
+    logger.info(f"UPLOAD GUIDE loaded ({len(guide_rows)} rows) before upload")
+    for rule in sheets.guide_safety_rules(guide_rows):
+        logger.info(f"[UPLOAD GUIDE] {rule}")
+    return guide_rows
 
 
 def process_pending(sheets=None):
@@ -152,6 +189,8 @@ def process_pending(sheets=None):
     except Exception as e:
         logger.error(f"Sheets connection failed: {e}")
         return
+
+    read_upload_guide(sheets)
 
     accounts = {a["account_id"]: a for a in sheets.get_accounts()}
     sources = sheets.get_source_rows()
@@ -213,7 +252,9 @@ def process_pending(sheets=None):
                 "attempts": attempts,
                 "last_attempt_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
                 "error_message": message[:2000],
-                "tagging_status": "Failed" if status == Config.JOB_STATUS_FAILED else job.get("tagging_status", "Pending"),
+                "tagging_status": "Failed"
+                    if (status == Config.JOB_STATUS_FAILED and account.get("product_tagging"))
+                    else job.get("tagging_status", "Pending"),
             }
             sheets.update_job(job, updates)
             sheets.write_log(sheets.log_entry(job, "failed", message, api_code))
@@ -228,6 +269,7 @@ def run_generate(sheets=None):
     except Exception as e:
         logger.error(f"Sheets connection failed: {e}")
         return
+    read_upload_guide(sheets)
     accounts = sheets.get_accounts()
     sources = sheets.get_source_rows()
     existing = sheets.get_existing_job_keys()
@@ -265,6 +307,7 @@ def run_direct(media_url, caption, platform, product_url="", product_id=""):
     except Exception as e:
         logger.error(f"Sheets connection failed: {e}")
         return
+    read_upload_guide(sheets)
     accounts = [a for a in sheets.get_accounts() if a.get("enabled") and a.get("platform") == platform]
     if not accounts:
         logger.warning("No enabled accounts for this platform")

@@ -91,6 +91,12 @@ class SheetsReader:
         self.accounts_ws = sheet.worksheet(Config.ACCOUNTS_SHEET)
         self.queue_ws = sheet.worksheet(Config.QUEUE_SHEET)
         self.log_ws = sheet.worksheet(Config.LOG_SHEET)
+        self.guide_ws = None
+        self.guide_error = ""
+        try:
+            self.guide_ws = sheet.worksheet(Config.UPLOAD_GUIDE_SHEET)
+        except Exception as e:
+            self.guide_error = str(e)
         self.accounts_header_row = self._detect_header_row(
             self.accounts_ws, self.ACCOUNTS_HEADER_COLS)
         self.queue_header_row = self._detect_header_row(
@@ -192,6 +198,31 @@ class SheetsReader:
         return "center" in os.path.basename(str(url).split("?")[0]).lower()
 
     # ------------------------------------------------------------------
+    # UPLOAD GUIDE
+    # ------------------------------------------------------------------
+    def get_upload_guide(self):
+        """Read the UPLOAD GUIDE tab. Called before every upload run."""
+        if self.guide_ws is None:
+            return []
+        return self.guide_ws.get_all_values()
+
+    @staticmethod
+    def guide_safety_rules(guide_rows):
+        """Extract the safety-relevant lines from the guide for logging."""
+        keywords = (
+            "non certified", "do not publish", "do not auto-publish", "needs review",
+            "block", "oauth", "business id", "disabled", "429", "error", "must not",
+        )
+        rules = []
+        for row in guide_rows:
+            for cell in row:
+                text = str(cell or "").strip()
+                if text and any(k in text.lower() for k in keywords):
+                    rules.append(text)
+                    break
+        return rules
+
+    # ------------------------------------------------------------------
     # Accounts
     # ------------------------------------------------------------------
     def get_accounts(self):
@@ -286,6 +317,7 @@ class SheetsReader:
                 "facebook_caption": self._pick(rec, "FACEBOOK CAPTION", "Facebook Caption"),
                 "instagram_caption": self._pick(rec, "INSTAGRAM CAPTION", "Instagram Caption"),
                 "youtube_shorts_caption": self._pick(rec, "YouTube Shorts Caption", "YOUTUBE SHORTS CAPTION"),
+                "youtube_product_id": self._pick(rec, "youtube_product_id", "YouTube Product ID", "YOUTUBE PRODUCT ID"),
                 "hashtags": self._pick(rec, "HASHTAGS", "Hashtags"),
                 "lang_captions": lang_captions,
                 "lang_hashtags": lang_hashtags,
