@@ -23,7 +23,9 @@ resp = requests.get(
     },
     timeout=15,
 )
-resp.raise_for_status()
+if resp.status_code != 200:
+    print("ERROR", resp.status_code, resp.text[:2000])
+    sys.exit(1)
 data = resp.json()
 
 pages = []
