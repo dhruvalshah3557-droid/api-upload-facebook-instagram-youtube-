@@ -22,6 +22,11 @@ _WRITE_INTERVAL = 1.15
 _write_lock = threading.Lock()
 _last_write = 0.0
 
+# Reads share the per-user quota too; pace them as well.
+_READ_INTERVAL = 0.35
+_read_lock = threading.Lock()
+_last_read = 0.0
+
 
 def _throttle_write(func):
     """Space out write requests so we never exceed the Sheets write quota."""
@@ -33,6 +38,20 @@ def _throttle_write(func):
             if elapsed < _WRITE_INTERVAL:
                 time.sleep(_WRITE_INTERVAL - elapsed)
             _last_write = time.time()
+        return func(*args, **kwargs)
+    return wrapper
+
+
+def _throttle_read(func):
+    """Space out read requests so we never exceed the Sheets read quota."""
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        global _last_read
+        with _read_lock:
+            elapsed = time.time() - _last_read
+            if elapsed < _READ_INTERVAL:
+                time.sleep(_READ_INTERVAL - elapsed)
+            _last_read = time.time()
         return func(*args, **kwargs)
     return wrapper
 
