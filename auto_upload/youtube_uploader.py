@@ -1,6 +1,7 @@
 import pickle
 import logging
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
@@ -16,6 +17,17 @@ CRED_DIR = Path(__file__).parent / "credentials"
 TOKEN_FILE = CRED_DIR / "youtube_token.pickle"
 CLIENT_SECRET_FILE = CRED_DIR / "youtube_client_secret.json"
 AUTH_CODE_FILE = CRED_DIR / "youtube_auth_code.txt"
+LOOPBACK_REDIRECT_URI = "http://127.0.0.1:8080/"
+
+
+def _extract_code(value):
+    """Extract the auth code from a pasted value (raw code or full redirect URL)."""
+    value = value.strip()
+    if "code=" in value:
+        params = parse_qs(urlsplit(value).query)
+        if "code" in params:
+            return params["code"][0]
+    return value
 
 
 class YouTubeUploader:
@@ -39,7 +51,7 @@ class YouTubeUploader:
                 flow = InstalledAppFlow.from_client_secrets_file(
                     str(CLIENT_SECRET_FILE), SCOPES
                 )
-                flow.redirect_uri = "urn:ietf:wg:oauth:2.0:oob"
+                flow.redirect_uri = LOOPBACK_REDIRECT_URI
                 auth_url, _ = flow.authorization_url(
                     access_type="offline", include_granted_scopes="true"
                 )
@@ -61,7 +73,7 @@ class YouTubeUploader:
                         f"4. Run the tool again"
                     )
                 with open(AUTH_CODE_FILE) as f:
-                    code = f.read().strip()
+                    code = _extract_code(f.read())
                 creds = flow.fetch_token(code=code)
                 creds = flow.credentials
                 AUTH_CODE_FILE.unlink(missing_ok=True)
@@ -74,11 +86,11 @@ class YouTubeUploader:
         logger.info(f"Downloading video for YouTube: {url}")
         resp = requests.get(url, stream=True, timeout=120)
         resp.raise_for_status()
-        return io.BytesIO(resp.content)
+        return io.BytesIO(resp.content), resp.headers.get("Content-Type", "")
 
     def upload(self, media_url, title, description="", tags=None):
         logger.info("Uploading to YouTube...")
-        video_content = self._download_video(media_url)
+        video_content, content_type = self._download_video(media_url)
 
         body = {
             "snippet": {
@@ -93,9 +105,7 @@ class YouTubeUploader:
             },
         }
 
-        mime_type, _ = mimetypes.guess_type(media_url)
-        if not mime_type:
-            mime_type = "video/mp4"
+        mime_type = self._resolve_mime_type(media_url, content_type)
 
         media = MediaIoBaseUpload(video_content, mimetype=mime_type, resumable=True)
 
@@ -109,3 +119,11 @@ class YouTubeUploader:
         video_id = response.get("id")
         logger.info(f"YouTube uploaded: https://youtu.be/{video_id}")
         return response
+
+    @staticmethod
+    def _resolve_mime_type(media_url, content_type):
+        """Pick a MIME type from the download's Content-Type or the URL's extension."""
+        if content_type and content_type.split(";")[0].strip().startswith("video/"):
+            return content_type.split(";")[0].strip()
+        guessed, _ = mimetypes.guess_type(media_url.split("?")[0])
+        return guessed or "video/mp4"

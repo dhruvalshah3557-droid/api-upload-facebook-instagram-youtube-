@@ -13,12 +13,21 @@ class SheetsReader:
     ]
 
     # Header row (1-based) per worksheet. Source Import keeps its header in
-    # row 1; Accounts / Publishing Queue / Publishing Log leave row 1 blank
-    # and put their headers in row 2.
+    # row 1. Accounts / Publishing Queue / Publishing Log may shift rows (e.g.
+    # blank spacer rows added or removed), so their header row is detected
+    # dynamically rather than hardcoded.
     SOURCE_HEADER_ROW = 1
-    ACCOUNTS_HEADER_ROW = 2
-    QUEUE_HEADER_ROW = 2
-    LOG_HEADER_ROW = 2
+    HEADER_SCAN_ROWS = 5
+
+    # Known header names used for dynamic header-row detection.
+    ACCOUNTS_HEADER_COLS = [
+        "account_id", "platform", "account_name", "platform_account_id",
+        "username_or_channel", "primary_language", "fallback_language",
+        "timezone", "enabled", "allowed_formats", "caption_style",
+        "hashtag_set", "cta_rule", "posting_window", "min_gap_minutes",
+        "product_tagging", "catalog_or_store_id", "credential_property_key",
+        "approval_required", "notes",
+    ]
 
     IMAGE_COLS = ["image1 link", "image2 link", "image3 link", "image4 link",
                   "image5 link", "image6 link", "image7 link", "image8 link"]
@@ -82,10 +91,16 @@ class SheetsReader:
         self.accounts_ws = sheet.worksheet(Config.ACCOUNTS_SHEET)
         self.queue_ws = sheet.worksheet(Config.QUEUE_SHEET)
         self.log_ws = sheet.worksheet(Config.LOG_SHEET)
+        self.accounts_header_row = self._detect_header_row(
+            self.accounts_ws, self.ACCOUNTS_HEADER_COLS)
+        self.queue_header_row = self._detect_header_row(
+            self.queue_ws, self.QUEUE_COLS)
+        self.log_header_row = self._detect_header_row(
+            self.log_ws, self.LOG_COLS)
         self.source_cols = self._col_map(self.source_ws, self.SOURCE_HEADER_ROW)
-        self.accounts_cols = self._col_map(self.accounts_ws, self.ACCOUNTS_HEADER_ROW)
-        self.queue_cols = self._col_map(self.queue_ws, self.QUEUE_HEADER_ROW)
-        self.log_cols = self._col_map(self.log_ws, self.LOG_HEADER_ROW)
+        self.accounts_cols = self._col_map(self.accounts_ws, self.accounts_header_row)
+        self.queue_cols = self._col_map(self.queue_ws, self.queue_header_row)
+        self.log_cols = self._col_map(self.log_ws, self.log_header_row)
 
     def _authenticate(self):
         creds_path = Config.GOOGLE_SHEET_CREDENTIALS
@@ -100,6 +115,40 @@ class SheetsReader:
     def _col_map(worksheet, header_row=1):
         headers = worksheet.row_values(header_row)
         return {str(h).strip().lower(): idx + 1 for idx, h in enumerate(headers)}
+
+    @classmethod
+    def _detect_header_row(cls, worksheet, expected_headers, scan_rows=None):
+        """Find the 1-based row that contains the real column headers.
+
+        Scans the first few rows and returns the row whose cells best match the
+        known header names, provided its headers are all unique. This keeps the
+        reader working whether the sheet has its header in row 1, row 2, or a
+        later row after insertions.
+        """
+        scan_rows = scan_rows or cls.HEADER_SCAN_ROWS
+        expected = {str(h).strip().lower() for h in expected_headers}
+
+        best_row, best_score = None, 0
+        for row in range(1, scan_rows + 1):
+            values = worksheet.row_values(row)
+            norm = {str(v).strip().lower() for v in values if str(v).strip()}
+            score = len(norm & expected)
+            if score > best_score:
+                best_row, best_score = row, score
+
+        if best_row is None or best_score == 0:
+            raise ValueError(
+                f"Could not locate the header row in worksheet '{worksheet.title}'"
+            )
+
+        headers = worksheet.row_values(best_row)
+        normalized = [str(h).strip().lower() for h in headers if str(h).strip()]
+        if len(normalized) != len(set(normalized)):
+            raise ValueError(
+                f"Header row {best_row} in worksheet '{worksheet.title}' contains "
+                f"duplicate column names; fix the sheet before continuing"
+            )
+        return best_row
 
     @staticmethod
     def _col_letter(col_idx):
@@ -146,9 +195,9 @@ class SheetsReader:
     # Accounts
     # ------------------------------------------------------------------
     def get_accounts(self):
-        records = self.accounts_ws.get_all_records(head=self.ACCOUNTS_HEADER_ROW)
+        records = self.accounts_ws.get_all_records(head=self.accounts_header_row)
         accounts = []
-        for idx, rec in enumerate(records, start=self.ACCOUNTS_HEADER_ROW + 1):
+        for idx, rec in enumerate(records, start=self.accounts_header_row + 1):
             account_id = str(rec.get("account_id", "")).strip()
             if not account_id:
                 continue
@@ -250,9 +299,9 @@ class SheetsReader:
     # Publishing Queue
     # ------------------------------------------------------------------
     def get_pending_jobs(self):
-        records = self.queue_ws.get_all_records(head=self.QUEUE_HEADER_ROW)
+        records = self.queue_ws.get_all_records(head=self.queue_header_row)
         jobs = []
-        for idx, rec in enumerate(records, start=self.QUEUE_HEADER_ROW + 1):
+        for idx, rec in enumerate(records, start=self.queue_header_row + 1):
             status = str(rec.get("status", "")).strip().lower()
             if status in self.SKIP_STATUSES:
                 continue
@@ -279,8 +328,8 @@ class SheetsReader:
         return jobs
 
     def find_job(self, sku, account_id, platform, fmt, media_selection):
-        records = self.queue_ws.get_all_records(head=self.QUEUE_HEADER_ROW)
-        for idx, rec in enumerate(records, start=self.QUEUE_HEADER_ROW + 1):
+        records = self.queue_ws.get_all_records(head=self.queue_header_row)
+        for idx, rec in enumerate(records, start=self.queue_header_row + 1):
             if (self._normalize_sku(rec.get("sku", "")) == self._normalize_sku(sku)
                     and str(rec.get("account_id", "")).strip() == account_id
                     and str(rec.get("platform", "")).strip().lower() == platform
@@ -292,7 +341,7 @@ class SheetsReader:
     def get_existing_job_keys(self):
         """Set of (sku, account_id, platform, format, media_selection) already queued."""
         keys = set()
-        records = self.queue_ws.get_all_records(head=self.QUEUE_HEADER_ROW)
+        records = self.queue_ws.get_all_records(head=self.queue_header_row)
         for rec in records:
             sku = self._normalize_sku(rec.get("sku", ""))
             if not sku:
