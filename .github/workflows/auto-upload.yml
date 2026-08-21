@@ -136,7 +136,9 @@ jobs:
           if [ -n "$MEDIA_URL" ]; then
             python main.py --direct
           else
-            python main.py --generate
+            # Process the existing Publishing Queue only.
+            # Queue generation is intentionally NOT run here because it can create
+            # tens of thousands of rows and exhaust Google Sheets read quota.
             python main.py
           fi
 
