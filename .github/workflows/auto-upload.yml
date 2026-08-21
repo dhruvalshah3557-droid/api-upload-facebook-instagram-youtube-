@@ -66,13 +66,9 @@ jobs:
           GOOGLE_SHEET_CREDENTIALS_JSON: ${{ secrets.GOOGLE_SHEET_CREDENTIALS_JSON }}
         run: echo "$GOOGLE_SHEET_CREDENTIALS_JSON" > credentials/service_account.json
 
-      - name: Append new accounts (idempotent)
-        env:
-          GOOGLE_SHEET_CREDENTIALS: credentials/service_account.json
-          GOOGLE_SHEET_URL: ${{ secrets.GOOGLE_SHEET_URL }}
-          GOOGLE_SHEET_NAME: ${{ secrets.GOOGLE_SHEET_NAME }}
-          ACCOUNTS_SHEET: ${{ secrets.ACCOUNTS_SHEET || 'Accounts' }}
-        run: python add_accounts.py || true
+      # Accounts are provisioned separately. Do not run add_accounts.py on every
+      # 2-hour upload cycle; it adds unnecessary Google Sheets reads and can
+      # consume the per-minute read quota before publishing starts.
 
       - name: Write YouTube client secret
         env:
@@ -126,7 +122,6 @@ jobs:
           META_TOKEN_IG_RUS: ${{ secrets.META_TOKEN_IG_RUS || secrets.FACEBOOKTOKEN }}
           META_TOKEN_IG_KOR: ${{ secrets.META_TOKEN_IG_KOR || secrets.FACEBOOKTOKEN }}
           META_TOKEN_FB_INDO: ${{ secrets.META_TOKEN_FB_INDO || secrets.FACEBOOKTOKEN }}
-          # YouTube headless OAuth (refresh token from the Accounts sheet)
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_OAUTH_REFRESH_TOKEN: ${{ secrets.YOUTUBE_OAUTH_REFRESH_TOKEN }}
@@ -137,12 +132,9 @@ jobs:
           if [ -n "$MEDIA_URL" ]; then
             python main.py --direct
           else
-            # Scheduled/idempotent run: --generate appends ONLY missing jobs
-            # (dedupe key = SKU + account_id + platform + format + media type),
-            # then process pending jobs. Already-uploaded jobs are never
-            # re-posted and existing queue rows are never duplicated.
-            python main.py --generate
-            python main.py
+            # One process + one Sheets connection for both phases. This avoids
+            # reconnecting immediately after generation and hitting read quota.
+            python main.py --cycle
           fi
 
       - name: Upload log
