@@ -58,7 +58,7 @@ jobs:
 
       - name: Write YouTube client secret
         env:
-          YOUTUBE_CLIENT_SECRET_JSON: ${{ secrets.YOUTUBE_CLIENT_SECRET_JSON }}
+          YOUTUBE_CLIENT_SECRET_JSON: ${{ secrets.YOUTUBEJSON || secrets.YOUTUBE_CLIENT_SECRET_JSON }}
         run: echo "$YOUTUBE_CLIENT_SECRET_JSON" > credentials/youtube_client_secret.json
 
       - name: Write YouTube auth code
