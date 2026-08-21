@@ -2,6 +2,11 @@ name: Dump Pages
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - automation/dump-pages-trigger
+    paths:
+      - .github/workflows/dump-pages.yml
 
 jobs:
   dump:
