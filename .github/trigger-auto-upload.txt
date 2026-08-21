@@ -1,1 +1,2 @@
-controlled test: FB-BKK carousel + IG-INDO carousel
+manual trigger: full pipeline run (idempotent --generate + process pending)
+triggered: 2026-08-21
