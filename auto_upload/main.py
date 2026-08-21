@@ -22,6 +22,29 @@ logging.basicConfig(
 )
 logger = logging.getLogger("main")
 
+
+def open_sheets_with_retry():
+    """Open Google Sheets robustly, including quota errors raised during init."""
+    delays = (0, 15, 30, 60, 60, 60)
+    last_error = None
+    for attempt, delay in enumerate(delays, start=1):
+        if delay:
+            logger.warning(f"Waiting {delay}s before retrying Google Sheets connection")
+            time.sleep(delay)
+        try:
+            return SheetsReader()
+        except Exception as exc:
+            last_error = exc
+            text = str(exc).lower()
+            transient = "429" in text or "quota" in text or "500" in text or "503" in text
+            if not transient or attempt == len(delays):
+                raise
+            logger.warning(
+                f"Google Sheets connection attempt {attempt}/{len(delays)} failed: {exc}"
+            )
+    raise last_error
+
+
 _VIDEO_EXTS = (".mp4", ".mov", ".avi", ".mkv", ".webm")
 
 
@@ -203,9 +226,32 @@ def read_upload_guide(sheets):
     return guide_rows
 
 
+def insert_logs_newest_first(sheets, entries):
+    """Write log entries under the header so the newest result is always on top."""
+    if not entries:
+        return
+    rows = [
+        [entry.get(col, "") for col in sheets.LOG_COLS]
+        for entry in reversed(entries)
+    ]
+    for attempt, delay in enumerate((0, 15, 30, 60), start=1):
+        if delay:
+            time.sleep(delay)
+        try:
+            sheets.log_ws.insert_rows(
+                rows, row=sheets.log_header_row + 1, value_input_option="USER_ENTERED"
+            )
+            return
+        except Exception as exc:
+            text = str(exc).lower()
+            if ("429" not in text and "quota" not in text) or attempt == 4:
+                raise
+            logger.warning(f"Publishing Log insert hit quota; retrying: {exc}")
+
+
 def process_pending(sheets=None):
     try:
-        sheets = sheets or SheetsReader()
+        sheets = sheets or open_sheets_with_retry()
     except Exception as e:
         logger.error(f"Sheets connection failed: {e}")
         return
@@ -285,13 +331,15 @@ def process_pending(sheets=None):
             time.sleep(10)
     finally:
         if log_buffer:
-            sheets.append_logs(log_buffer)
-            logger.info(f"Appended {len(log_buffer)} entr(y/ies) to Publishing Log")
+            insert_logs_newest_first(sheets, log_buffer)
+            logger.info(
+                f"Inserted {len(log_buffer)} entr(y/ies) at top of Publishing Log"
+            )
 
 
 def run_generate(sheets=None):
     try:
-        sheets = sheets or SheetsReader()
+        sheets = sheets or open_sheets_with_retry()
     except Exception as e:
         logger.error(f"Sheets connection failed: {e}")
         return
@@ -321,6 +369,22 @@ def run_generate(sheets=None):
     )
 
 
+def run_cycle():
+    """Generate missing jobs and upload pending jobs using ONE Sheets connection."""
+    logger.info("=== Auto Upload: Generate + Upload Cycle ===")
+    try:
+        sheets = open_sheets_with_retry()
+    except Exception as e:
+        logger.error(f"Sheets connection failed after retries: {e}")
+        return
+    run_generate(sheets)
+    # Reuse the same workbook/worksheet objects instead of reconnecting. Give
+    # Google's per-minute read quota a fresh window before the publish phase.
+    logger.info("Generation complete; waiting 65s for Sheets quota window before upload")
+    time.sleep(65)
+    process_pending(sheets)
+
+
 def run_once():
     logger.info("=== Auto Upload: Single Run ===")
     process_pending()
@@ -340,7 +404,7 @@ def run_direct(media_url, caption, platform, product_url="", product_id=""):
         logger.error("No media URL provided")
         return
     try:
-        sheets = SheetsReader()
+        sheets = open_sheets_with_retry()
     except Exception as e:
         logger.error(f"Sheets connection failed: {e}")
         return
@@ -387,6 +451,8 @@ if __name__ == "__main__":
         run_loop()
     elif mode == "--generate":
         run_generate()
+    elif mode == "--cycle":
+        run_cycle()
     elif mode == "--direct":
         run_direct(
             os.getenv("MEDIA_URL", ""),
