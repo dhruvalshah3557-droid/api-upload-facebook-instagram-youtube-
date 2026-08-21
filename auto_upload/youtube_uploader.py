@@ -1,4 +1,5 @@
 import pickle
+import json
 import logging
 import os
 from pathlib import Path
@@ -46,6 +47,13 @@ class YouTubeUploader:
         refresh_token = refresh_token or _env("YOUTUBE_OAUTH_REFRESH_TOKEN")
         client_id = client_id or _env("YOUTUBE_CLIENT_ID")
         client_secret = client_secret or _env("YOUTUBE_CLIENT_SECRET")
+
+        if (not client_id or not client_secret) and CLIENT_SECRET_FILE.exists():
+            with open(CLIENT_SECRET_FILE) as f:
+                _data = json.load(f)
+            _installed = _data.get("installed") or _data.get("web") or {}
+            client_id = client_id or _installed.get("client_id", "")
+            client_secret = client_secret or _installed.get("client_secret", "")
 
         if refresh_token and client_id and client_secret:
             logger.info("Authenticating YouTube with OAuth refresh token")

@@ -112,6 +112,7 @@ jobs:
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_OAUTH_REFRESH_TOKEN: ${{ secrets.YOUTUBE_OAUTH_REFRESH_TOKEN }}
+          YOUTUBE_OAUTH_REFRESH_TOKEN_JIYA: ${{ secrets.YOUTUBE_OAUTH_REFRESH_TOKEN_JIYA }}
           # Optional background-music mix for silent Reels/Shorts
           MIX_BACKGROUND_MUSIC: ${{ secrets.MIX_BACKGROUND_MUSIC }}
           BACKGROUND_MUSIC_PATH: ${{ secrets.BACKGROUND_MUSIC_PATH }}

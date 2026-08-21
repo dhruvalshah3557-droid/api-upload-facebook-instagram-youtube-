@@ -157,6 +157,11 @@ def publish_job(job, source, account):
                 "No YouTube OAuth refresh token configured "
                 f"(set {yt_key} / YOUTUBE_OAUTH_REFRESH_TOKEN)"
             )
+        if account.get("credential_property_key") and not os.getenv(yt_key):
+            raise Exception(
+                f"No YouTube OAuth refresh token configured for {yt_key} "
+                "(a per-account token must be set; refusing to fall back to the shared token)"
+            )
         uploader = YouTubeUploader(refresh_token=yt_token)
         title = (job.get("title") or source.get("product_name") or "Video")[:100]
         description = caption
