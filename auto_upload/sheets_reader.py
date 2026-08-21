@@ -3,6 +3,7 @@ import functools
 import logging
 import os
 import random
+import threading
 import time
 
 import gspread
@@ -13,15 +14,36 @@ logger = logging.getLogger(__name__)
 
 # Transient Google Sheets API statuses that should be retried with backoff.
 _RETRY_STATUSES = (429, 500, 502, 503, 504)
-_RETRY_MAX_ATTEMPTS = 6
+_RETRY_MAX_ATTEMPTS = 8
+
+# Google Sheets enforces ~60 write requests/minute per user. Pacing our writes
+# below that limit prevents self-inflicted 429s during large batch appends.
+_WRITE_INTERVAL = 1.15
+_write_lock = threading.Lock()
+_last_write = 0.0
+
+
+def _throttle_write(func):
+    """Space out write requests so we never exceed the Sheets write quota."""
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        global _last_write
+        with _write_lock:
+            elapsed = time.time() - _last_write
+            if elapsed < _WRITE_INTERVAL:
+                time.sleep(_WRITE_INTERVAL - elapsed)
+            _last_write = time.time()
+        return func(*args, **kwargs)
+    return wrapper
 
 
 def _retry_gsheet(func):
     """Retry a Google Sheets API call with exponential backoff + jitter.
 
     Google Sheets rate-limits aggressively (HTTP 429); this keeps the pipeline
-    alive during busy hours instead of failing the whole run. Also covers
-    transient 5xx responses. Fails fast on real errors (4xx other than 429).
+    alive during busy hours instead of failing the whole run. 429 gets a long
+    backoff because the quota window is one minute; transient 5xx retries fast.
+    Fails fast on real errors (4xx other than 429).
     """
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
@@ -33,7 +55,10 @@ def _retry_gsheet(func):
                 status = getattr(response, "status_code", None)
                 if status not in _RETRY_STATUSES or attempt == _RETRY_MAX_ATTEMPTS:
                     raise
-                backoff = (2 ** attempt) * (0.5 + random.random())
+                if status == 429:
+                    backoff = min(60.0, 10.0 * (2 ** (attempt - 1))) * (0.8 + 0.4 * random.random())
+                else:
+                    backoff = (2 ** attempt) * (0.5 + random.random())
                 logger.warning(
                     f"Google Sheets API returned {status}; "
                     f"retrying in {backoff:.1f}s (attempt {attempt}/{_RETRY_MAX_ATTEMPTS})"
@@ -427,16 +452,18 @@ class SheetsReader:
         return keys
 
     @_retry_gsheet
+    @_throttle_write
     def append_jobs(self, jobs):
         if not jobs:
             return
         rows = []
         for job in jobs:
             rows.append([job.get(col, "") for col in self.QUEUE_COLS])
-        for start in range(0, len(rows), 100):
-            self.queue_ws.append_rows(rows[start:start + 100], value_input_option="USER_ENTERED")
+        for start in range(0, len(rows), 200):
+            self.queue_ws.append_rows(rows[start:start + 200], value_input_option="USER_ENTERED")
 
     @_retry_gsheet
+    @_throttle_write
     def update_job(self, job, updates):
         """Write all status fields for one job in a single batch_update call."""
         row = job.get("row") if isinstance(job, dict) else job
@@ -459,18 +486,20 @@ class SheetsReader:
     # Publishing Log
     # ------------------------------------------------------------------
     @_retry_gsheet
+    @_throttle_write
     def write_log(self, entry):
         row = [entry.get(col, "") for col in self.LOG_COLS]
         self.log_ws.append_row(row, value_input_option="USER_ENTERED")
 
     @_retry_gsheet
+    @_throttle_write
     def append_logs(self, entries):
         """Append many log rows in one batched call."""
         if not entries:
             return
         rows = [[entry.get(col, "") for col in self.LOG_COLS] for entry in entries]
-        for start in range(0, len(rows), 100):
-            self.log_ws.append_rows(rows[start:start + 100], value_input_option="USER_ENTERED")
+        for start in range(0, len(rows), 200):
+            self.log_ws.append_rows(rows[start:start + 200], value_input_option="USER_ENTERED")
 
     def log_entry(self, job, result, error_message="", api_error_code="", notes=""):
         now = datetime.datetime.utcnow().isoformat()
