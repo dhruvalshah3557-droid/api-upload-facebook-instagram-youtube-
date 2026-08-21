@@ -11,23 +11,29 @@ NEW_WORKBOOK_URL = (
 )
 
 
-class Config:
-    GOOGLE_SHEET_CREDENTIALS = os.getenv("GOOGLE_SHEET_CREDENTIALS", "credentials/service_account.json")
-    GOOGLE_SHEET_URL = os.getenv("GOOGLE_SHEET_URL", NEW_WORKBOOK_URL)
-    GOOGLE_SHEET_NAME = os.getenv("GOOGLE_SHEET_NAME", "")
+def _env(key, default):
+    """Return env value, falling back to default when unset or empty."""
+    value = os.getenv(key)
+    return value.strip() if value is not None and value.strip() else default
 
-    SOURCE_IMPORT_SHEET = os.getenv("SOURCE_IMPORT_SHEET", "Source Import")
-    ACCOUNTS_SHEET = os.getenv("ACCOUNTS_SHEET", "Accounts")
-    QUEUE_SHEET = os.getenv("QUEUE_SHEET", "Publishing Queue")
-    LOG_SHEET = os.getenv("LOG_SHEET", "Publishing Log")
+
+class Config:
+    GOOGLE_SHEET_CREDENTIALS = _env("GOOGLE_SHEET_CREDENTIALS", "credentials/service_account.json")
+    GOOGLE_SHEET_URL = _env("GOOGLE_SHEET_URL", NEW_WORKBOOK_URL)
+    GOOGLE_SHEET_NAME = _env("GOOGLE_SHEET_NAME", "")
+
+    SOURCE_IMPORT_SHEET = _env("SOURCE_IMPORT_SHEET", "Source Import")
+    ACCOUNTS_SHEET = _env("ACCOUNTS_SHEET", "Accounts")
+    QUEUE_SHEET = _env("QUEUE_SHEET", "Publishing Queue")
+    LOG_SHEET = _env("LOG_SHEET", "Publishing Log")
 
     FB_ACCESS_TOKEN = os.getenv("FB_ACCESS_TOKEN") or os.getenv("FACEBOOKTOKEN") or os.getenv("FACEBOOKDEBUGTOKEN")
 
-    GOOGLE_CLOUD_PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT", "")
-    USE_SECRET_MANAGER = os.getenv("USE_SECRET_MANAGER", "false").lower() == "true"
+    GOOGLE_CLOUD_PROJECT = _env("GOOGLE_CLOUD_PROJECT", "")
+    USE_SECRET_MANAGER = _env("USE_SECRET_MANAGER", "false").lower() == "true"
 
-    MAX_JOB_ATTEMPTS = int(os.getenv("MAX_JOB_ATTEMPTS", "3"))
-    MAX_JOBS_PER_RUN = int(os.getenv("MAX_JOBS_PER_RUN", "40"))
+    MAX_JOB_ATTEMPTS = int(_env("MAX_JOB_ATTEMPTS", "3"))
+    MAX_JOBS_PER_RUN = int(_env("MAX_JOBS_PER_RUN", "40"))
     JOB_STATUS_FAILED = "failed"
     JOB_STATUS_UPLOADED = "uploaded"
     JOB_STATUS_SKIPPED = "skipped"
