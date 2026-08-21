@@ -21,6 +21,11 @@ on:
       direct_product_id:
         description: "Product ID / SKU for tagging (optional)"
         required: false
+  push:
+    branches:
+      - master
+    paths:
+      - .github/trigger-auto-upload.txt
 
 concurrency:
   group: auto-upload
@@ -96,9 +101,7 @@ jobs:
           PLATFORM: ${{ inputs.direct_platform }}
           PRODUCT_URL: ${{ inputs.direct_product_url }}
           PRODUCT_ID: ${{ inputs.direct_product_id }}
-          # Shared fallback token
           FB_ACCESS_TOKEN: ${{ secrets.FACEBOOKTOKEN || secrets.FACEBOOKDEBUGTOKEN }}
-          # Per-account Meta tokens (page tokens; fall back to the shared token)
           META_TOKEN_FB_ISR: ${{ secrets.META_TOKEN_FB_ISR || secrets.FACEBOOKTOKEN }}
           META_TOKEN_FB_JPN: ${{ secrets.META_TOKEN_FB_JPN || secrets.FACEBOOKTOKEN }}
           META_TOKEN_FB_KOR: ${{ secrets.META_TOKEN_FB_KOR || secrets.FACEBOOKTOKEN }}
@@ -123,12 +126,10 @@ jobs:
           META_TOKEN_IG_RUS: ${{ secrets.META_TOKEN_IG_RUS || secrets.FACEBOOKTOKEN }}
           META_TOKEN_IG_KOR: ${{ secrets.META_TOKEN_IG_KOR || secrets.FACEBOOKTOKEN }}
           META_TOKEN_FB_INDO: ${{ secrets.META_TOKEN_FB_INDO || secrets.FACEBOOKTOKEN }}
-          # YouTube headless OAuth (refresh token from the Accounts sheet)
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_OAUTH_REFRESH_TOKEN: ${{ secrets.YOUTUBE_OAUTH_REFRESH_TOKEN }}
           YOUTUBE_OAUTH_REFRESH_TOKEN_JIYA: ${{ secrets.YOUTUBE_OAUTH_REFRESH_TOKEN_JIYA }}
-          # Optional background-music mix for silent Reels/Shorts
           MIX_BACKGROUND_MUSIC: ${{ secrets.MIX_BACKGROUND_MUSIC }}
           BACKGROUND_MUSIC_PATH: ${{ secrets.BACKGROUND_MUSIC_PATH }}
         run: |
