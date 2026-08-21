@@ -25,6 +25,21 @@ logger = logging.getLogger("main")
 _VIDEO_EXTS = (".mp4", ".mov", ".avi", ".mkv", ".webm")
 
 
+def job_unique_key(job):
+    """Unique key for a queue job: SKU + account + platform + format + media type.
+
+    Guarantees the same job is never generated twice. The key must match
+    SheetsReader.get_existing_job_keys() exactly.
+    """
+    return (
+        job["sku"],
+        job["account_id"],
+        job["platform"],
+        job["format"],
+        job["media_selection"],
+    )
+
+
 def _lang_code(primary_language):
     return str(primary_language or "en").split("-")[0].lower()
 
@@ -205,67 +220,73 @@ def process_pending(sheets=None):
         return
 
     logger.info(f"Processing {len(jobs)} pending job(s)")
-    for job in jobs[:Config.MAX_JOBS_PER_RUN]:
-        job_id = job["job_id"]
-        logger.info(f"Job {job_id}: {job['platform']}/{job['format']} - {job['media_selection']} (SKU {job['sku']})")
+    log_buffer = []
+    try:
+        for job in jobs[:Config.MAX_JOBS_PER_RUN]:
+            job_id = job["job_id"]
+            logger.info(f"Job {job_id}: {job['platform']}/{job['format']} - {job['media_selection']} (SKU {job['sku']})")
 
-        account = accounts.get(job["account_id"])
-        if not account or not account.get("enabled"):
-            sheets.update_job(job, {"status": Config.JOB_STATUS_SKIPPED, "notes": "Account disabled or missing"})
-            sheets.write_log(sheets.log_entry(job, "skipped", "Account disabled or missing"))
-            logger.warning(f"Job {job_id}: skipped - account not enabled")
-            continue
+            account = accounts.get(job["account_id"])
+            if not account or not account.get("enabled"):
+                sheets.update_job(job, {"status": Config.JOB_STATUS_SKIPPED, "notes": "Account disabled or missing"})
+                log_buffer.append(sheets.log_entry(job, "skipped", "Account disabled or missing"))
+                logger.warning(f"Job {job_id}: skipped - account not enabled")
+                continue
 
-        source = sources.get(job["sku"])
-        if not source:
-            sheets.update_job(job, {"status": Config.JOB_STATUS_SKIPPED, "notes": "SKU not found in Source Import"})
-            sheets.write_log(sheets.log_entry(job, "skipped", "SKU not found in Source Import"))
-            logger.warning(f"Job {job_id}: skipped - SKU {job['sku']} missing")
-            continue
+            source = sources.get(job["sku"])
+            if not source:
+                sheets.update_job(job, {"status": Config.JOB_STATUS_SKIPPED, "notes": "SKU not found in Source Import"})
+                log_buffer.append(sheets.log_entry(job, "skipped", "SKU not found in Source Import"))
+                logger.warning(f"Job {job_id}: skipped - SKU {job['sku']} missing")
+                continue
 
-        caption = build_caption(job, source, account)
-        try:
-            post_id, url = publish_job(job, source, account)
-            updates = {
-                "status": Config.JOB_STATUS_UPLOADED,
-                "platform_post_id": post_id,
-                "published_url": url,
-                "caption_final": caption,
-                "tag_stock_id_used": _tag_value(job),
-                "tagging_status": "Tagged" if account.get("product_tagging") else "Unavailable",
-                "last_attempt_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                "error_message": "",
-            }
-            sheets.update_job(job, updates)
-            sheets.write_log(sheets.log_entry(
-                {**job, "platform_post_id": post_id, "published_url": url},
-                "success",
-            ))
-            logger.info(f"Job {job_id}: uploaded -> {url}")
-        except Exception as e:
-            attempts = job.get("attempts", 0) + 1
-            status = Config.JOB_STATUS_FAILED if attempts >= Config.MAX_JOB_ATTEMPTS else "pending"
-            message = str(e)
-            api_code = ""
-            if "error" in message.lower():
-                try:
-                    api_code = message.split("(")[-1].rstrip(")").split(" ")[0]
-                except Exception:
-                    api_code = ""
-            updates = {
-                "status": status,
-                "attempts": attempts,
-                "last_attempt_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                "error_message": message[:2000],
-                "tagging_status": "Failed"
-                    if (status == Config.JOB_STATUS_FAILED and account.get("product_tagging"))
-                    else job.get("tagging_status", "Pending"),
-            }
-            sheets.update_job(job, updates)
-            sheets.write_log(sheets.log_entry(job, "failed", message, api_code))
-            logger.error(f"Job {job_id}: failed ({status}): {message}")
+            caption = build_caption(job, source, account)
+            try:
+                post_id, url = publish_job(job, source, account)
+                updates = {
+                    "status": Config.JOB_STATUS_UPLOADED,
+                    "platform_post_id": post_id,
+                    "published_url": url,
+                    "caption_final": caption,
+                    "tag_stock_id_used": _tag_value(job),
+                    "tagging_status": "Tagged" if account.get("product_tagging") else "Unavailable",
+                    "last_attempt_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "error_message": "",
+                }
+                sheets.update_job(job, updates)
+                log_buffer.append(sheets.log_entry(
+                    {**job, "platform_post_id": post_id, "published_url": url},
+                    "success",
+                ))
+                logger.info(f"Job {job_id}: uploaded -> {url}")
+            except Exception as e:
+                attempts = job.get("attempts", 0) + 1
+                status = Config.JOB_STATUS_FAILED if attempts >= Config.MAX_JOB_ATTEMPTS else "pending"
+                message = str(e)
+                api_code = ""
+                if "error" in message.lower():
+                    try:
+                        api_code = message.split("(")[-1].rstrip(")").split(" ")[0]
+                    except Exception:
+                        api_code = ""
+                updates = {
+                    "status": status,
+                    "attempts": attempts,
+                    "last_attempt_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "error_message": message[:2000],
+                    "tagging_status": "Failed"
+                        if (status == Config.JOB_STATUS_FAILED and account.get("product_tagging"))
+                        else job.get("tagging_status", "Pending"),
+                }
+                sheets.update_job(job, updates)
+                log_buffer.append(sheets.log_entry(job, "failed", message, api_code))
+                logger.error(f"Job {job_id}: failed ({status}): {message}")
 
-        time.sleep(10)
+            time.sleep(10)
+    finally:
+        if log_buffer:
+            sheets.append_logs(log_buffer)
+            logger.info(f"Appended {len(log_buffer)} entr(y/ies) to Publishing Log")
 
 
 def run_generate(sheets=None):
@@ -279,14 +300,19 @@ def run_generate(sheets=None):
     sources = sheets.get_source_rows()
     existing = sheets.get_existing_job_keys()
     new_jobs = []
+    already_present = 0
     for job in generate_jobs(sources, accounts):
-        key = (job["sku"], job["account_id"], job["platform"], job["format"], job["media_selection"])
+        key = job_unique_key(job)
         if key in existing:
+            already_present += 1
             continue
         new_jobs.append(job)
         existing.add(key)
     sheets.append_jobs(new_jobs)
-    logger.info(f"Added {len(new_jobs)} new job(s) to Publishing Queue")
+    logger.info(
+        f"Queue generation: {len(new_jobs)} new job(s) appended, "
+        f"{already_present} already queued (skipped)"
+    )
 
 
 def run_once():

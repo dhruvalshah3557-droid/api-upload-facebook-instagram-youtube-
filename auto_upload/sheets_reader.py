@@ -1,9 +1,45 @@
 import datetime
+import functools
+import logging
 import os
+import random
+import time
 
 import gspread
 from config import Config
 from oauth2client.service_account import ServiceAccountCredentials
+
+logger = logging.getLogger(__name__)
+
+# Transient Google Sheets API statuses that should be retried with backoff.
+_RETRY_STATUSES = (429, 500, 502, 503, 504)
+_RETRY_MAX_ATTEMPTS = 6
+
+
+def _retry_gsheet(func):
+    """Retry a Google Sheets API call with exponential backoff + jitter.
+
+    Google Sheets rate-limits aggressively (HTTP 429); this keeps the pipeline
+    alive during busy hours instead of failing the whole run. Also covers
+    transient 5xx responses. Fails fast on real errors (4xx other than 429).
+    """
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        for attempt in range(1, _RETRY_MAX_ATTEMPTS + 1):
+            try:
+                return func(*args, **kwargs)
+            except gspread.exceptions.APIError as err:
+                response = getattr(err, "response", None)
+                status = getattr(response, "status_code", None)
+                if status not in _RETRY_STATUSES or attempt == _RETRY_MAX_ATTEMPTS:
+                    raise
+                backoff = (2 ** attempt) * (0.5 + random.random())
+                logger.warning(
+                    f"Google Sheets API returned {status}; "
+                    f"retrying in {backoff:.1f}s (attempt {attempt}/{_RETRY_MAX_ATTEMPTS})"
+                )
+                time.sleep(backoff)
+    return wrapper
 
 
 class SheetsReader:
@@ -200,6 +236,7 @@ class SheetsReader:
     # ------------------------------------------------------------------
     # UPLOAD GUIDE
     # ------------------------------------------------------------------
+    @_retry_gsheet
     def get_upload_guide(self):
         """Read the UPLOAD GUIDE tab. Called before every upload run."""
         if self.guide_ws is None:
@@ -225,6 +262,7 @@ class SheetsReader:
     # ------------------------------------------------------------------
     # Accounts
     # ------------------------------------------------------------------
+    @_retry_gsheet
     def get_accounts(self):
         records = self.accounts_ws.get_all_records(head=self.accounts_header_row)
         accounts = []
@@ -259,6 +297,7 @@ class SheetsReader:
     # ------------------------------------------------------------------
     # Source Import
     # ------------------------------------------------------------------
+    @_retry_gsheet
     def get_source_rows(self):
         records = self.source_ws.get_all_records(head=self.SOURCE_HEADER_ROW)
         sources = {}
@@ -330,6 +369,7 @@ class SheetsReader:
     # ------------------------------------------------------------------
     # Publishing Queue
     # ------------------------------------------------------------------
+    @_retry_gsheet
     def get_pending_jobs(self):
         records = self.queue_ws.get_all_records(head=self.queue_header_row)
         jobs = []
@@ -359,6 +399,7 @@ class SheetsReader:
             })
         return jobs
 
+    @_retry_gsheet
     def find_job(self, sku, account_id, platform, fmt, media_selection):
         records = self.queue_ws.get_all_records(head=self.queue_header_row)
         for idx, rec in enumerate(records, start=self.queue_header_row + 1):
@@ -370,6 +411,7 @@ class SheetsReader:
                 return idx
         return None
 
+    @_retry_gsheet
     def get_existing_job_keys(self):
         """Set of (sku, account_id, platform, format, media_selection) already queued."""
         keys = set()
@@ -384,31 +426,51 @@ class SheetsReader:
                       str(rec.get("media_selection", "")).strip()))
         return keys
 
+    @_retry_gsheet
     def append_jobs(self, jobs):
         if not jobs:
             return
         rows = []
         for job in jobs:
             rows.append([job.get(col, "") for col in self.QUEUE_COLS])
-        self.queue_ws.append_rows(rows, value_input_option="USER_ENTERED")
+        for start in range(0, len(rows), 100):
+            self.queue_ws.append_rows(rows[start:start + 100], value_input_option="USER_ENTERED")
 
+    @_retry_gsheet
     def update_job(self, job, updates):
+        """Write all status fields for one job in a single batch_update call."""
         row = job.get("row") if isinstance(job, dict) else job
         if not row:
             return
+        data = []
         for key, value in updates.items():
             col_idx = self.queue_cols.get(str(key).strip().lower())
             if not col_idx:
                 continue
-            col = self._col_letter(col_idx)
-            self.queue_ws.update(f"{col}{row}", [[value]])
+            data.append({
+                "range": f"{self._col_letter(col_idx)}{row}",
+                "values": [[value]],
+            })
+        if not data:
+            return
+        self.queue_ws.batch_update(data, value_input_option="USER_ENTERED")
 
     # ------------------------------------------------------------------
     # Publishing Log
     # ------------------------------------------------------------------
+    @_retry_gsheet
     def write_log(self, entry):
         row = [entry.get(col, "") for col in self.LOG_COLS]
         self.log_ws.append_row(row, value_input_option="USER_ENTERED")
+
+    @_retry_gsheet
+    def append_logs(self, entries):
+        """Append many log rows in one batched call."""
+        if not entries:
+            return
+        rows = [[entry.get(col, "") for col in self.LOG_COLS] for entry in entries]
+        for start in range(0, len(rows), 100):
+            self.log_ws.append_rows(rows[start:start + 100], value_input_option="USER_ENTERED")
 
     def log_entry(self, job, result, error_message="", api_error_code="", notes=""):
         now = datetime.datetime.utcnow().isoformat()

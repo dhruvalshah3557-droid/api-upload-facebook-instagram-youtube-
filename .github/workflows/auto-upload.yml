@@ -136,9 +136,11 @@ jobs:
           if [ -n "$MEDIA_URL" ]; then
             python main.py --direct
           else
-            # Process the existing Publishing Queue only.
-            # Queue generation is intentionally NOT run here because it can create
-            # tens of thousands of rows and exhaust Google Sheets read quota.
+            # Scheduled/idempotent run: --generate appends ONLY missing jobs
+            # (dedupe key = SKU + account_id + platform + format + media type),
+            # then process pending jobs. Already-uploaded jobs are never
+            # re-posted and existing queue rows are never duplicated.
+            python main.py --generate
             python main.py
           fi
 
