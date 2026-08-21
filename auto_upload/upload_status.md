@@ -1,38 +1,27 @@
 # Upload Status Report
 
-Generated: 2026-08-21 (workflow run 32484399234)
+Updated: 2026-08-21 (workflow run 32488953691)
 
-## Last run (Auto Upload workflow, manual dispatch)
+## Last run (Auto Upload workflow, manual dispatch) — SUCCESS
 
-- Status: completed/success (exit 0; failed jobs are logged, not fatal)
-- 40 jobs processed (MAX_JOBS_PER_RUN=40), 0 uploaded, 40 failed
-- Queue: 22,555 total jobs, 22,515 still pending
-- Failure (all 40): Facebook OAuthException code 190, subcode 467
-  - "Error validating access token: The session is invalid because the user logged out."
-  - Earlier log entries show subcode 460 (password changed / session invalidated by Facebook)
-- Root cause: Facebook access token in GitHub Secrets (FACEBOOKTOKEN / FACEBOOKDEBUGTOKEN / META_TOKEN_*) is expired/invalid. All 13 FB accounts share this broken token.
-- Fix required: generate a fresh long-lived token and update the GitHub secrets, then re-dispatch.
+- Status: completed/success
+- 40 jobs processed (MAX_JOBS_PER_RUN=40), 40 uploaded, 0 failed
+- First successful run: carousel + product video + model videos posted across ISR/JPN/KOR/RUS (sample URLs above in run log)
+- Fixes applied:
+  1. `FACEBOOKTOKEN` secret updated with a valid token (was: expired/invalid, code 190).
+  2. `facebook_uploader.py`: auto-resolves the page-scoped token from the user token (`GET /{page_id}?fields=access_token`, cached per page). Fixes `(#200) Unpublished posts must be posted to a page as the page itself` and `(#100) No permission to publish the video`.
+  3. Workflow now reads YouTube client secret from the `YOUTUBEJSON` secret (was referencing nonexistent `YOUTUBE_CLIENT_SECRET_JSON`).
 
-## Platform status
+## Remaining work
 
-| Platform | Accounts | enabled | Result |
-|----------|----------|---------|--------|
-| Facebook | 13 (FB-ISR/JPN/KOR/RUS/PH/JIYA/MMR/GLOBAL/BKK/TREND/LTD/CD/NFCD) | Yes | Failing: invalid token (code 190) |
-| Instagram | 4 (IG-BKK/TREND/LTD/CD) | No | Not running: accounts disabled, platform_account_id empty (notes: "Resolve Instagram business account ID via Meta API") |
-| YouTube | 1 (YT-CD) | No | Not running: no channel ID, OAuth not connected (notes: "Add channel ID and enable after OAuth connection") |
+- Queue: ~22,515 Facebook jobs still pending; 40 are processed per run (scheduled cron every 2h will drain it).
+- Media URLs: some Source Import URLs return 404 (e.g. `colourdiam.com/Product/Jewellery/298/white45/center.jpg`), which fails posts with `Missing or invalid image file` (code 324). Verify/fix source links if such errors appear.
+- Instagram: 4 accounts (IG-BKK/TREND/LTD/CD) still `enabled = No`, no IG business account IDs resolved (`GET /{page_id}?fields=instagram_business_account` returned none). No IG jobs generated.
+- YouTube: YT-CD still `enabled = No`, no channel ID. `YOUTUBEJSON` is now wired to the client-secret step; OAuth auth code + token still needed (`YOUTUBE_AUTH_CODE` secret does not exist yet).
 
-## Publishing Log
+## Account token map (from GitHub Secrets)
 
-- 120 entries, all Facebook, all `failed` on token errors (subcode 460/467).
-- No Instagram or YouTube upload history exists.
-
-## Queue breakdown (Publishing Queue via gviz)
-
-- facebook: 22,555 total = 0 uploaded / 40 failed / 22,515 pending
-- instagram: 0 jobs (accounts disabled)
-- youtube: 0 jobs (account disabled)
-
-## To enable Instagram / YouTube
-
-1. Instagram: resolve each IG business account ID (Meta API `me/accounts` -> instagram_business_account), set `platform_account_id`, set `enabled = Yes`, provide valid `META_TOKEN_IG_*`.
-2. YouTube: complete OAuth (secrets `YOUTUBE_CLIENT_SECRET_JSON`, `YOUTUBE_AUTH_CODE`), add channel ID, set `enabled = Yes`.
+- `FACEBOOKTOKEN` — valid, updated 2026-08-21
+- `FACEBOOKDEBUGTOKEN` — fallback (unchanged)
+- `APIKEYJSON`, `GOOGLE_SHEET_CREDENTIALS_JSON` — Sheets access
+- `YOUTUBEJSON`, `YOUTUBEKEY` — YouTube (client secret / API key)
