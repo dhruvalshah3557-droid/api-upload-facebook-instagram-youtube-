@@ -1,0 +1,195 @@
+#!/usr/bin/env python3
+"""Append new Instagram (+ FB-INDO) account rows to the Accounts sheet.
+
+Idempotent: skips any account_id that already exists. Uses the same service
+account credentials as the rest of the pipeline (GOOGLE_SHEET_CREDENTIALS).
+"""
+import sys
+from pathlib import Path
+
+from config import Config
+from sheets_reader import SheetsReader
+
+
+NEW_ACCOUNTS = [
+    {
+        "account_id": "IG-JPN",
+        "platform": "Instagram",
+        "account_name": "Colour Diam Japan",
+        "platform_account_id": "1276335835559372",
+        "username_or_channel": "colourdiamjapan",
+        "primary_language": "ja-JP",
+        "fallback_language": "en-GB",
+        "timezone": "Asia/Tokyo",
+        "enabled": "Yes",
+        "allowed_formats": "Image Post, Carousel, Instagram Reel",
+        "caption_style": "Natural Japanese; elegant; concise",
+        "hashtag_set": "Japan jewellery + product-specific tags",
+        "cta_rule": "Website link; polite CTA",
+        "posting_window": "10:00-21:00 local",
+        "min_gap_minutes": "180",
+        "product_tagging": "Yes",
+        "catalog_or_store_id": "",
+        "credential_property_key": "META_TOKEN_IG_JPN",
+        "approval_required": "Yes",
+        "notes": "Resolve Instagram business account ID via Meta API",
+    },
+    {
+        "account_id": "IG-MMR",
+        "platform": "Instagram",
+        "account_name": "Colour Diam Myanmar",
+        "platform_account_id": "1145335788665644",
+        "username_or_channel": "colourdiamburma",
+        "primary_language": "my-MM",
+        "fallback_language": "en-GB",
+        "timezone": "Asia/Yangon",
+        "enabled": "Yes",
+        "allowed_formats": "Image Post, Carousel, Instagram Reel",
+        "caption_style": "Burmese-first; accessible luxury",
+        "hashtag_set": "Myanmar jewellery + Burmese tags",
+        "cta_rule": "DM for details",
+        "posting_window": "10:00-20:00 local",
+        "min_gap_minutes": "180",
+        "product_tagging": "Yes",
+        "catalog_or_store_id": "",
+        "credential_property_key": "META_TOKEN_IG_MMR",
+        "approval_required": "Yes",
+        "notes": "Resolve Instagram business account ID via Meta API",
+    },
+    {
+        "account_id": "IG-PH",
+        "platform": "Instagram",
+        "account_name": "Colour Diam Philippines",
+        "platform_account_id": "1284846958038803",
+        "username_or_channel": "colourdiamph",
+        "primary_language": "fil-PH",
+        "fallback_language": "en-GB",
+        "timezone": "Asia/Manila",
+        "enabled": "Yes",
+        "allowed_formats": "Image Post, Carousel, Instagram Reel",
+        "caption_style": "Filipino/English; warm sales tone",
+        "hashtag_set": "Philippines jewellery + luxury tags",
+        "cta_rule": "DM for consultation",
+        "posting_window": "10:00-21:00 local",
+        "min_gap_minutes": "150",
+        "product_tagging": "Yes",
+        "catalog_or_store_id": "",
+        "credential_property_key": "META_TOKEN_IG_PH",
+        "approval_required": "Yes",
+        "notes": "Resolve Instagram business account ID via Meta API",
+    },
+    {
+        "account_id": "IG-INDO",
+        "platform": "Instagram",
+        "account_name": "Colour Diam Indonesia",
+        "platform_account_id": "",
+        "username_or_channel": "colourdiamindo",
+        "primary_language": "en-GB",
+        "fallback_language": "en-GB",
+        "timezone": "Asia/Jakarta",
+        "enabled": "Yes",
+        "allowed_formats": "Image Post, Carousel, Instagram Reel",
+        "caption_style": "International luxury; accessible",
+        "hashtag_set": "Indonesia + product-specific tags",
+        "cta_rule": "DM for consultation",
+        "posting_window": "10:00-21:00 local",
+        "min_gap_minutes": "180",
+        "product_tagging": "Yes",
+        "catalog_or_store_id": "",
+        "credential_property_key": "META_TOKEN_IG_INDO",
+        "approval_required": "Yes",
+        "notes": "Add FB-INDO page + link IG business account",
+    },
+    {
+        "account_id": "IG-RUS",
+        "platform": "Instagram",
+        "account_name": "Colour Diam Russia",
+        "platform_account_id": "1146787061862512",
+        "username_or_channel": "colourdiamrussia",
+        "primary_language": "ru-RU",
+        "fallback_language": "en-GB",
+        "timezone": "Europe/Moscow",
+        "enabled": "Yes",
+        "allowed_formats": "Image Post, Carousel, Instagram Reel",
+        "caption_style": "Natural Russian; collector-focused",
+        "hashtag_set": "Russia luxury + diamond tags",
+        "cta_rule": "DM or shop link",
+        "posting_window": "10:00-20:00 local",
+        "min_gap_minutes": "180",
+        "product_tagging": "Yes",
+        "catalog_or_store_id": "",
+        "credential_property_key": "META_TOKEN_IG_RUS",
+        "approval_required": "Yes",
+        "notes": "Resolve Instagram business account ID via Meta API",
+    },
+    {
+        "account_id": "IG-KOR",
+        "platform": "Instagram",
+        "account_name": "Colour Diam Korea",
+        "platform_account_id": "1251196928076029",
+        "username_or_channel": "colourdiamkorea",
+        "primary_language": "ko-KR",
+        "fallback_language": "en-GB",
+        "timezone": "Asia/Seoul",
+        "enabled": "Yes",
+        "allowed_formats": "Image Post, Carousel, Instagram Reel",
+        "caption_style": "Natural Korean; premium; concise",
+        "hashtag_set": "Korea jewellery + product-specific tags",
+        "cta_rule": "Website/DM CTA",
+        "posting_window": "10:00-21:00 local",
+        "min_gap_minutes": "180",
+        "product_tagging": "Yes",
+        "catalog_or_store_id": "",
+        "credential_property_key": "META_TOKEN_IG_KOR",
+        "approval_required": "Yes",
+        "notes": "Resolve Instagram business account ID via Meta API",
+    },
+    {
+        "account_id": "FB-INDO",
+        "platform": "Facebook",
+        "account_name": "Colour Diam Indonesia",
+        "platform_account_id": "",
+        "username_or_channel": "colourdiamindo",
+        "primary_language": "en-GB",
+        "fallback_language": "en-GB",
+        "timezone": "Asia/Jakarta",
+        "enabled": "Yes",
+        "allowed_formats": "Image Post, Carousel, Facebook Reel",
+        "caption_style": "International luxury; accessible",
+        "hashtag_set": "Indonesia + product-specific tags",
+        "cta_rule": "DM for consultation",
+        "posting_window": "10:00-21:00 local",
+        "min_gap_minutes": "180",
+        "product_tagging": "Yes",
+        "catalog_or_store_id": "",
+        "credential_property_key": "META_TOKEN_FB_INDO",
+        "approval_required": "Yes",
+        "notes": "Add FB page ID and link IG business account",
+    },
+]
+
+ACCOUNTS_COLS = SheetsReader.ACCOUNTS_HEADER_COLS
+
+
+def main():
+    reader = SheetsReader()
+    ws = reader.accounts_ws
+    existing = {str(rec.get("account_id", "")).strip() for rec in ws.get_all_records(head=reader.accounts_header_row)}
+    rows = []
+    added = []
+    for acc in NEW_ACCOUNTS:
+        if acc["account_id"] in existing:
+            print(f"SKIP {acc['account_id']} (already exists)")
+            continue
+        rows.append([acc.get(c, "") for c in ACCOUNTS_COLS])
+        added.append(acc["account_id"])
+    if not rows:
+        print("Nothing to add.")
+        return 0
+    ws.append_rows(rows, value_input_option="USER_ENTERED")
+    print(f"Added rows: {', '.join(added)}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
