@@ -16,6 +16,25 @@ class FacebookUploader:
         self.access_token = self._resolve_page_token(page_id, page_token)
         self.page_name = page_name
 
+    @staticmethod
+    def _download_media(media_url):
+        """Download the media file bytes so the original is uploaded.
+
+        Passing a URL to the Graph API makes Facebook re-fetch and re-compress
+        the media, which degrades image/video quality. Uploading the original
+        bytes via multipart preserves quality.
+        """
+        resp = requests.get(
+            media_url,
+            timeout=180,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            },
+        )
+        resp.raise_for_status()
+        name = media_url.split("?")[0].rsplit("/", 1)[-1] or "media"
+        return name, resp.content, resp.headers.get("Content-Type", "application/octet-stream")
+
     @classmethod
     def _resolve_page_token(cls, page_id, token):
         """Resolve a page-scoped token from a user token.
@@ -45,15 +64,14 @@ class FacebookUploader:
 
     def upload_photo(self, media_url, caption, product_id=""):
         url = f"{FB_GRAPH_URL}/{self.page_id}/photos"
-        params = {
-            "url": media_url,
+        data = {
             "caption": caption,
             "access_token": self.access_token,
         }
         if product_id:
-            params["product_tags"] = json.dumps([{"product_id": product_id}])
+            data["product_tags"] = json.dumps([{"product_id": product_id}])
         logger.info(f"[{self.page_name}] Posting photo" + (" with product tag" if product_id else ""))
-        resp = requests.post(url, data=params, timeout=60)
+        resp = requests.post(url, data=data, files={"source": self._download_media(media_url)}, timeout=120)
         result = resp.json()
         if "id" in result:
             logger.info(f"[{self.page_name}] Photo posted: {result['id']}")
@@ -63,15 +81,14 @@ class FacebookUploader:
 
     def upload_video(self, media_url, caption, product_id=""):
         url = f"{FB_GRAPH_URL}/{self.page_id}/videos"
-        params = {
-            "file_url": media_url,
+        data = {
             "description": caption,
             "access_token": self.access_token,
         }
         if product_id:
-            params["product_tags"] = json.dumps([{"product_id": product_id}])
+            data["product_tags"] = json.dumps([{"product_id": product_id}])
         logger.info(f"[{self.page_name}] Posting video" + (" with product tag" if product_id else ""))
-        resp = requests.post(url, data=params, timeout=300)
+        resp = requests.post(url, data=data, files={"source": self._download_media(media_url)}, timeout=600)
         result = resp.json()
         if "id" in result:
             logger.info(f"[{self.page_name}] Video posted: {result['id']}")
@@ -92,11 +109,10 @@ class FacebookUploader:
         child_ids = []
         for image_url in image_urls:
             params = {
-                "url": image_url,
                 "published": "false",
                 "access_token": self.access_token,
             }
-            resp = requests.post(photos_url, data=params, timeout=60)
+            resp = requests.post(photos_url, data=params, files={"source": self._download_media(image_url)}, timeout=120)
             result = resp.json()
             if "id" not in result:
                 raise Exception(result.get("error", {}).get("message", str(result)))
