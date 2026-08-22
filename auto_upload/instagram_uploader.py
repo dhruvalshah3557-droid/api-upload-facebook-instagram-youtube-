@@ -145,17 +145,34 @@ class InstagramUploader:
         logger.info(f"[{self.page_name}] Carousel container created: {result['id']}")
         return result["id"]
 
-    def _publish_container(self, container_id):
+    def _publish_container(self, container_id, retries=4):
         url = f"{FB_GRAPH_URL}/{self.ig_user_id}/media_publish"
         params = {"creation_id": container_id, "access_token": self.access_token}
-        logger.info(f"[{self.page_name}] Publishing container {container_id}")
-        resp = requests.post(url, data=params, timeout=60)
-        result = resp.json()
-        if "id" in result:
-            logger.info(f"[{self.page_name}] IG post published: {result['id']}")
-            return result
-        logger.error(f"[{self.page_name}] Publish failed: {result}")
-        raise Exception(result.get("error", {}).get("message", str(result)))
+        last_error = None
+        for attempt in range(retries + 1):
+            logger.info(
+                f"[{self.page_name}] Publishing container {container_id} "
+                f"(attempt {attempt + 1}/{retries + 1})"
+            )
+            resp = requests.post(url, data=params, timeout=60)
+            result = resp.json()
+            if "id" in result:
+                logger.info(f"[{self.page_name}] IG post published: {result['id']}")
+                return result
+            message = result.get("error", {}).get("message", str(result))
+            code = result.get("error", {}).get("code")
+            transient = code in (9007,) or "not available" in message.lower() or "processing" in message.lower()
+            if not transient:
+                logger.error(f"[{self.page_name}] Publish failed: {result}")
+                raise Exception(message)
+            last_error = Exception(message)
+            wait = 30 * (attempt + 1)
+            logger.warning(
+                f"[{self.page_name}] Media not ready yet ({message}); "
+                f"retrying in {wait}s"
+            )
+            time.sleep(wait)
+        raise last_error
 
     def upload_carousel(self, media_urls, caption, product_id=""):
         child_ids = []
