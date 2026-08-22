@@ -2,7 +2,7 @@ name: Auto Upload
 
 on:
   schedule:
-    - cron: "0 */2 * * *"
+    - cron: "*/15 * * * *"
   workflow_dispatch:
     inputs:
       direct_media_url:
@@ -67,8 +67,7 @@ jobs:
         run: echo "$GOOGLE_SHEET_CREDENTIALS_JSON" > credentials/service_account.json
 
       # Accounts are provisioned separately. Do not run add_accounts.py on every
-      # 2-hour upload cycle; it adds unnecessary Google Sheets reads and can
-      # consume the per-minute read quota before publishing starts.
+      # scheduled upload cycle; it adds unnecessary Google Sheets reads.
 
       - name: Write YouTube client secret
         env:
@@ -92,6 +91,8 @@ jobs:
           LOG_SHEET: ${{ secrets.LOG_SHEET || 'Publishing Log' }}
           GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
           USE_SECRET_MANAGER: ${{ secrets.USE_SECRET_MANAGER }}
+          MAX_JOBS_PER_RUN: "5"
+          MAX_GENERATE_JOBS: "5"
           MEDIA_URL: ${{ inputs.direct_media_url }}
           CAPTION: ${{ inputs.direct_caption }}
           PLATFORM: ${{ inputs.direct_platform }}
@@ -133,14 +134,9 @@ jobs:
           if [ -n "$MEDIA_URL" ]; then
             python main.py --direct
           else
-            # One process + one Sheets connection for both phases. This avoids
-            # reconnecting immediately after generation and hitting read quota.
             python main.py --cycle
           fi
 
-          # main.py historically logged Sheets connection failures and returned
-          # exit code 0. Treat those as real CI failures so GitHub cannot show a
-          # false-green run when no publishing work actually happened.
           if grep -Eqi "Sheets connection failed|Google Sheets connection failed" /tmp/auto_upload.log; then
             echo "ERROR: Auto upload could not connect to Google Sheets. Failing workflow."
             exit 1
