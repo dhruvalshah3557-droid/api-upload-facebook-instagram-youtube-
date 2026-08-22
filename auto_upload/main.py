@@ -156,6 +156,12 @@ def publish_job(job, source, account):
     format_type = job.get("format", "")
     caption = build_caption(job, source, account)
     tag = _tag_value(job) if account.get("product_tagging") else ""
+    # Instagram product tagging needs a real product item ID from a connected
+    # catalog. Sending the raw SKU as product_id makes the whole post fail with
+    # "(#100) ... not a valid product item ID", so fall back to untagged posts
+    # until a catalog is configured for the account.
+    if platform == "instagram" and tag and not account.get("catalog_or_store_id"):
+        tag = ""
 
     if platform == "facebook":
         token = Config.get_token(account.get("credential_property_key", ""))
