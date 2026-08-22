@@ -72,8 +72,26 @@ SKIP_STATUSES = {
 }
 
 
+class _FakeLogWorksheet:
+    """Minimal stand-in for the Publishing Log worksheet used by
+    insert_logs_newest_first: converts inserted value rows back into
+    LOG_COLS-keyed dicts appended to the owning FakeSheets.log_entries."""
+
+    def __init__(self, fake_sheets):
+        self._sheets = fake_sheets
+
+    def insert_rows(self, rows, row=None, value_input_option=None):
+        for values in rows:
+            entry = {}
+            for i, col in enumerate(FakeSheets.LOG_COLS):
+                entry[col] = values[i] if i < len(values) else ""
+            self._sheets.log_entries.append(entry)
+
+
 class FakeSheets:
     """In-memory stand-in for SheetsReader used by main.run_generate/process_pending."""
+
+    LOG_COLS = SheetsReader.LOG_COLS
 
     def __init__(self, source_rows, accounts, queue_rows):
         self.guide_error = ""
@@ -84,6 +102,8 @@ class FakeSheets:
         self.appended_jobs = []
         self.updated = []
         self.log_entries = []
+        self.log_header_row = 2
+        self.log_ws = _FakeLogWorksheet(self)
 
     def get_upload_guide(self):
         return []

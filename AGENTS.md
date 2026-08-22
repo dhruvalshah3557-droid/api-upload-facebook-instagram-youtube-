@@ -29,7 +29,7 @@ Flow: Source Import → Accounts → Publishing Queue → Publishing Log.
 - GitHub Secrets are write-only and cannot be read back via API. To access the workbook locally, either:
   - Share the sheet to anyone with the link (public read) and fetch via `https://docs.google.com/spreadsheets/d/<ID>/gviz/tq?tqx=out:json&sheet=<Tab>`, or
   - Paste the service account JSON locally into `auto_upload/credentials/service_account.json` (gitignored).
-- GitHub Actions workflow: `.github/workflows/auto-upload.yml` — runs every 2h via cron + manual dispatch, materializes credentials from secrets, runs `python main.py --generate` then `python main.py` (NOT `--loop`; loop never exits in CI).
+- GitHub Actions workflow: `.github/workflows/auto-upload.yml` — runs every 15 min via cron (`*/15 * * * *`) + manual dispatch + push on `.github/trigger-auto-upload.txt`, materializes credentials from secrets, runs `python main.py --cycle` (one command: generates missing queue rows then uploads pending jobs; NOT `--loop`, NOT separate `--generate`). Concurrency group `auto-upload` with `cancel-in-progress: false`. The workflow env sets `MAX_JOBS_PER_RUN: "5"` and `MAX_GENERATE_JOBS: "5"` (config.py default is also 5).
 - Per-account tokens: `Accounts.credential_property_key` names an env var (e.g. `META_TOKEN_FB_ISR`). `Config.get_token()` reads it, falling back to the shared `FB_ACCESS_TOKEN`. The workflow maps each `META_TOKEN_*` to a GitHub secret.
 - The workbook is publicly readable: column maps can be re-verified with the gviz endpoint above without credentials.
 
@@ -49,7 +49,8 @@ Flow: Source Import → Accounts → Publishing Queue → Publishing Log.
 
 Columns include `account_id`, `platform`, `account_name`, `platform_account_id`, `primary_language`, `timezone`, `enabled`, `allowed_formats`, `min_gap_minutes`, `product_tagging`, `catalog_or_store_id`, `credential_property_key`, `approval_required`.
 
-- Only `enabled = Yes` accounts are used. As of last check, all 13 Facebook accounts (FB-ISR/JPN/KOR/RUS/PH/JIYA/MMR/GLOBAL/BKK/TREND/LTD/CD/NFCD) are enabled; Instagram (IG-BKK/TREND/LTD/CD) and YouTube (YT-CD) accounts are disabled until IG business IDs / OAuth are connected.
+- Only `enabled = Yes` accounts are used. The Accounts tab has 26 data rows: all 13 Facebook accounts (FB-ISR/JPN/KOR/RUS/PH/JIYA/MMR/GLOBAL/BKK/TREND/LTD/CD/NFCD) plus FB-INDO are enabled. Instagram IG-BKK/TREND/LTD/CD, IG-INDO, IG-RUS, IG-KOR are enabled (IG-JPN/MMR/PH disabled until IG business IDs are linked). YouTube YT-CD and YT-JIYA are enabled.
+- Credential keys map to GitHub secrets: `META_TOKEN_FB_ISR`..`META_TOKEN_FB_NFCD`, `META_TOKEN_FB_INDO`, `META_TOKEN_IG_BKK/TREND/LTD/CD/INDO/RUS/KOR/JPN/MMR/PH`, plus `YOUTUBE_OAUTH_REFRESH_TOKEN` and `YOUTUBE_OAUTH_REFRESH_TOKEN_JIYA`.
 - `product_tagging = Yes` means every FB/IG post is tagged with the row's `STK`/SKU (Publishing Queue `stock_id_tag` / `tag_stock_id_used`). A rejected tag → `tagging_status = Failed` + exact API error in `error_message`.
 
 ## Publishing Queue
@@ -58,7 +59,7 @@ Columns: `job_id, sku, account_id, media_selection, platform, format, language, 
 
 - `media_selection` values: `carousel`, `product_video`, `model_video:<n>`.
 - `status` lifecycle: empty/pending → `uploaded` | `failed` (after `MAX_JOB_ATTEMPTS`) | `skipped` | `needs_review`.
-- `python main.py --generate` fills the queue idempotently from clean Source Import rows (carousel + product Reel + one job per model video, per enabled account). `python main.py` processes `MAX_JOBS_PER_RUN` (default 40) pending jobs per run.
+- `python main.py --generate` fills the queue idempotently from clean Source Import rows (carousel + product Reel + one job per model video, per enabled account). `python main.py --cycle` (used by CI) generates missing rows then processes pending jobs; `MAX_GENERATE_JOBS` / `MAX_JOBS_PER_RUN` (default 5 each) cap generation and uploads per run.
 
 ## Publishing Log
 
@@ -74,7 +75,7 @@ Columns: `job_id, attempt_time, result, platform_post_id, published_url, api_err
 - Media with video extension (`.mp4`/`.mov`/`.avi`/`.mkv`/`.webm`) → video/Reel; otherwise photo/carousel.
 - Instagram videos are posted as REELS with a processing wait. Instagram carousels use the mixed children API (video children use `media_type=VIDEO`, not REELS).
 - Facebook carousels: children created via `/{page}/photos` with `published=false`, then published via `/{page}/feed` with `attached_media` + `message`.
-- Run modes: `python main.py` (once), `python main.py --generate` (populate queue), `python main.py --loop` (poll every 300s; only for App Engine, not CI), `python main.py --direct` (direct upload via env).
+- Run modes: `python main.py` (once), `python main.py --generate` (populate queue), `python main.py --cycle` (generate missing rows + upload pending jobs; used by CI), `python main.py --loop` (poll every 300s; only for App Engine, not CI), `python main.py --direct` (direct upload via env).
 - `auto_upload/dump_pages.py` + `.github/workflows/dump-pages.yml` dump all FB page names/IG ids via `me/accounts` (manual dispatch → `pages` artifact).
 
 ## Local dev

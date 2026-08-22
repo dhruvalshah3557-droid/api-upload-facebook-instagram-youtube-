@@ -2,6 +2,8 @@
 
 Updated: 2026-08-21 (workflow run 32488953691)
 
+> Status updated 2026-08-22: per the workbook Accounts tab, IG-BKK/TREND/LTD/CD, IG-INDO, IG-RUS, IG-KOR, YT-CD, YT-JIYA, and FB-INDO are now `enabled = Yes`. The "Remaining work" bullets below (IG accounts `enabled = No`, YT-CD `enabled = No`) are outdated.
+
 ## Last run (Auto Upload workflow, manual dispatch) — SUCCESS
 
 - Status: completed/success

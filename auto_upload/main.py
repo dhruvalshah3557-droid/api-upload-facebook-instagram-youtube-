@@ -404,35 +404,43 @@ def run_loop():
         time.sleep(interval)
 
 
+_PLATFORM_TARGETS = {
+    "both": {"facebook", "instagram"},
+    "all": {"facebook", "instagram", "youtube"},
+}
+
+
 def run_direct(media_url, caption, platform, product_url="", product_id=""):
     logger.info(f"=== Auto Upload: Direct Upload ({platform}) {media_url} ===")
     if not media_url:
         logger.error("No media URL provided")
         return
+    is_video = any(e in media_url.lower() for e in _VIDEO_EXTS)
+    target_platforms = _PLATFORM_TARGETS.get(platform, {platform})
     try:
         sheets = open_sheets_with_retry()
     except Exception as e:
         logger.error(f"Sheets connection failed: {e}")
         return
     read_upload_guide(sheets)
-    accounts = [a for a in sheets.get_accounts() if a.get("enabled") and a.get("platform") == platform]
+    accounts = [a for a in sheets.get_accounts() if a.get("enabled") and a.get("platform") in target_platforms]
     if not accounts:
         logger.warning("No enabled accounts for this platform")
         return
     for account in accounts:
         job = {
-            "job_id": f"DIRECT-{platform}-{int(time.time())}",
+            "job_id": f"DIRECT-{account['platform']}-{int(time.time())}",
             "sku": product_id or "direct",
             "account_id": account["account_id"],
-            "media_selection": "product_video" if any(e in media_url.lower() for e in _VIDEO_EXTS) else "carousel",
-            "platform": platform,
-            "format": "carousel",
+            "media_selection": "product_video" if is_video else "carousel",
+            "platform": account["platform"],
+            "format": "video" if is_video else "carousel",
             "stock_id_tag": product_id or "",
             "language": account.get("primary_language", ""),
         }
         source = {
             "video_url": media_url,
-            "main_image": "" if any(e in media_url.lower() for e in _VIDEO_EXTS) else media_url,
+            "main_image": "" if is_video else media_url,
             "side_images": [],
             "images": [media_url],
             "model_videos": [],
