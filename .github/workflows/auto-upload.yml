@@ -134,6 +134,15 @@ jobs:
           META_TOKEN_WECHAT_CD: ${{ secrets.META_TOKEN_WECHAT_CD || secrets.WECHAT_CD }}
           PINTEREST_ACCESS_TOKEN: ${{ secrets.PINTEREST_ACCESS_TOKEN }}
           META_TOKEN_PINTEREST_CD: ${{ secrets.META_TOKEN_PINTEREST_CD || secrets.PINTEREST_ACCESS_TOKEN }}
+          TIKTOK_ACCESS_TOKEN: ${{ secrets.TIKTOK_ACCESS_TOKEN }}
+          META_TOKEN_TIKTOK_CD: ${{ secrets.META_TOKEN_TIKTOK_CD || secrets.TIKTOK_ACCESS_TOKEN }}
+          X_CONSUMER_KEY: ${{ secrets.X_CONSUMER_KEY }}
+          X_CONSUMER_SECRET: ${{ secrets.X_CONSUMER_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+          LINKEDIN_ACCESS_TOKEN: ${{ secrets.LINKEDIN_ACCESS_TOKEN }}
+          LINKEDIN_AUTHOR: ${{ secrets.LINKEDIN_AUTHOR }}
+          META_TOKEN_LINKEDIN_CD: ${{ secrets.META_TOKEN_LINKEDIN_CD || secrets.LINKEDIN_ACCESS_TOKEN }}
           MIX_BACKGROUND_MUSIC: ${{ secrets.MIX_BACKGROUND_MUSIC }}
           BACKGROUND_MUSIC_PATH: ${{ secrets.BACKGROUND_MUSIC_PATH }}
         run: |

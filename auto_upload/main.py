@@ -13,9 +13,12 @@ from facebook_uploader import FacebookUploader
 from instagram_uploader import InstagramUploader
 from job_generator import generate_jobs
 from line_uploader import LineUploader
+from linkedin_uploader import LinkedInUploader
 from pinterest_uploader import PinterestUploader
 from sheets_reader import SheetsReader
+from tiktok_uploader import TikTokUploader
 from wechat_uploader import WeChatUploader
+from x_uploader import XUploader
 from youtube_uploader import YouTubeUploader
 
 logging.basicConfig(
@@ -123,6 +126,10 @@ def build_caption(job, source, account):
         caption = source.get("instagram_caption", "")
     elif platform == "youtube":
         caption = source.get("youtube_shorts_caption", "") or source.get("facebook_caption", "")
+    elif platform in ("tiktok", "x"):
+        caption = source.get("instagram_caption", "") or source.get("facebook_caption", "")
+    elif platform == "linkedin":
+        caption = source.get("facebook_caption", "") or source.get("instagram_caption", "")
     else:
         caption = source.get("instagram_caption", "")
 
@@ -272,6 +279,46 @@ def publish_job(job, source, account):
                                    thumbnail_url=thumbnail, is_video=is_video)
         post_id = post.get("id", "")
         url = post.get("url", f"https://www.pinterest.com/pin/{post_id}/")
+        return post_id, url
+
+    if platform == "tiktok":
+        tiktok_token = os.getenv(account.get("credential_property_key", "")) or os.getenv("TIKTOK_ACCESS_TOKEN")
+        uploader = TikTokUploader(tiktok_token, account.get("account_name", ""))
+        title = (job.get("title") or source.get("product_name") or "Video")[:150]
+        post = uploader.upload(media[0], title=title, description=caption)
+        post_id = post.get("id", "")
+        url = post.get("url", f"https://www.tiktok.com/@{account.get('account_name', '')}/video/{post_id}")
+        return post_id, url
+
+    if platform == "x":
+        uploader = XUploader(account_name=account.get("account_name", ""))
+        title = (job.get("title") or source.get("product_name") or "Video")[:280]
+        if format_type == "carousel":
+            images = _carousel_images(media)
+            post = uploader.upload_carousel(images or media, caption)
+        else:
+            is_video = format_type == "video"
+            post = uploader.upload(media[0], caption, title=title, is_video=is_video)
+        post_id = post.get("id", "")
+        url = post.get("url", f"https://x.com/i/status/{post_id}")
+        return post_id, url
+
+    if platform == "linkedin":
+        li_token = os.getenv(account.get("credential_property_key", "")) or os.getenv("LINKEDIN_ACCESS_TOKEN")
+        uploader = LinkedInUploader(
+            access_token=li_token,
+            author=account.get("platform_account_id", ""),
+            account_name=account.get("account_name", ""),
+        )
+        title = (job.get("title") or source.get("product_name") or "Video")[:100]
+        if format_type == "carousel":
+            images = _carousel_images(media)
+            post = uploader.upload_carousel(images or media, caption)
+        else:
+            is_video = format_type == "video"
+            post = uploader.upload(media[0], caption, title=title, is_video=is_video)
+        post_id = post.get("id", "")
+        url = post.get("url", f"https://www.linkedin.com/feed/update/urn:li:activity:{post_id}")
         return post_id, url
 
     raise Exception(f"Unsupported platform: {platform}")
