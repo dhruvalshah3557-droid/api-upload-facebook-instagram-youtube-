@@ -29,6 +29,24 @@ logging.basicConfig(
 logger = logging.getLogger("main")
 
 
+_BROKEN_MEDIA_MARKERS = (
+    "404 client error",
+    "http error code 404",
+    "404 not found",
+    "media download has failed",
+    "media could not be fetched",
+    "could not be fetched from this uri",
+    "video download failed with",
+    "only photo or video can be accepted as media type",
+)
+
+
+def _is_broken_media_error(message):
+    """Dead/broken media (404, un-fetchable URI) will not heal on retry."""
+    lowered = message.lower()
+    return any(marker in lowered for marker in _BROKEN_MEDIA_MARKERS)
+
+
 def open_sheets_with_retry():
     """Open Google Sheets robustly, including quota errors raised during init."""
     delays = (0, 15, 30, 60, 60, 60)
@@ -417,8 +435,11 @@ def process_pending(sheets=None):
                 logger.info(f"Job {job_id}: uploaded -> {url}")
             except Exception as e:
                 attempts = job.get("attempts", 0) + 1
-                status = Config.JOB_STATUS_FAILED if attempts >= Config.MAX_JOB_ATTEMPTS else "pending"
                 message = str(e)
+                if _is_broken_media_error(message):
+                    status = Config.JOB_STATUS_NEEDS_REVIEW
+                else:
+                    status = Config.JOB_STATUS_FAILED if attempts >= Config.MAX_JOB_ATTEMPTS else "pending"
                 api_code = ""
                 if "error" in message.lower():
                     try:
