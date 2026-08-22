@@ -1,2 +1,2 @@
-manual trigger: full pipeline run (idempotent --generate + process pending)
-triggered: 2026-08-21
+manual trigger: test current quota-safe full pipeline
+triggered: 2026-08-22 Asia/Bangkok
