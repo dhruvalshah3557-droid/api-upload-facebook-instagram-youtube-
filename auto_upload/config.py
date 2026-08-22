@@ -34,10 +34,13 @@ class Config:
     USE_SECRET_MANAGER = _env("USE_SECRET_MANAGER", "false").lower() == "true"
 
     MAX_JOB_ATTEMPTS = int(_env("MAX_JOB_ATTEMPTS", "3"))
-    MAX_JOBS_PER_RUN = int(_env("MAX_JOBS_PER_RUN", "40"))
-    # Cap on NEW jobs written to the queue per --generate run. Keeps Google
-    # Sheets write volume within quota; the queue fills across cron runs.
-    MAX_GENERATE_JOBS = int(_env("MAX_GENERATE_JOBS", "2500"))
+    # Keep each scheduled run intentionally small. The workflow runs every
+    # 15 minutes, so 5 jobs/run can process up to ~40 jobs across 2 hours while
+    # spreading Google Sheets and platform API traffic instead of bursting it.
+    MAX_JOBS_PER_RUN = int(_env("MAX_JOBS_PER_RUN", "5"))
+    # Generate only a small number of new queue rows per run as well. This
+    # prevents queue generation itself from causing a Google Sheets write spike.
+    MAX_GENERATE_JOBS = int(_env("MAX_GENERATE_JOBS", "5"))
     JOB_STATUS_FAILED = "failed"
     JOB_STATUS_UPLOADED = "uploaded"
     JOB_STATUS_SKIPPED = "skipped"
