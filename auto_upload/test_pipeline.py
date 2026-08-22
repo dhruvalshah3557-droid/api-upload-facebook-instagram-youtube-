@@ -325,8 +325,96 @@ def test_second_run_does_not_repost_uploaded():
     print("OK test_second_run_does_not_repost_uploaded")
 
 
+def test_generate_new_platforms():
+    accounts = [
+        _account("LINE-CD", "line"),
+        _account("WECHAT-CD", "wechat"),
+        _account("PINTEREST-CD", "pinterest"),
+    ]
+    sources = {"100": _source("100")}
+    fake = FakeSheets(sources, accounts, [])
+
+    with patch.object(Config, "MAX_GENERATE_JOBS", 40):
+        main.run_generate(fake)
+    jobs = fake.appended_jobs
+    # 3 platforms x (carousel + product_video + model_video:0) = 9 jobs
+    assert len(jobs) == 9, f"expected 9 jobs, got {len(jobs)}"
+    platforms = {j["platform"] for j in jobs}
+    assert platforms == {"line", "wechat", "pinterest"}
+    formats = {j["format"] for j in jobs}
+    assert formats == {"carousel", "video"}
+    assert any(j["format"] == "video" and j["media_selection"] == "product_video" for j in jobs)
+
+    # Idempotent on second run.
+    with patch.object(Config, "MAX_GENERATE_JOBS", 40):
+        main.run_generate(fake)
+    assert len(fake.appended_jobs) == 9, "duplicate jobs generated for new platforms"
+    print("OK test_generate_new_platforms")
+
+
+def test_publish_new_platforms_routing():
+    accounts = [
+        _account("LINE-CD", "line"),
+        _account("WECHAT-CD", "wechat"),
+        _account("PINTEREST-CD", "pinterest"),
+    ]
+    sources = {"100": _source("100")}
+    jobs = [
+        {"job_id": "100-LINE-CD-carousel", "sku": "100", "account_id": "LINE-CD",
+         "media_selection": "carousel", "platform": "line", "format": "carousel",
+         "status": "pending", "attempts": 0},
+        {"job_id": "100-WECHAT-CD-carousel", "sku": "100", "account_id": "WECHAT-CD",
+         "media_selection": "carousel", "platform": "wechat", "format": "carousel",
+         "status": "pending", "attempts": 0},
+        {"job_id": "100-PINTEREST-CD-product_video", "sku": "100", "account_id": "PINTEREST-CD",
+         "media_selection": "product_video", "platform": "pinterest", "format": "video",
+         "status": "pending", "attempts": 0},
+    ]
+    fake = FakeSheets(sources, accounts, jobs)
+
+    class FakeLine:
+        def __init__(self, *a, **k):
+            self.called = False
+        def upload_carousel(self, *a, **k):
+            return {"id": "111", "url": "https://line.example/111"}
+
+    class FakeWeChat:
+        def __init__(self, *a, **k):
+            self.called = False
+        def upload_carousel(self, *a, **k):
+            return {"id": "222", "url": "https://mp.weixin.qq.com/"}
+
+    class FakePinterest:
+        def __init__(self, *a, **k):
+            self.called = False
+        def upload(self, *a, **k):
+            return {"id": "333", "url": "https://www.pinterest.com/pin/333/"}
+
+    with patch.object(Config, "MAX_JOB_ATTEMPTS", 1), \
+         patch.object(Config, "MAX_JOBS_PER_RUN", 40), \
+         patch("main.time.sleep"), \
+         patch("main.LineUploader", FakeLine), \
+         patch("main.WeChatUploader", FakeWeChat), \
+         patch("main.PinterestUploader", FakePinterest), \
+         patch.dict(os.environ, {
+             "LINE_CHANNEL_ACCESS_TOKEN": "line-token",
+             "WECHAT_APPID": "wx-appid",
+             "WECHAT_APPSECRET": "wx-secret",
+             "PINTEREST_ACCESS_TOKEN": "pin-token",
+         }):
+        main.process_pending(fake)
+
+    statuses = {u[0]["job_id"]: u[1]["status"] for u in fake.updated}
+    for job_id in ("100-LINE-CD-carousel", "100-WECHAT-CD-carousel", "100-PINTEREST-CD-product_video"):
+        assert statuses[job_id] == Config.JOB_STATUS_UPLOADED, job_id
+    assert fake.updated[0][1]["published_url"].startswith("https://")
+    print("OK test_publish_new_platforms_routing")
+
+
 if __name__ == "__main__":
     test_generate_is_idempotent()
     test_one_failure_does_not_stop_others()
     test_second_run_does_not_repost_uploaded()
+    test_generate_new_platforms()
+    test_publish_new_platforms_routing()
     print("All pipeline tests passed.")

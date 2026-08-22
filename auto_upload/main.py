@@ -12,7 +12,10 @@ from config import Config
 from facebook_uploader import FacebookUploader
 from instagram_uploader import InstagramUploader
 from job_generator import generate_jobs
+from line_uploader import LineUploader
+from pinterest_uploader import PinterestUploader
 from sheets_reader import SheetsReader
+from wechat_uploader import WeChatUploader
 from youtube_uploader import YouTubeUploader
 
 logging.basicConfig(
@@ -114,9 +117,9 @@ def build_caption(job, source, account):
             tags = lang_hashtags.get(code) or hashtags
             return f"{lang_captions[code]}\n\n{tags}" if tags else lang_captions[code]
 
-    if platform == "facebook":
+    if platform in ("facebook", "wechat", "pinterest"):
         caption = source.get("facebook_caption", "")
-    elif platform == "instagram":
+    elif platform in ("instagram", "line"):
         caption = source.get("instagram_caption", "")
     elif platform == "youtube":
         caption = source.get("youtube_shorts_caption", "") or source.get("facebook_caption", "")
@@ -215,6 +218,60 @@ def publish_job(job, source, account):
         response = uploader.upload(media[0], title, description)
         post_id = response.get("id", "")
         url = f"https://youtu.be/{post_id}"
+        return post_id, url
+
+    if platform == "line":
+        line_token = os.getenv(account.get("credential_property_key", "")) or os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
+        if not line_token:
+            raise Exception("No LINE channel access token configured (set LINE_CHANNEL_ACCESS_TOKEN)")
+        uploader = LineUploader(line_token, account.get("account_name", ""))
+        if format_type == "carousel":
+            images = _carousel_images(media)
+            post = uploader.upload_carousel(images or media, caption)
+        else:
+            is_video = format_type == "video"
+            thumbnail = source.get("main_image", "") if is_video else ""
+            post = uploader.upload(media[0], caption, is_video=is_video, thumbnail_url=thumbnail)
+        post_id = post.get("id", "")
+        url = post.get("url", "https://line.me/")
+        return post_id, url
+
+    if platform == "wechat":
+        wechat_cred = os.getenv(account.get("credential_property_key", ""))
+        uploader = WeChatUploader(
+            credential=wechat_cred,
+            account_name=account.get("account_name", ""),
+        )
+        title = (job.get("title") or source.get("product_name") or "Product")[:64]
+        if format_type == "carousel":
+            images = _carousel_images(media)
+            post = uploader.upload_carousel(images or media, caption, title)
+        else:
+            is_video = format_type == "video"
+            post = uploader.upload(media[0], caption, title=title, is_video=is_video)
+        post_id = post.get("id", "")
+        url = post.get("url", "https://mp.weixin.qq.com/")
+        return post_id, url
+
+    if platform == "pinterest":
+        pin_token = os.getenv(account.get("credential_property_key", "")) or os.getenv("PINTEREST_ACCESS_TOKEN")
+        uploader = PinterestUploader(
+            access_token=pin_token,
+            board_id=account.get("platform_account_id", ""),
+            account_name=account.get("account_name", ""),
+        )
+        title = (job.get("title") or source.get("product_name") or "Product")[:100]
+        product_link = source.get("product_link", "")
+        if format_type == "carousel":
+            images = _carousel_images(media)
+            post = uploader.upload_carousel(images or media, caption, title, product_link)
+        else:
+            is_video = format_type == "video"
+            thumbnail = source.get("main_image", "") if is_video else ""
+            post = uploader.upload(media[0], caption, title=title, link=product_link,
+                                   thumbnail_url=thumbnail, is_video=is_video)
+        post_id = post.get("id", "")
+        url = post.get("url", f"https://www.pinterest.com/pin/{post_id}/")
         return post_id, url
 
     raise Exception(f"Unsupported platform: {platform}")
