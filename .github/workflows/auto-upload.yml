@@ -129,12 +129,21 @@ jobs:
           MIX_BACKGROUND_MUSIC: ${{ secrets.MIX_BACKGROUND_MUSIC }}
           BACKGROUND_MUSIC_PATH: ${{ secrets.BACKGROUND_MUSIC_PATH }}
         run: |
+          set -o pipefail
           if [ -n "$MEDIA_URL" ]; then
             python main.py --direct
           else
             # One process + one Sheets connection for both phases. This avoids
             # reconnecting immediately after generation and hitting read quota.
             python main.py --cycle
+          fi
+
+          # main.py historically logged Sheets connection failures and returned
+          # exit code 0. Treat those as real CI failures so GitHub cannot show a
+          # false-green run when no publishing work actually happened.
+          if grep -Eqi "Sheets connection failed|Google Sheets connection failed" /tmp/auto_upload.log; then
+            echo "ERROR: Auto upload could not connect to Google Sheets. Failing workflow."
+            exit 1
           fi
 
       - name: Upload log
