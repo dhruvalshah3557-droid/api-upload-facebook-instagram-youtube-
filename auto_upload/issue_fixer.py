@@ -230,10 +230,16 @@ def apply_and_validate(diff):
     )
     if apply.returncode != 0:
         return False, apply.stderr.strip() or "git apply failed"
-    name_only = subprocess.run(
-        ["git", "diff", "--name-only"], capture_output=True, text=True,
+    porcelain = subprocess.run(
+        ["git", "status", "--porcelain"], capture_output=True, text=True,
     )
-    changed = [line for line in name_only.stdout.splitlines() if line.strip()]
+    changed = []
+    for line in porcelain.stdout.splitlines():
+        if line.startswith("R "):
+            changed.append(line.split(" -> ")[-1])
+        else:
+            changed.append(line[3:])
+    changed = [path for path in changed if path.strip()]
     if not changed:
         return False, "diff applied but produced no tracked changes"
     whitespace = subprocess.run(

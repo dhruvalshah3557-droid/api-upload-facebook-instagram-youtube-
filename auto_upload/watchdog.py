@@ -59,14 +59,13 @@ def gh_api(token, method, path, body=None):
 
 
 def get_workflow_runs(token):
-    qs = urllib.parse.urlencode({
-        "per_page": 20,
-        "workflow": WORKFLOW_FILE,
-    })
-    status, data = gh_api(token, "GET", "/actions/runs?" + qs)
+    qs = urllib.parse.urlencode({"per_page": 20})
+    encoded = urllib.parse.quote(WORKFLOW_FILE, safe="")
+    path = "/actions/workflows/%s/runs?%s" % (encoded, qs)
+    status, data = gh_api(token, "GET", path)
     if status != 200 or not isinstance(data, dict):
-        return []
-    return data.get("workflow_runs", [])
+        return False, []
+    return True, data.get("workflow_runs", [])
 
 
 def get_run_log(token, run_id):
@@ -146,11 +145,20 @@ def queue_status_counts():
 
 
 def list_open_issues(token):
-    qs = urllib.parse.urlencode({"state": "open", "per_page": 100})
-    status, data = gh_api(token, "GET", "/issues?" + qs)
-    if status != 200 or not isinstance(data, list):
-        return []
-    return [i for i in data if "pull_request" not in i]
+    issues = []
+    page = 1
+    while True:
+        qs = urllib.parse.urlencode({
+            "state": "open", "per_page": 100, "page": page,
+        })
+        status, data = gh_api(token, "GET", "/issues?" + qs)
+        if status != 200 or not isinstance(data, list):
+            break
+        issues.extend(i for i in data if "pull_request" not in i)
+        if len(data) < 100:
+            break
+        page += 1
+    return issues
 
 
 def find_ledger_issue(token):
@@ -235,7 +243,7 @@ def main():
         print("No GITHUB_TOKEN available; watchdog disabled.")
         return
 
-    runs = get_workflow_runs(token)
+    runs_ok, runs = get_workflow_runs(token)
     failures = [r for r in runs if r.get("conclusion") == "failure"]
 
     consec = []
@@ -246,8 +254,15 @@ def main():
             break
 
     lines = ["## Watchdog Report", ""]
-    lines.append("- Recent runs: %d, failures: %d" % (len(runs), len(failures)))
-    lines.append("- Consecutive failures at head: %d" % len(consec))
+    if not runs_ok:
+        lines.append(
+            "- Could not query workflow runs (Actions API error); "
+            "verify the workflow has `actions: read` permission."
+        )
+        lines.append("- Recent runs: n/a")
+    else:
+        lines.append("- Recent runs: %d, failures: %d" % (len(runs), len(failures)))
+        lines.append("- Consecutive failures at head: %d" % len(consec))
 
     if len(consec) >= CONSECUTIVE_FAILURE_THRESHOLD:
         newest = consec[0]
