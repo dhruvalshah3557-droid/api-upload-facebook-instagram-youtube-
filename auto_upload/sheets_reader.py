@@ -99,6 +99,11 @@ class SheetsReader:
     SOURCE_HEADER_ROW = 1
     HEADER_SCAN_ROWS = 5
 
+    # Minimum number of known header columns that must match before a row is
+    # accepted as the header row, so a coincidental single-cell match on a
+    # spacer/summary row is not mistaken for the real header.
+    MIN_HEADER_MATCHES = 3
+
     # Known header names used for dynamic header-row detection.
     ACCOUNTS_HEADER_COLS = [
         "account_id", "platform", "account_name", "platform_account_id",
@@ -222,9 +227,11 @@ class SheetsReader:
             if score > best_score:
                 best_row, best_score = row, score
 
-        if best_row is None or best_score == 0:
+        if best_row is None or best_score < cls.MIN_HEADER_MATCHES:
             raise ValueError(
-                f"Could not locate the header row in worksheet '{worksheet.title}'"
+                f"Could not locate the header row in worksheet '{worksheet.title}' "
+                f"(best row {best_row} matched {best_score} of at least "
+                f"{cls.MIN_HEADER_MATCHES} expected header columns)"
             )
 
         headers = worksheet.row_values(best_row)
