@@ -2,6 +2,11 @@
 
 Project facts and conventions for the `auto_upload` project. These are persistent — no need to re-explain.
 
+## Hard rule: always save to GitHub
+
+- ALWAYS commit and push changes to GitHub (`origin/master`) after making them. Do not leave work only in the local working tree or only in local commits. If the remote moved (concurrent agent), rebase onto `origin/master` and push.
+- This is the user's explicit standing instruction.
+
 ## Project
 
 - Social-media auto uploader (`auto_upload/`) that publishes to Facebook, Instagram, and YouTube.
@@ -81,6 +86,11 @@ Columns: `job_id, attempt_time, result, platform_post_id, published_url, api_err
 - Pinterest (`pinterest_uploader.py`): API v5 pins on the account board (`platform_account_id` = board ID, else first board). Videos use `video_url` media source; carousels use `multiple_image_urls` (max 5 images).
 - Run modes: `python main.py` (once), `python main.py --generate` (populate queue), `python main.py --cycle` (generate missing rows + upload pending jobs; used by CI), `python main.py --loop` (poll every 300s; only for App Engine, not CI), `python main.py --direct` (direct upload via env).
 - `auto_upload/dump_pages.py` + `.github/workflows/dump-pages.yml` dump all FB page names/IG ids via `me/accounts` (manual dispatch → `pages` artifact).
+
+## 24/7 GitHub agents
+
+- **Watchdog** (`.github/workflows/watchdog.yml` + `auto_upload/watchdog.py`): runs every 30 min. Monitors Auto Upload runs and the publishing queue (public gviz, no secrets). After 3+ consecutive failures it escalates to a GitHub issue labeled `auto-fix` with the error signature and run IDs; posts a queue health report each cycle.
+- **Issue Fixer** (`.github/workflows/issue-fixer.yml` + `auto_upload/issue_fixer.py`): watches issues labeled `auto-fix` (on open/label + daily 04:00 sweep + manual). Uses `USER_LLM_API_KEY` secret (plus optional `USER_LLM_BASE_URL`/`USER_LLM_MODEL`/`ISSUE_FIXER_MAX_ISSUES`) to generate a diff, validates via `git apply` + `py_compile`, opens a PR on a feature branch, labels `auto-pr`, and marks unfixable issues `needs-human`. Disabled (green no-op) until `USER_LLM_API_KEY` is added to GitHub Secrets.
 
 ## Local dev
 
