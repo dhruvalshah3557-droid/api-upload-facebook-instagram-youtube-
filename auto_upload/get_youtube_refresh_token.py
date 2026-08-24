@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import json
 import sys
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -42,7 +43,16 @@ def main():
         default=str(DEFAULT_AUTH_CODE_FILE),
         help="File containing the authorization code (default: %(default)s)",
     )
+    parser.add_argument(
+        "--suffix",
+        default="",
+        help="Account suffix for the secret key, e.g. JIYA -> "
+        "YOUTUBE_OAUTH_REFRESH_TOKEN_JIYA",
+    )
     args = parser.parse_args()
+
+    suffix = ("_" + args.suffix) if args.suffix else ""
+    refresh_key = f"YOUTUBE_OAUTH_REFRESH_TOKEN{suffix}"
 
     client_secret = Path(args.client_secret)
     if not client_secret.exists():
@@ -76,14 +86,22 @@ def main():
             "requests offline access (access_type=offline)."
         )
 
+    with open(client_secret) as f:
+        secret_data = json.load(f)
+    client_info = secret_data.get("installed") or secret_data.get("web") or {}
+    client_id = client_info.get("client_id", "")
+    client_secret_value = client_info.get("client_secret", "")
+
     print("\n" + "=" * 60)
-    print("YOUTUBE_OAUTH_REFRESH_TOKEN")
+    print("PASTE THESE INTO GITHUB SECRETS (exact KEY=VALUE pairs)")
     print("=" * 60)
-    print(creds.refresh_token)
+    print(f"YOUTUBE_CLIENT_ID={client_id}")
+    print(f"YOUTUBE_CLIENT_SECRET={client_secret_value}")
+    print(f"{refresh_key}={creds.refresh_token}")
     print("=" * 60)
     print(
-        "Set this value plus YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET as GitHub "
-        "Secrets so CI can upload."
+        "Set each KEY=VALUE line as a GitHub Secret (Settings > Secrets and "
+        "variables > Actions > New repository secret)."
     )
 
 
