@@ -136,7 +136,7 @@ class InstagramUploader:
             # Reels must be 9:16; upload the prepared file (re-encoded to
             # 1080x1920 with blurred fill) instead of handing IG the raw URL.
             params.pop("video_url", None)
-            files = {"video": prepare_video(media_url, reels=True)}
+            files = {"video": prepare_video(media_url, fill_9x16=True)}
         logger.info(f"[{self.page_name}] Creating IG {'video' if is_video else 'image'} container")
         resp = requests.post(url, data=params, files=files, timeout=60)
         result = resp.json()

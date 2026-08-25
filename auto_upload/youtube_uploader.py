@@ -121,7 +121,7 @@ class YouTubeUploader:
 
     def _download_video(self, url):
         logger.info(f"Downloading video for YouTube: {url}")
-        name, content, content_type = prepare_video(url)
+        name, content, content_type = prepare_video(url, fill_9x16=True)
         return io.BytesIO(content), content_type
 
     def upload(self, media_url, title, description="", tags=None):

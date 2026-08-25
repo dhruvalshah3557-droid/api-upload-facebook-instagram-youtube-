@@ -81,22 +81,20 @@ def _mix_music(video_path, music_path, has_audio, volume=0.15):
 REELS_WIDTH, REELS_HEIGHT = 1080, 1920
 
 
-def _to_reels_9x16(video_path, out_path):
-    """Re-encode a video to 1080x1920 (9:16) with a blurred background fill.
+def _to_9x16_fill(video_path, out_path):
+    """Re-encode a video to fill a 1080x1920 (9:16) frame.
 
-    Instagram Reels are 9:16; square or landscape source videos otherwise
-    display with empty bars around them. Returns True on success.
+    The video is scaled to COVER the frame and center-cropped, so the full
+    frame shows the video only - no empty bars and no padded background.
+    Instagram Reels and YouTube Shorts are both 9:16. Returns True on success.
     """
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
-        logger.error("ffmpeg not found; skipping 9:16 Reels conversion")
+        logger.error("ffmpeg not found; skipping 9:16 conversion")
         return False
     filter_complex = (
         f"[0:v]scale={REELS_WIDTH}:{REELS_HEIGHT}:force_original_aspect_ratio=increase,"
-        f"crop={REELS_WIDTH}:{REELS_HEIGHT}:(in_w-out_w)/2:(in_h-out_h)/2,"
-        f"boxblur=20:1[b];"
-        f"[0:v]scale={REELS_WIDTH}:{REELS_HEIGHT}:force_original_aspect_ratio=decrease[fg];"
-        f"[b][fg]overlay=(W-w)/2:(H-h)/2[v]"
+        f"crop={REELS_WIDTH}:{REELS_HEIGHT}:(in_w-out_w)/2:(in_h-out_h)/2[v]"
     )
     cmd = [
         ffmpeg, "-y",
@@ -109,27 +107,27 @@ def _to_reels_9x16(video_path, out_path):
     ]
     try:
         subprocess.run(cmd, check=True, capture_output=True)
-        logger.info(f"Converted video to 9:16 Reels format ({REELS_WIDTH}x{REELS_HEIGHT})")
+        logger.info(f"Converted video to fill 9:16 frame ({REELS_WIDTH}x{REELS_HEIGHT})")
         return True
     except subprocess.CalledProcessError as e:
         detail = (e.stderr or b"").decode(errors="ignore")[:500]
-        logger.error(f"9:16 Reels conversion failed ({detail}); uploading original")
+        logger.error(f"9:16 conversion failed ({detail}); uploading original")
         return False
 
 
-def prepare_video(media_url, reels=False):
+def prepare_video(media_url, fill_9x16=False):
     """Return (name, bytes, content_type) for a video upload.
 
     Original sound is preserved by default (no processing). When
     MIX_BACKGROUND_MUSIC=true and the video has no audio stream, an approved
     low-volume instrumental track (BACKGROUND_MUSIC_PATH) is mixed in. When
-    reels=True, the video is re-encoded to 1080x1920 (9:16) with a blurred
-    background fill so it fills the Reels frame. Falls back to the original
-    file when ffmpeg or the track is unavailable.
+    fill_9x16=True, the video is re-encoded to fill 1080x1920 (9:16) so only
+    the video is visible (no bars). Falls back to the original file when
+    ffmpeg or the track is unavailable.
     """
     mix = _env("MIX_BACKGROUND_MUSIC", "false").lower() in ("true", "1", "yes")
     music_path = _env("BACKGROUND_MUSIC_PATH", "")
-    needs_processing = (mix and music_path) or reels
+    needs_processing = (mix and music_path) or fill_9x16
     if not needs_processing:
         return _download_bytes(media_url)
 
@@ -156,9 +154,9 @@ def prepare_video(media_url, reels=False):
             else:
                 logger.info("Video already has audio; preserving original sound")
 
-        if reels:
-            out_path = current + ".reels.mp4"
-            if _to_reels_9x16(current, out_path):
+        if fill_9x16:
+            out_path = current + ".9x16.mp4"
+            if _to_9x16_fill(current, out_path):
                 temp_paths.append(out_path)
                 content = Path(out_path).read_bytes()
                 return name, content, "video/mp4"
