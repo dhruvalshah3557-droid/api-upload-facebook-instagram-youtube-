@@ -142,3 +142,23 @@ class FacebookUploader:
         if is_video:
             return self.upload_video(media_url, caption, product_id)
         return self.upload_photo(media_url, caption, product_id)
+
+    def permalink_url(self, object_id):
+        """Resolve the canonical public URL for a created object (post/photo/video).
+
+        Feed posts return a composite id like "<page_id>_<post_id>" which does
+        not map to a working /posts/ URL directly; photos return a photo id, not
+        a post id. The Graph API `permalink_url` field is authoritative.
+        """
+        if not object_id:
+            return ""
+        try:
+            resp = requests.get(
+                f"{FB_GRAPH_URL}/{object_id}",
+                params={"fields": "permalink_url", "access_token": self.access_token},
+                timeout=15,
+            )
+            data = resp.json()
+            return str(data.get("permalink_url", "") or "").strip()
+        except Exception:
+            return ""

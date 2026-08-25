@@ -193,3 +193,23 @@ class InstagramUploader:
         logger.info(f"[{self.page_name}] Waiting {wait}s for media processing...")
         time.sleep(wait)
         return self._publish_container(container_id)
+
+    def permalink(self, media_id):
+        """Resolve the canonical public URL for a published media object.
+
+        The media_publish response returns the numeric media ID, but the
+        https://www.instagram.com/p/<numeric-id> form only serves a login/blank
+        page. The Graph API `permalink` field returns the real shortcode URL.
+        """
+        if not media_id:
+            return ""
+        try:
+            resp = requests.get(
+                f"{FB_GRAPH_URL}/{media_id}",
+                params={"fields": "permalink", "access_token": self.access_token},
+                timeout=15,
+            )
+            data = resp.json()
+            return str(data.get("permalink", "") or "").strip()
+        except Exception:
+            return ""

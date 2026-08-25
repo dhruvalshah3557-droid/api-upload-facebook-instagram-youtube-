@@ -170,6 +170,12 @@ def _carousel_images(media):
     return [u for u in media if not any(ext in u.lower() for ext in _VIDEO_EXTS)]
 
 
+def _facebook_post_url(page_id, post_id):
+    """Fallback FB post URL when the Graph permalink lookup fails."""
+    numeric = str(post_id).rsplit("_", 1)[-1]
+    return f"https://www.facebook.com/{page_id}/posts/{numeric}"
+
+
 def _tag_value(job):
     return job.get("stock_id_tag", "") or job.get("sku", "")
 
@@ -205,7 +211,9 @@ def publish_job(job, source, account):
         else:
             post = uploader.upload(media[0], caption, tag)
         post_id = post.get("id", "")
-        url = f"https://www.facebook.com/{account['platform_account_id']}/posts/{post_id}"
+        url = uploader.permalink_url(post_id) or _facebook_post_url(
+            account["platform_account_id"], post_id
+        )
         return post_id, url
 
     if platform == "instagram":
@@ -218,7 +226,7 @@ def publish_job(job, source, account):
         else:
             post = uploader.upload(media[0], caption, tag)
         post_id = post.get("id", "")
-        url = f"https://www.instagram.com/p/{post_id}"
+        url = uploader.permalink(post_id) or f"https://www.instagram.com/p/{post_id}"
         return post_id, url
 
     if platform == "youtube":
