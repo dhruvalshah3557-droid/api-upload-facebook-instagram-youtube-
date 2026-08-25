@@ -14,7 +14,9 @@ from instagram_uploader import InstagramUploader
 from job_generator import generate_jobs
 from line_uploader import LineUploader
 from linkedin_uploader import LinkedInUploader
+from lazada_uploader import LazadaUploader
 from pinterest_uploader import PinterestUploader
+from shopee_uploader import ShopeeUploader
 from sheets_reader import SheetsReader
 from tiktok_uploader import TikTokUploader
 from twitch_uploader import TwitchUploader
@@ -145,7 +147,7 @@ def build_caption(job, source, account):
         caption = source.get("instagram_caption", "")
     elif platform == "youtube":
         caption = source.get("youtube_shorts_caption", "") or source.get("facebook_caption", "")
-    elif platform in ("tiktok", "x", "twitch"):
+    elif platform in ("tiktok", "x", "twitch", "shopee", "lazada"):
         caption = source.get("instagram_caption", "") or source.get("facebook_caption", "")
     elif platform == "linkedin":
         caption = source.get("facebook_caption", "") or source.get("instagram_caption", "")
@@ -333,6 +335,28 @@ def publish_job(job, source, account):
         post_id = post.get("id", "")
         channel = account.get("username_or_channel", "") or account.get("account_name", "")
         url = post.get("url") or f"https://www.twitch.tv/{channel}"
+        return post_id, url
+
+    if platform == "shopee":
+        if format_type != "carousel":
+            raise Exception("Shopee media upload supports image/carousel jobs only")
+        uploader = ShopeeUploader(account_name=account.get("account_name", ""))
+        images = _carousel_images(media)
+        results = uploader.upload_carousel(images or media, caption, title)
+        first = results[0] if results else {}
+        post_id = first.get("id", "")
+        url = first.get("url", "")
+        return post_id, url
+
+    if platform == "lazada":
+        if format_type != "carousel":
+            raise Exception("Lazada media upload supports image/carousel jobs only")
+        uploader = LazadaUploader(account_name=account.get("account_name", ""))
+        images = _carousel_images(media)
+        results = uploader.upload_carousel(images or media, caption, title)
+        first = results[0] if results else {}
+        post_id = first.get("id", "")
+        url = first.get("url", "")
         return post_id, url
 
     if platform == "x":

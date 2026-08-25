@@ -142,6 +142,16 @@ jobs:
           TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
           TWITCH_BROADCASTER_ID: ${{ secrets.TWITCH_BROADCASTER_ID }}
           TWITCH_ACCESS_TOKEN: ${{ secrets.TWITCH_ACCESS_TOKEN }}
+          SHOPEE_PARTNER_ID: ${{ secrets.SHOPEE_PARTNER_ID }}
+          SHOPEE_PARTNER_KEY: ${{ secrets.SHOPEE_PARTNER_KEY }}
+          SHOPEE_ACCESS_TOKEN: ${{ secrets.SHOPEE_ACCESS_TOKEN }}
+          SHOPEE_SHOP_ID: ${{ secrets.SHOPEE_SHOP_ID }}
+          META_TOKEN_SHOPEE_CD: ${{ secrets.META_TOKEN_SHOPEE_CD || secrets.SHOPEE_ACCESS_TOKEN }}
+          LAZADA_REGION: ${{ secrets.LAZADA_REGION || 'th' }}
+          LAZADA_APP_KEY: ${{ secrets.LAZADA_APP_KEY }}
+          LAZADA_APP_SECRET: ${{ secrets.LAZADA_APP_SECRET }}
+          LAZADA_ACCESS_TOKEN: ${{ secrets.LAZADA_ACCESS_TOKEN }}
+          META_TOKEN_LAZADA_CD: ${{ secrets.META_TOKEN_LAZADA_CD || secrets.LAZADA_ACCESS_TOKEN }}
           X_CONSUMER_KEY: ${{ secrets.X_CONSUMER_KEY }}
           X_CONSUMER_SECRET: ${{ secrets.X_CONSUMER_SECRET }}
           X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
