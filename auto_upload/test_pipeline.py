@@ -431,6 +431,35 @@ def test_round_robin_jobs_mix_platforms():
     print("OK test_round_robin_jobs_mix_platforms")
 
 
+def test_resolve_ig_user_id_handles_linked_and_unlinked_pages():
+    from instagram_uploader import IGAccountNotLinkedError
+
+    main.InstagramUploader._IG_ID_CACHE.clear()
+
+    def _resp(data):
+        return types.SimpleNamespace(json=lambda: data)
+
+    def fake_get(url, params, timeout=15):
+        node_id = url.rstrip("/").rsplit("/", 1)[-1]
+        if node_id == "IG_ACCT":
+            return _resp({"id": "IG_ACCT", "media_count": 12, "ig_id": "IG_ACCT"})
+        if node_id == "LINKED_PAGE":
+            return _resp({"id": "LINKED_PAGE", "instagram_business_account": {"id": "IG_ACCT"}})
+        if node_id == "UNLINKED_PAGE":
+            return _resp({"id": "UNLINKED_PAGE"})
+        return _resp({"error": {"message": "bad node"}})
+
+    with patch("instagram_uploader.requests.get", side_effect=fake_get):
+        assert main.InstagramUploader._resolve_ig_user_id("IG_ACCT", "tok") == "IG_ACCT"
+        assert main.InstagramUploader._resolve_ig_user_id("LINKED_PAGE", "tok") == "IG_ACCT"
+        try:
+            main.InstagramUploader._resolve_ig_user_id("UNLINKED_PAGE", "tok")
+            assert False, "expected IGAccountNotLinkedError"
+        except IGAccountNotLinkedError:
+            pass
+    print("OK test_resolve_ig_user_id_handles_linked_and_unlinked_pages")
+
+
 if __name__ == "__main__":
     test_generate_is_idempotent()
     test_one_failure_does_not_stop_others()
@@ -438,4 +467,5 @@ if __name__ == "__main__":
     test_generate_new_platforms()
     test_publish_new_platforms_routing()
     test_round_robin_jobs_mix_platforms()
+    test_resolve_ig_user_id_handles_linked_and_unlinked_pages()
     print("All pipeline tests passed.")

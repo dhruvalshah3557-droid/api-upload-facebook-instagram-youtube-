@@ -21,6 +21,16 @@ def _mix_enabled():
     return os.getenv("MIX_BACKGROUND_MUSIC", "").strip().lower() in ("true", "1", "yes")
 
 
+class IGAccountNotLinkedError(Exception):
+    """The configured Facebook page is not linked to an Instagram Business
+    Account, so the IG Graph API cannot publish to it.
+
+    Raised instead of silently using the Facebook page ID as the IG user ID
+    (which produces confusing API failures). Jobs stay pending and publish
+    automatically once the account is linked in Meta Business Suite.
+    """
+
+
 class InstagramUploader:
     _IG_ID_CACHE = {}
 
@@ -55,11 +65,26 @@ class InstagramUploader:
 
         resolved = ""
         if configured_id:
-            data = _graph_get(configured_id, "instagram_business_account,id")
+            data = _graph_get(configured_id, "instagram_business_account,id,media_count,ig_id")
             ig = data.get("instagram_business_account") or {}
             resolved = str(ig.get("id", "") or "").strip()
-            if not resolved:
+            if not resolved and ("media_count" in data or "ig_id" in data):
+                # The configured id is itself an Instagram business account.
                 resolved = configured_id
+            if not resolved:
+                api_err = (data.get("error") or {}).get("message", "")
+                if data.get("id") or api_err:
+                    detail = f" (API: {api_err})" if api_err else ""
+                    raise IGAccountNotLinkedError(
+                        f"No Instagram Business Account is linked to node "
+                        f"{configured_id}{detail}. Link the Instagram account "
+                        f"'{page_name}' to this Facebook page in Meta Business "
+                        "Suite; the pipeline will resolve it automatically."
+                    )
+                raise Exception(
+                    f"Could not resolve Instagram business account ID for "
+                    f"{configured_id} (Graph API unavailable); will retry"
+                )
         else:
             try:
                 pages = requests.get(

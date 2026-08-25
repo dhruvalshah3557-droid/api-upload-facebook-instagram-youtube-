@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from caption_generator import generate_caption, generate_hashtags
 from config import Config
 from facebook_uploader import FacebookUploader
-from instagram_uploader import InstagramUploader
+from instagram_uploader import IGAccountNotLinkedError, InstagramUploader
 from job_generator import generate_jobs
 from line_uploader import LineUploader
 from linkedin_uploader import LinkedInUploader
@@ -509,6 +509,17 @@ def process_pending(sheets=None):
                     "success",
                 ))
                 logger.info(f"Job {job_id}: uploaded -> {url}")
+            except IGAccountNotLinkedError as e:
+                sheets.update_job(job, {
+                    "status": "pending",
+                    "last_attempt_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "error_message": str(e)[:2000],
+                    "notes": "IG business account not linked yet; waiting to retry",
+                })
+                logger.warning(
+                    f"Job {job_id}: IG business account not linked, "
+                    f"keeping pending (no attempt consumed): {e}"
+                )
             except Exception as e:
                 attempts = job.get("attempts", 0) + 1
                 message = str(e)
