@@ -1,5 +1,4 @@
 import logging
-import os
 import time
 
 import requests
@@ -15,10 +14,6 @@ _VIDEO_EXTS = (".mp4", ".mov", ".avi", ".mkv", ".webm")
 
 def _is_video_url(url):
     return any(ext in url.lower() for ext in _VIDEO_EXTS)
-
-
-def _mix_enabled():
-    return os.getenv("MIX_BACKGROUND_MUSIC", "").strip().lower() in ("true", "1", "yes")
 
 
 class IGAccountNotLinkedError(Exception):
@@ -137,11 +132,11 @@ class InstagramUploader:
 
         url = f"{FB_GRAPH_URL}/{self.ig_user_id}/media"
         files = None
-        if is_video and not carousel_item and _mix_enabled():
-            # Audio processing requires uploading the prepared file instead of
-            # a URL (preserves original sound or mixes approved instrumental).
+        if is_video and not carousel_item:
+            # Reels must be 9:16; upload the prepared file (re-encoded to
+            # 1080x1920 with blurred fill) instead of handing IG the raw URL.
             params.pop("video_url", None)
-            files = {"video": prepare_video(media_url)}
+            files = {"video": prepare_video(media_url, reels=True)}
         logger.info(f"[{self.page_name}] Creating IG {'video' if is_video else 'image'} container")
         resp = requests.post(url, data=params, files=files, timeout=60)
         result = resp.json()

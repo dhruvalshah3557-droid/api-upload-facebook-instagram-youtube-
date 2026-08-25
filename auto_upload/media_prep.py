@@ -78,23 +78,65 @@ def _mix_music(video_path, music_path, has_audio, volume=0.15):
         return video_path
 
 
-def prepare_video(media_url):
+REELS_WIDTH, REELS_HEIGHT = 1080, 1920
+
+
+def _to_reels_9x16(video_path, out_path):
+    """Re-encode a video to 1080x1920 (9:16) with a blurred background fill.
+
+    Instagram Reels are 9:16; square or landscape source videos otherwise
+    display with empty bars around them. Returns True on success.
+    """
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        logger.error("ffmpeg not found; skipping 9:16 Reels conversion")
+        return False
+    filter_complex = (
+        f"[0:v]scale={REELS_WIDTH}:{REELS_HEIGHT}:force_original_aspect_ratio=increase,"
+        f"crop={REELS_WIDTH}:{REELS_HEIGHT}:(in_w-out_w)/2:(in_h-out_h)/2,"
+        f"boxblur=20:1[b];"
+        f"[0:v]scale={REELS_WIDTH}:{REELS_HEIGHT}:force_original_aspect_ratio=decrease[fg];"
+        f"[b][fg]overlay=(W-w)/2:(H-h)/2[v]"
+    )
+    cmd = [
+        ffmpeg, "-y",
+        "-i", video_path,
+        "-filter_complex", filter_complex,
+        "-map", "[v]", "-map", "0:a?",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+        "-c:a", "aac", "-shortest",
+        out_path,
+    ]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True)
+        logger.info(f"Converted video to 9:16 Reels format ({REELS_WIDTH}x{REELS_HEIGHT})")
+        return True
+    except subprocess.CalledProcessError as e:
+        detail = (e.stderr or b"").decode(errors="ignore")[:500]
+        logger.error(f"9:16 Reels conversion failed ({detail}); uploading original")
+        return False
+
+
+def prepare_video(media_url, reels=False):
     """Return (name, bytes, content_type) for a video upload.
 
     Original sound is preserved by default (no processing). When
     MIX_BACKGROUND_MUSIC=true and the video has no audio stream, an approved
-    low-volume instrumental track (BACKGROUND_MUSIC_PATH) is mixed in. Falls
-    back to the original file when ffmpeg or the track is unavailable.
+    low-volume instrumental track (BACKGROUND_MUSIC_PATH) is mixed in. When
+    reels=True, the video is re-encoded to 1080x1920 (9:16) with a blurred
+    background fill so it fills the Reels frame. Falls back to the original
+    file when ffmpeg or the track is unavailable.
     """
     mix = _env("MIX_BACKGROUND_MUSIC", "false").lower() in ("true", "1", "yes")
     music_path = _env("BACKGROUND_MUSIC_PATH", "")
-    if not mix or not music_path:
+    needs_processing = (mix and music_path) or reels
+    if not needs_processing:
         return _download_bytes(media_url)
 
     suffix = Path(media_url.split("?")[0]).suffix or ".mp4"
     fd, tmp_path = tempfile.mkstemp(suffix=suffix)
     os.close(fd)
-    processed_path = ""
+    temp_paths = [tmp_path]
     try:
         resp = requests.get(media_url, timeout=180, headers={"User-Agent": USER_AGENT})
         resp.raise_for_status()
@@ -102,18 +144,32 @@ def prepare_video(media_url):
             f.write(resp.content)
 
         name = media_url.split("?")[0].rsplit("/", 1)[-1] or "video.mp4"
-        has_audio = _has_audio(tmp_path)
-        if has_audio is not False:
-            logger.info("Video already has audio; preserving original sound")
-            return name, resp.content, resp.headers.get("Content-Type", "video/mp4")
+        current = tmp_path
 
-        processed_path = _mix_music(tmp_path, music_path, has_audio=False)
-        content = Path(processed_path).read_bytes()
-        return name, content, "video/mp4"
+        if mix and music_path:
+            has_audio = _has_audio(tmp_path)
+            if has_audio is False:
+                mixed = _mix_music(tmp_path, music_path, has_audio=False)
+                if mixed != tmp_path:
+                    current = mixed
+                    temp_paths.append(mixed)
+            else:
+                logger.info("Video already has audio; preserving original sound")
+
+        if reels:
+            out_path = current + ".reels.mp4"
+            if _to_reels_9x16(current, out_path):
+                temp_paths.append(out_path)
+                content = Path(out_path).read_bytes()
+                return name, content, "video/mp4"
+
+        if current != tmp_path:
+            content = Path(current).read_bytes()
+            return name, content, "video/mp4"
+        return name, resp.content, resp.headers.get("Content-Type", "video/mp4")
     finally:
-        for path in (tmp_path, processed_path):
-            if path:
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
+        for path in temp_paths:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
