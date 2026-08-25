@@ -136,6 +136,12 @@ jobs:
           META_TOKEN_PINTEREST_CD: ${{ secrets.META_TOKEN_PINTEREST_CD || secrets.PINTEREST_ACCESS_TOKEN }}
           TIKTOK_ACCESS_TOKEN: ${{ secrets.TIKTOK_ACCESS_TOKEN }}
           META_TOKEN_TIKTOK_CD: ${{ secrets.META_TOKEN_TIKTOK_CD || secrets.TIKTOK_ACCESS_TOKEN }}
+          TWITCH_STREAM_KEY: ${{ secrets.TWITCH_STREAM_KEY }}
+          META_TOKEN_TWITCH_CD: ${{ secrets.META_TOKEN_TWITCH_CD || secrets.TWITCH_STREAM_KEY }}
+          TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
+          TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
+          TWITCH_BROADCASTER_ID: ${{ secrets.TWITCH_BROADCASTER_ID }}
+          TWITCH_ACCESS_TOKEN: ${{ secrets.TWITCH_ACCESS_TOKEN }}
           X_CONSUMER_KEY: ${{ secrets.X_CONSUMER_KEY }}
           X_CONSUMER_SECRET: ${{ secrets.X_CONSUMER_SECRET }}
           X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}

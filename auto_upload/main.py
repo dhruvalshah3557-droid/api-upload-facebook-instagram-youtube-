@@ -17,6 +17,7 @@ from linkedin_uploader import LinkedInUploader
 from pinterest_uploader import PinterestUploader
 from sheets_reader import SheetsReader
 from tiktok_uploader import TikTokUploader
+from twitch_uploader import TwitchUploader
 from wechat_uploader import WeChatUploader
 from x_uploader import XUploader
 from youtube_uploader import YouTubeUploader
@@ -144,7 +145,7 @@ def build_caption(job, source, account):
         caption = source.get("instagram_caption", "")
     elif platform == "youtube":
         caption = source.get("youtube_shorts_caption", "") or source.get("facebook_caption", "")
-    elif platform in ("tiktok", "x"):
+    elif platform in ("tiktok", "x", "twitch"):
         caption = source.get("instagram_caption", "") or source.get("facebook_caption", "")
     elif platform == "linkedin":
         caption = source.get("facebook_caption", "") or source.get("instagram_caption", "")
@@ -314,6 +315,24 @@ def publish_job(job, source, account):
         post = uploader.upload(media[0], title=title, description=caption)
         post_id = post.get("id", "")
         url = post.get("url", f"https://www.tiktok.com/@{account.get('account_name', '')}/video/{post_id}")
+        return post_id, url
+
+    if platform == "twitch":
+        if format_type != "video":
+            raise Exception("Twitch only supports video jobs (carousel/image posts are not available on Twitch)")
+        twitch_key = os.getenv(account.get("credential_property_key", "")) or os.getenv("TWITCH_STREAM_KEY")
+        if not twitch_key:
+            raise Exception("No Twitch stream key configured (set TWITCH_STREAM_KEY or META_TOKEN_TWITCH_*)")
+        uploader = TwitchUploader(
+            stream_key=twitch_key,
+            broadcaster_id=account.get("platform_account_id", ""),
+            account_name=account.get("account_name", ""),
+        )
+        title = (job.get("title") or source.get("product_name") or "Video")[:140]
+        post = uploader.upload(media[0], title=title, description=caption)
+        post_id = post.get("id", "")
+        channel = account.get("username_or_channel", "") or account.get("account_name", "")
+        url = post.get("url") or f"https://www.twitch.tv/{channel}"
         return post_id, url
 
     if platform == "x":

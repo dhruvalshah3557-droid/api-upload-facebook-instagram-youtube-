@@ -232,6 +232,28 @@ NEW_ACCOUNTS = [
         "approval_required": "No",
         "notes": "Pinterest API v5 token; platform_account_id = board ID",
     },
+    {
+        "account_id": "TWITCH-CD",
+        "platform": "Twitch",
+        "account_name": "Colour Diam Twitch",
+        "platform_account_id": "",
+        "username_or_channel": "colourdiam",
+        "primary_language": "en-GB",
+        "fallback_language": "en-GB",
+        "timezone": "Asia/Bangkok",
+        "enabled": "No",
+        "allowed_formats": "Video, Live Broadcast",
+        "caption_style": "International luxury; concise",
+        "hashtag_set": "Product-specific tags",
+        "cta_rule": "VOD/channel link",
+        "posting_window": "10:00-21:00 local",
+        "min_gap_minutes": "180",
+        "product_tagging": "No",
+        "catalog_or_store_id": "",
+        "credential_property_key": "META_TOKEN_TWITCH_CD",
+        "approval_required": "No",
+        "notes": "Twitch stream key; video broadcast via RTMP -> VOD",
+    },
 ]
 
 ACCOUNTS_COLS = SheetsReader.ACCOUNTS_HEADER_COLS

@@ -102,7 +102,7 @@ def generate_jobs(sources, accounts):
                     jobs.append(_make_job(sku, account_id, platform, "video", "product_video", account))
                 for i in range(len(source["model_videos"])):
                     jobs.append(_make_job(sku, account_id, platform, "video", f"model_video:{i}", account))
-            elif platform in ("youtube", "tiktok"):
+            elif platform in ("youtube", "tiktok", "twitch"):
                 if source["video_url"]:
                     jobs.append(_make_job(sku, account_id, platform, "video", "product_video", account))
                 for i in range(len(source["model_videos"])):

@@ -9,8 +9,8 @@ Project facts and conventions for the `auto_upload` project. These are persisten
 
 ## Project
 
-- Social-media auto uploader (`auto_upload/`) that publishes to Facebook, Instagram, and YouTube.
-- Code: `auto_upload/main.py`, `sheets_reader.py`, `job_generator.py`, `facebook_uploader.py`, `instagram_uploader.py`, `youtube_uploader.py`, `caption_generator.py`, `product_scraper.py`, `config.py`, `media_prep.py`.
+- Social-media auto uploader (`auto_upload/`) that publishes to Facebook, Instagram, YouTube, Pinterest, LINE, WeChat, TikTok, X, LinkedIn and Twitch.
+- Code: `auto_upload/main.py`, `sheets_reader.py`, `job_generator.py`, `facebook_uploader.py`, `instagram_uploader.py`, `youtube_uploader.py`, `caption_generator.py`, `product_scraper.py`, `config.py`, `media_prep.py`, `pinterest_uploader.py`, `line_uploader.py`, `wechat_uploader.py`, `tiktok_uploader.py`, `x_uploader.py`, `linkedin_uploader.py`, `twitch_uploader.py`.
 
 ## Workbook structure (authoritative)
 
@@ -55,8 +55,8 @@ Flow: Source Import → Accounts → Publishing Queue → Publishing Log.
 
 Columns include `account_id`, `platform`, `account_name`, `platform_account_id`, `primary_language`, `timezone`, `enabled`, `allowed_formats`, `min_gap_minutes`, `product_tagging`, `catalog_or_store_id`, `credential_property_key`, `approval_required`.
 
-- Only `enabled = Yes` accounts are used. The Accounts tab has 26 data rows: all 13 Facebook accounts (FB-ISR/JPN/KOR/RUS/PH/JIYA/MMR/GLOBAL/BKK/TREND/LTD/CD/NFCD) plus FB-INDO are enabled. Instagram IG-BKK/TREND/LTD/CD, IG-INDO, IG-RUS, IG-KOR are enabled (IG-JPN/MMR/PH disabled until IG business IDs are linked). YouTube YT-CD and YT-JIYA are enabled. LINE-CD, WECHAT-CD and PINTEREST-CD are provisioned via `add_accounts.py` but only used once their tokens/IDs are filled in.
-- Credential keys map to GitHub secrets: `META_TOKEN_FB_ISR`..`META_TOKEN_FB_NFCD`, `META_TOKEN_FB_INDO`, `META_TOKEN_IG_BKK/TREND/LTD/CD/INDO/RUS/KOR/JPN/MMR/PH`, plus `YOUTUBE_OAUTH_REFRESH_TOKEN` and `YOUTUBE_OAUTH_REFRESH_TOKEN_JIYA`. LINE uses `LINE_CHANNEL_ACCESS_TOKEN` (per-account override `META_TOKEN_LINE_CD`). WeChat uses `WECHAT_APPID`/`WECHAT_APPSECRET` (per-account `META_TOKEN_WECHAT_CD=APPID:SECRET`). Pinterest uses `PINTEREST_ACCESS_TOKEN` (per-account `META_TOKEN_PINTEREST_CD`).
+- Only `enabled = Yes` accounts are used. The Accounts tab has 26 data rows: all 13 Facebook accounts (FB-ISR/JPN/KOR/RUS/PH/JIYA/MMR/GLOBAL/BKK/TREND/LTD/CD/NFCD) plus FB-INDO are enabled. Instagram IG-BKK/TREND/LTD/CD, IG-INDO, IG-RUS, IG-KOR are enabled (IG-JPN/MMR/PH disabled until IG business IDs are linked). YouTube YT-CD and YT-JIYA are enabled. LINE-CD, WECHAT-CD, PINTEREST-CD and TWITCH-CD are provisioned via `add_accounts.py` but only used once their tokens/IDs are filled in (PINTEREST-CD is currently enabled).
+- Credential keys map to GitHub secrets: `META_TOKEN_FB_ISR`..`META_TOKEN_FB_NFCD`, `META_TOKEN_FB_INDO`, `META_TOKEN_IG_BKK/TREND/LTD/CD/INDO/RUS/KOR/JPN/MMR/PH`, plus `YOUTUBE_OAUTH_REFRESH_TOKEN` and `YOUTUBE_OAUTH_REFRESH_TOKEN_JIYA`. LINE uses `LINE_CHANNEL_ACCESS_TOKEN` (per-account override `META_TOKEN_LINE_CD`). WeChat uses `WECHAT_APPID`/`WECHAT_APPSECRET` (per-account `META_TOKEN_WECHAT_CD=APPID:SECRET`). Pinterest uses `PINTEREST_ACCESS_TOKEN` (per-account `META_TOKEN_PINTEREST_CD`). Twitch uses `TWITCH_STREAM_KEY` (per-account `META_TOKEN_TWITCH_CD`), plus optional `TWITCH_CLIENT_ID`/`TWITCH_CLIENT_SECRET`/`TWITCH_BROADCASTER_ID`/`TWITCH_ACCESS_TOKEN`.
 - `product_tagging = Yes` means every FB/IG post is tagged with the row's `STK`/SKU (Publishing Queue `stock_id_tag` / `tag_stock_id_used`). A rejected tag → `tagging_status = Failed` + exact API error in `error_message`.
 
 ## Publishing Queue
@@ -83,7 +83,8 @@ Columns: `job_id, attempt_time, result, platform_post_id, published_url, api_err
 - Facebook carousels: children created via `/{page}/photos` with `published=false`, then published via `/{page}/feed` with `attached_media` + `message`.
 - LINE (`line_uploader.py`): broadcasts via Messaging API to all followers. No native carousel — a carousel is sent as up to 5 image messages per broadcast request. Media URLs must be publicly reachable HTTPS URLs.
 - WeChat (`wechat_uploader.py`): uploads permanent materials then mass-sends via `message/mass/sendall`. Carousels become draft articles (图文) via `draft/add` + `freepublish/submit` (needs a verified account). Video uses `prepare_video()` before upload.
-- Pinterest (`pinterest_uploader.py`): API v5 pins on the account board (`platform_account_id` = board ID, else first board). Videos use `video_url` media source; carousels use `multiple_image_urls` (max 5 images).
+- Pinterest (`pinterest_uploader.py`): API v5 pins on the account board (`platform_account_id` = board ID, else first board). Videos use `video_url` media source; carousels use `multiple_image_urls` (max 5 images). Production base `api.pinterest.com/v5` by default (override `PINTEREST_API_BASE`).
+- Twitch (`twitch_uploader.py`): Twitch has no video file upload API, so each product video is broadcast to the RTMP ingest (`rtmp://live.twitch.tv/app/<stream key>`) as a short live stream via ffmpeg, which becomes a VOD. Video-only (carousel/image jobs are rejected). `TWITCH_STREAM_KEY` (or per-account `META_TOKEN_TWITCH_CD`); `TWITCH_CLIENT_ID`/`TWITCH_CLIENT_SECRET`/`TWITCH_BROADCASTER_ID` enable best-effort VOD URL lookup via Helix, `TWITCH_ACCESS_TOKEN` (scope `channel:manage:broadcast`) optionally sets the stream title.
 - Run modes: `python main.py` (once), `python main.py --generate` (populate queue), `python main.py --cycle` (generate missing rows + upload pending jobs; used by CI), `python main.py --loop` (poll every 300s; only for App Engine, not CI), `python main.py --direct` (direct upload via env).
 - `auto_upload/dump_pages.py` + `.github/workflows/dump-pages.yml` dump all FB page names/IG ids via `me/accounts` (manual dispatch → `pages` artifact).
 
