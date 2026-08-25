@@ -385,6 +385,31 @@ def insert_logs_newest_first(sheets, entries):
             logger.warning(f"Publishing Log insert hit quota; retrying: {exc}")
 
 
+def _round_robin_jobs(jobs, limit):
+    """Select up to `limit` jobs, alternating across platforms.
+
+    Without this, FIFO selection lets one platform's backlog (e.g. a large FB
+    pending backlog sitting below newer IG/YT rows) starve the others, so
+    those platforms never publish and produce no log entries.
+    """
+    by_platform = {}
+    order = []
+    for job in jobs:
+        platform = job.get("platform", "")
+        if platform not in by_platform:
+            by_platform[platform] = []
+            order.append(platform)
+        by_platform[platform].append(job)
+    selected = []
+    while len(selected) < limit and any(by_platform.values()):
+        for platform in order:
+            if len(selected) >= limit:
+                break
+            if by_platform[platform]:
+                selected.append(by_platform[platform].pop(0))
+    return selected
+
+
 def process_pending(sheets=None):
     try:
         sheets = sheets or open_sheets_with_retry()
@@ -404,7 +429,7 @@ def process_pending(sheets=None):
     logger.info(f"Processing {len(jobs)} pending job(s)")
     log_buffer = []
     try:
-        for job in jobs[:Config.MAX_JOBS_PER_RUN]:
+        for job in _round_robin_jobs(jobs, Config.MAX_JOBS_PER_RUN):
             job_id = job["job_id"]
             logger.info(f"Job {job_id}: {job['platform']}/{job['format']} - {job['media_selection']} (SKU {job['sku']})")
 

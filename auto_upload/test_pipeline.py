@@ -411,10 +411,31 @@ def test_publish_new_platforms_routing():
     print("OK test_publish_new_platforms_routing")
 
 
+def test_round_robin_jobs_mix_platforms():
+    jobs = [
+        {"job_id": "a", "platform": "facebook"},
+        {"job_id": "b", "platform": "facebook"},
+        {"job_id": "c", "platform": "instagram"},
+        {"job_id": "d", "platform": "youtube"},
+        {"job_id": "e", "platform": "instagram"},
+        {"job_id": "f", "platform": "facebook"},
+    ]
+    selected = main._round_robin_jobs(jobs, 5)
+    picked = [j["job_id"] for j in selected]
+    assert picked == ["a", "c", "d", "b", "e"], picked
+    counts = {p: 0 for p in ("facebook", "instagram", "youtube")}
+    for j in selected:
+        counts[j["platform"]] += 1
+    assert counts == {"facebook": 2, "instagram": 2, "youtube": 1}, counts
+    assert main._round_robin_jobs([], 5) == []
+    print("OK test_round_robin_jobs_mix_platforms")
+
+
 if __name__ == "__main__":
     test_generate_is_idempotent()
     test_one_failure_does_not_stop_others()
     test_second_run_does_not_repost_uploaded()
     test_generate_new_platforms()
     test_publish_new_platforms_routing()
+    test_round_robin_jobs_mix_platforms()
     print("All pipeline tests passed.")
