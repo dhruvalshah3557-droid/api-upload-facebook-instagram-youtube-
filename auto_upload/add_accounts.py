@@ -219,7 +219,7 @@ NEW_ACCOUNTS = [
         "primary_language": "en-GB",
         "fallback_language": "en-GB",
         "timezone": "Asia/Bangkok",
-        "enabled": "No",
+        "enabled": "Yes",
         "allowed_formats": "Image Post, Carousel, Video Pin",
         "caption_style": "International luxury; visual",
         "hashtag_set": "Jewellery + diamond tags",
