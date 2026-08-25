@@ -6,8 +6,9 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-# Pinterest API v5. Sandbox base is used for testing.
-PIN_BASE = os.getenv("PINTEREST_API_BASE", "https://api-sandbox.pinterest.com/v5")
+# Pinterest API v5. Production base by default; override with PINTEREST_API_BASE
+# for testing against the sandbox.
+PIN_BASE = os.getenv("PINTEREST_API_BASE", "https://api.pinterest.com/v5")
 
 _VIDEO_EXTS = (".mp4", ".mov", ".avi", ".mkv", ".webm")
 
