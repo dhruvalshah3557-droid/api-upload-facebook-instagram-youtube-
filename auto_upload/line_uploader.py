@@ -81,7 +81,7 @@ class LineUploader:
         )
         result = self._broadcast([message])
         message_id = result["sentMessages"][0].get("id", "")
-        return {"id": message_id, "url": f"https://line.me/"}
+        return {"id": message_id, "url": "https://line.me/"}
 
     def upload_carousel(self, image_urls, caption="", product_id=""):
         """Send up to 5 images as image messages in one broadcast (batched)."""
@@ -91,4 +91,4 @@ class LineUploader:
             result = self._broadcast(messages[start:start + self._MAX_MESSAGES])
             ids.extend(m.get("id", "") for m in result.get("sentMessages", []))
             time.sleep(2)
-        return {"id": ids[0] if ids else "", "url": f"https://line.me/"}
+        return {"id": ids[0] if ids else "", "url": "https://line.me/"}

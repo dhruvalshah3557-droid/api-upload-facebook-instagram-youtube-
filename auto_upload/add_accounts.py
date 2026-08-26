@@ -5,9 +5,7 @@ Idempotent: skips any account_id that already exists. Uses the same service
 account credentials as the rest of the pipeline (GOOGLE_SHEET_CREDENTIALS).
 """
 import sys
-from pathlib import Path
 
-from config import Config
 from sheets_reader import SheetsReader
 
 
