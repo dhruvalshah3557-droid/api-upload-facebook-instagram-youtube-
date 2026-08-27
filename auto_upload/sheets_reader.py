@@ -12,24 +12,17 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 logger = logging.getLogger(__name__)
 
-# Transient Google Sheets API statuses that should be retried with backoff.
 _RETRY_STATUSES = (429, 500, 502, 503, 504)
 _RETRY_MAX_ATTEMPTS = 8
-
-# Google Sheets enforces ~60 write requests/minute per user. Pacing our writes
-# below that limit prevents self-inflicted 429s during large batch appends.
 _WRITE_INTERVAL = 1.15
 _write_lock = threading.Lock()
 _last_write = 0.0
-
-# Reads share the per-user quota too; pace them as well.
 _READ_INTERVAL = 0.35
 _read_lock = threading.Lock()
 _last_read = 0.0
 
 
 def _throttle_write(func):
-    """Space out write requests so we never exceed the Sheets write quota."""
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         global _last_write
@@ -43,7 +36,6 @@ def _throttle_write(func):
 
 
 def _throttle_read(func):
-    """Space out read requests so we never exceed the Sheets read quota."""
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         global _last_read
@@ -57,13 +49,6 @@ def _throttle_read(func):
 
 
 def _retry_gsheet(func):
-    """Retry a Google Sheets API call with exponential backoff + jitter.
-
-    Google Sheets rate-limits aggressively (HTTP 429); this keeps the pipeline
-    alive during busy hours instead of failing the whole run. 429 gets a long
-    backoff because the quota window is one minute; transient 5xx retries fast.
-    Fails fast on real errors (4xx other than 429).
-    """
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         for attempt in range(1, _RETRY_MAX_ATTEMPTS + 1):
@@ -79,8 +64,8 @@ def _retry_gsheet(func):
                 else:
                     backoff = (2 ** attempt) * (0.5 + random.random())
                 logger.warning(
-                    f"Google Sheets API returned {status}; "
-                    f"retrying in {backoff:.1f}s (attempt {attempt}/{_RETRY_MAX_ATTEMPTS})"
+                    f"Google Sheets API returned {status}; retrying in {backoff:.1f}s "
+                    f"(attempt {attempt}/{_RETRY_MAX_ATTEMPTS})"
                 )
                 time.sleep(backoff)
     return wrapper
@@ -91,20 +76,10 @@ class SheetsReader:
         "https://spreadsheets.google.com/feeds",
         "https://www.googleapis.com/auth/drive",
     ]
-
-    # Header row (1-based) per worksheet. Source Import keeps its header in
-    # row 1. Accounts / Publishing Queue / Publishing Log may shift rows (e.g.
-    # blank spacer rows added or removed), so their header row is detected
-    # dynamically rather than hardcoded.
     SOURCE_HEADER_ROW = 1
     HEADER_SCAN_ROWS = 5
-
-    # Minimum number of known header columns that must match before a row is
-    # accepted as the header row, so a coincidental single-cell match on a
-    # spacer/summary row is not mistaken for the real header.
     MIN_HEADER_MATCHES = 3
 
-    # Known header names used for dynamic header-row detection.
     ACCOUNTS_HEADER_COLS = [
         "account_id", "platform", "account_name", "platform_account_id",
         "username_or_channel", "primary_language", "fallback_language",
@@ -118,33 +93,22 @@ class SheetsReader:
                   "image5 link", "image6 link", "image7 link", "image8 link"]
 
     LANG_CAPTION_COLS = {
-        "my": "Burmese Description",
-        "th": "Thai Description",
-        "tl": "Filipino Description",
-        "fil": "Filipino Description",
-        "zh": "Chinese Description",
-        "ru": "Russian Description",
-        "ja": "Japanese Description",
-        "ko": "Korean Description",
-        "he": "israli description",
-        "es": "spanish description",
+        "my": "Burmese Description", "th": "Thai Description",
+        "tl": "Filipino Description", "fil": "Filipino Description",
+        "zh": "Chinese Description", "ru": "Russian Description",
+        "ja": "Japanese Description", "ko": "Korean Description",
+        "he": "israli description", "es": "spanish description",
         "ar": "arabic description",
     }
     LANG_TAG_COLS = {
-        "my": "Burmese Hashtag",
-        "th": "Thai Hashtag",
-        "tl": "Filipino Hashtag",
-        "fil": "Filipino Hashtag",
-        "zh": "Chinese Hashtag",
-        "ru": "Russian Hashtag",
-        "ja": "Japanese Hashtag",
-        "ko": "Korean Hashtag",
-        "he": "israli hashtag",
-        "es": "spanish hashtag",
+        "my": "Burmese Hashtag", "th": "Thai Hashtag",
+        "tl": "Filipino Hashtag", "fil": "Filipino Hashtag",
+        "zh": "Chinese Hashtag", "ru": "Russian Hashtag",
+        "ja": "Japanese Hashtag", "ko": "Korean Hashtag",
+        "he": "israli hashtag", "es": "spanish hashtag",
         "ar": "arabic hashtag",
     }
 
-    # Publishing Queue columns
     QUEUE_COLS = [
         "job_id", "sku", "account_id", "media_selection", "platform", "format",
         "language", "scheduled_at", "timezone", "stock_id_tag", "status",
@@ -152,7 +116,6 @@ class SheetsReader:
         "error_message", "notes", "tagging_status", "tag_stock_id_used",
         "caption_final",
     ]
-    # Publishing Log columns
     LOG_COLS = [
         "job_id", "attempt_time", "result", "platform_post_id", "published_url",
         "api_error_code", "error_message", "next_retry_at",
@@ -182,12 +145,9 @@ class SheetsReader:
             self.guide_ws = sheet.worksheet(Config.UPLOAD_GUIDE_SHEET)
         except Exception as e:
             self.guide_error = str(e)
-        self.accounts_header_row = self._detect_header_row(
-            self.accounts_ws, self.ACCOUNTS_HEADER_COLS)
-        self.queue_header_row = self._detect_header_row(
-            self.queue_ws, self.QUEUE_COLS)
-        self.log_header_row = self._detect_header_row(
-            self.log_ws, self.LOG_COLS)
+        self.accounts_header_row = self._detect_header_row(self.accounts_ws, self.ACCOUNTS_HEADER_COLS)
+        self.queue_header_row = self._detect_header_row(self.queue_ws, self.QUEUE_COLS)
+        self.log_header_row = self._detect_header_row(self.log_ws, self.LOG_COLS)
         self.source_cols = self._col_map(self.source_ws, self.SOURCE_HEADER_ROW)
         self.accounts_cols = self._col_map(self.accounts_ws, self.accounts_header_row)
         self.queue_cols = self._col_map(self.queue_ws, self.queue_header_row)
@@ -196,9 +156,7 @@ class SheetsReader:
     def _authenticate(self):
         creds_path = Config.GOOGLE_SHEET_CREDENTIALS
         if not os.path.exists(creds_path):
-            raise FileNotFoundError(
-                f"Service account credentials not found at: {creds_path}"
-            )
+            raise FileNotFoundError(f"Service account credentials not found at: {creds_path}")
         creds = ServiceAccountCredentials.from_json_keyfile_name(creds_path, self.SCOPE)
         return gspread.authorize(creds)
 
@@ -209,16 +167,8 @@ class SheetsReader:
 
     @classmethod
     def _detect_header_row(cls, worksheet, expected_headers, scan_rows=None):
-        """Find the 1-based row that contains the real column headers.
-
-        Scans the first few rows and returns the row whose cells best match the
-        known header names, provided its headers are all unique. This keeps the
-        reader working whether the sheet has its header in row 1, row 2, or a
-        later row after insertions.
-        """
         scan_rows = scan_rows or cls.HEADER_SCAN_ROWS
         expected = {str(h).strip().lower() for h in expected_headers}
-
         best_row, best_score = None, 0
         for row in range(1, scan_rows + 1):
             values = worksheet.row_values(row)
@@ -226,14 +176,12 @@ class SheetsReader:
             score = len(norm & expected)
             if score > best_score:
                 best_row, best_score = row, score
-
         if best_row is None or best_score < cls.MIN_HEADER_MATCHES:
             raise ValueError(
                 f"Could not locate the header row in worksheet '{worksheet.title}' "
                 f"(best row {best_row} matched {best_score} of at least "
                 f"{cls.MIN_HEADER_MATCHES} expected header columns)"
             )
-
         headers = worksheet.row_values(best_row)
         normalized = [str(h).strip().lower() for h in headers if str(h).strip()]
         if len(normalized) != len(set(normalized)):
@@ -284,19 +232,14 @@ class SheetsReader:
     def _is_center(url):
         return "center" in os.path.basename(str(url).split("?")[0]).lower()
 
-    # ------------------------------------------------------------------
-    # UPLOAD GUIDE
-    # ------------------------------------------------------------------
     @_retry_gsheet
     def get_upload_guide(self):
-        """Read the UPLOAD GUIDE tab. Called before every upload run."""
         if self.guide_ws is None:
             return []
         return self.guide_ws.get_all_values()
 
     @staticmethod
     def guide_safety_rules(guide_rows):
-        """Extract the safety-relevant lines from the guide for logging."""
         keywords = (
             "non certified", "do not publish", "do not auto-publish", "needs review",
             "block", "oauth", "business id", "disabled", "429", "error", "must not",
@@ -310,9 +253,6 @@ class SheetsReader:
                     break
         return rules
 
-    # ------------------------------------------------------------------
-    # Accounts
-    # ------------------------------------------------------------------
     @_retry_gsheet
     def get_accounts(self):
         records = self.accounts_ws.get_all_records(head=self.accounts_header_row)
@@ -345,9 +285,6 @@ class SheetsReader:
             })
         return accounts
 
-    # ------------------------------------------------------------------
-    # Source Import
-    # ------------------------------------------------------------------
     @_retry_gsheet
     def get_source_rows(self):
         records = self.source_ws.get_all_records(head=self.SOURCE_HEADER_ROW)
@@ -356,7 +293,6 @@ class SheetsReader:
             sku = self._normalize_sku(rec.get("STK", ""))
             if not sku:
                 continue
-
             images = [v for v in (rec.get(c, "") for c in self.IMAGE_COLS) if str(v).strip()]
             images = [str(v).strip() for v in images]
             main_image = next((u for u in images if self._is_center(u)), "")
@@ -365,13 +301,11 @@ class SheetsReader:
                 side_images = [u for u in images if not self._is_center(u)]
             else:
                 side_images = [u for u in side_images if not self._is_center(u)]
-
             model_images = []
             for c in ["model image link 1", "model image link 2", "model image link 3", "multiple model photo link"]:
                 for u in self._split_lines(rec.get(c, "")):
                     if u not in model_images:
                         model_images.append(u)
-
             model_videos = []
             for c in ["model video link 1", "model video link 2", "model video link 3"]:
                 for u in self._split_lines(rec.get(c, "")):
@@ -380,24 +314,13 @@ class SheetsReader:
             for u in self._split_lines(rec.get("multiple model video link", "")):
                 if u not in model_videos:
                     model_videos.append(u)
-
             certificate_media_url = self._pick(
                 rec,
-                "CERTIFICATE IMAGE LINK",
-                "Certificate Image Link",
-                "certificate image link",
-                "CERTIFICATE MEDIA LINK",
-                "Certificate Media Link",
-                "certificate media link",
+                "CERTIFICATE IMAGE LINK", "Certificate Image Link", "certificate image link",
+                "CERTIFICATE MEDIA LINK", "Certificate Media Link", "certificate media link",
             )
-
-            lang_captions = {}
-            for code, col in self.LANG_CAPTION_COLS.items():
-                lang_captions[code] = self._pick(rec, col)
-            lang_hashtags = {}
-            for code, col in self.LANG_TAG_COLS.items():
-                lang_hashtags[code] = self._pick(rec, col)
-
+            lang_captions = {code: self._pick(rec, col) for code, col in self.LANG_CAPTION_COLS.items()}
+            lang_hashtags = {code: self._pick(rec, col) for code, col in self.LANG_TAG_COLS.items()}
             sources[sku] = {
                 "row": idx,
                 "sku": sku,
@@ -428,9 +351,6 @@ class SheetsReader:
     def get_source_row(self, sku):
         return self.get_source_rows().get(self._normalize_sku(sku))
 
-    # ------------------------------------------------------------------
-    # Publishing Queue
-    # ------------------------------------------------------------------
     @_retry_gsheet
     def get_pending_jobs(self):
         records = self.queue_ws.get_all_records(head=self.queue_header_row)
@@ -475,7 +395,6 @@ class SheetsReader:
 
     @_retry_gsheet
     def get_existing_job_keys(self):
-        """Set of (sku, account_id, platform, format, media_selection) already queued."""
         keys = set()
         records = self.queue_ws.get_all_records(head=self.queue_header_row)
         for rec in records:
@@ -493,16 +412,13 @@ class SheetsReader:
     def append_jobs(self, jobs):
         if not jobs:
             return
-        rows = []
-        for job in jobs:
-            rows.append([job.get(col, "") for col in self.QUEUE_COLS])
+        rows = [[job.get(col, "") for col in self.QUEUE_COLS] for job in jobs]
         for start in range(0, len(rows), 200):
             self.queue_ws.append_rows(rows[start:start + 200], value_input_option="USER_ENTERED")
 
     @_retry_gsheet
     @_throttle_write
     def update_job(self, job, updates):
-        """Write all status fields for one job in a single batch_update call."""
         row = job.get("row") if isinstance(job, dict) else job
         if not row:
             return
@@ -519,9 +435,6 @@ class SheetsReader:
             return
         self.queue_ws.batch_update(data, value_input_option="USER_ENTERED")
 
-    # ------------------------------------------------------------------
-    # Publishing Log
-    # ------------------------------------------------------------------
     @_retry_gsheet
     @_throttle_write
     def write_log(self, entry):
@@ -531,22 +444,65 @@ class SheetsReader:
     @_retry_gsheet
     @_throttle_write
     def append_logs(self, entries):
-        """Append many log rows in one batched call."""
         if not entries:
             return
         rows = [[entry.get(col, "") for col in self.LOG_COLS] for entry in entries]
         for start in range(0, len(rows), 200):
             self.log_ws.append_rows(rows[start:start + 200], value_input_option="USER_ENTERED")
 
+    @staticmethod
+    def _normalize_api_error_code(error_message="", api_error_code=""):
+        """Return a stable, useful error code for Publishing Log."""
+        message = str(error_message or "")
+        lower = message.lower()
+        supplied = str(api_error_code or "").strip()
+
+        if "invalid_client" in lower:
+            return "YOUTUBE_INVALID_CLIENT"
+        if "error validating access token" in lower or "session has been invalidated" in lower:
+            return "META_TOKEN_INVALID"
+        if "pages_manage_posts" in lower or "no permission to publish" in lower:
+            return "META_PERMISSION"
+        if "unpublished posts must be posted to a page" in lower:
+            return "META_PAGE_TOKEN_REQUIRED"
+        if "name resolution" in lower or "failed to resolve" in lower or "name or service not known" in lower:
+            return "DNS_ERROR"
+        if "404" in lower or supplied == "404":
+            return "HTTP_404"
+        if "429" in lower or "quota" in lower or "rate limit" in lower:
+            return "RATE_LIMIT"
+        if "pinterest" in lower and ("401" in lower or "authentication failed" in lower):
+            return "PINTEREST_AUTH"
+        if "boards:write" in lower or "pins:write" in lower:
+            return "PINTEREST_SCOPE"
+        if "only photo or video can be accepted" in lower:
+            return "MEDIA_TYPE_INVALID"
+        if "media validation failed" in lower or "broken container" in lower or "transcoding" in lower:
+            return "MEDIA_INVALID"
+        if "all resolved media urls are unavailable" in lower or "dead links" in lower:
+            return "MEDIA_UNAVAILABLE"
+        if "timeout" in lower:
+            return "TIMEOUT"
+        if "fatal" == lower.strip():
+            return "PLATFORM_FATAL"
+        if "invalid parameter" in lower:
+            return "INVALID_PARAMETER"
+
+        junk = {"", "error", "[errno", "pinterest", "fatal"}
+        if supplied.lower() not in junk:
+            return supplied[:80]
+        return "UNKNOWN_ERROR" if message else ""
+
     def log_entry(self, job, result, error_message="", api_error_code="", notes=""):
         now = datetime.datetime.utcnow().isoformat()
+        normalized_code = self._normalize_api_error_code(error_message, api_error_code)
         return {
             "job_id": job.get("job_id", ""),
             "attempt_time": now,
             "result": result,
             "platform_post_id": job.get("platform_post_id", ""),
             "published_url": job.get("published_url", ""),
-            "api_error_code": api_error_code,
+            "api_error_code": normalized_code,
             "error_message": error_message,
             "next_retry_at": "",
             "raw_response_reference": "",
