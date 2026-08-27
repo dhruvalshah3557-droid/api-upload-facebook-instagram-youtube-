@@ -75,6 +75,28 @@ def open_sheets_with_retry():
 _VIDEO_EXTS = (".mp4", ".mov", ".avi", ".mkv", ".webm")
 
 
+def _is_video_url(url):
+    return any(ext in str(url or "").lower() for ext in _VIDEO_EXTS)
+
+
+def _is_carousel_image_url(url):
+    """Instagram carousel image URLs must point to an actual image, not a PDF."""
+    lowered = str(url or "").split("?", 1)[0].lower()
+    return bool(lowered) and not lowered.endswith(".pdf") and not _is_video_url(lowered)
+
+
+def _dedupe_media(urls):
+    ordered = []
+    seen = set()
+    for url in urls:
+        url = str(url or "").strip()
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        ordered.append(url)
+    return ordered
+
+
 def job_unique_key(job):
     """Unique key for a queue job: SKU + account + platform + format + media type.
 
@@ -95,19 +117,51 @@ def _lang_code(primary_language):
 
 
 def resolve_media(job, source):
-    """Resolve the ordered media URLs for a job's media_selection.
+    """Resolve ordered media URLs for one queue job.
 
-    Carousels are IMAGES ONLY (MAIN center image -> side images). The product
-    video is never included: it is published separately as its own Reel/video
-    job to avoid duplicate posts.
+    Instagram carousels are mixed-media and ordered as:
+      1) main product image
+      2) product MP4/video
+      3) certificate image (when a public image URL is supplied)
+      4) remaining product images
+    Instagram accepts up to 10 carousel children, so the list is capped at 10.
+
+    Other platforms retain the existing image-only carousel behavior; their
+    product/model videos continue as separate video jobs.
     """
     selection = job.get("media_selection", "")
     if selection == "carousel":
+        main_image = source.get("main_image", "")
+        side_images = list(source.get("side_images", []))
+
+        if job.get("platform", "").lower() == "instagram":
+            media = []
+            if main_image:
+                media.append(main_image)
+
+            product_video = source.get("video_url", "")
+            if product_video and _is_video_url(product_video):
+                media.append(product_video)
+
+            certificate_media = source.get("certificate_media_url", "")
+            if certificate_media:
+                if _is_carousel_image_url(certificate_media):
+                    media.append(certificate_media)
+                else:
+                    logger.warning(
+                        f"SKU {source.get('sku', '')}: certificate media is not a public image URL; "
+                        "skipping it in the Instagram carousel"
+                    )
+
+            media.extend(side_images)
+            return _dedupe_media(media)[:10]
+
         media = []
-        if source["main_image"]:
-            media.append(source["main_image"])
-        media.extend(source["side_images"])
-        return media
+        if main_image:
+            media.append(main_image)
+        media.extend(side_images)
+        return _dedupe_media(media)
+
     if selection == "product_video":
         return [source["video_url"]] if source["video_url"] else []
     if selection.startswith("model_video:"):
@@ -120,13 +174,21 @@ def resolve_media(job, source):
     return []
 
 
-def build_caption(job, source, account):
-    """Caption precedence enforcing account language.
+def _append_product_link(caption, source):
+    caption = str(caption or "").strip()
+    product_link = str(source.get("product_link", "") or "").strip()
+    if not product_link or product_link in caption:
+        return caption
+    link_line = f"View product: {product_link}"
+    return f"{caption}\n\n{link_line}" if caption else link_line
 
-    Order: primary_language translation + matching hashtags -> fallback_language
-    translation + matching hashtags (explicitly allowed) -> platform caption +
-    hashtags. Caption and hashtags always come from the same language so posts
-    never mix languages.
+
+def build_caption(job, source, account):
+    """Build a localized caption and always append the product page URL.
+
+    Order: primary-language translation + matching hashtags -> fallback-language
+    translation + matching hashtags -> platform caption + hashtags -> generated
+    caption. The direct product page is then appended to every platform post.
     """
     platform = job.get("platform", "")
     lang = _lang_code(account.get("primary_language", ""))
@@ -136,41 +198,49 @@ def build_caption(job, source, account):
     lang_hashtags = source.get("lang_hashtags", {})
     hashtags = source.get("hashtags", "")
 
+    caption_text = ""
     for code in (lang, fallback):
         if code and lang_captions.get(code):
             tags = lang_hashtags.get(code) or hashtags
-            return f"{lang_captions[code]}\n\n{tags}" if tags else lang_captions[code]
+            caption_text = (
+                f"{lang_captions[code]}\n\n{tags}" if tags else lang_captions[code]
+            )
+            break
 
-    if platform in ("facebook", "wechat", "pinterest"):
-        caption = source.get("facebook_caption", "")
-    elif platform in ("instagram", "line"):
-        caption = source.get("instagram_caption", "")
-    elif platform == "youtube":
-        caption = source.get("youtube_shorts_caption", "") or source.get("facebook_caption", "")
-    elif platform in ("tiktok", "x", "twitch", "shopee", "lazada"):
-        caption = source.get("instagram_caption", "") or source.get("facebook_caption", "")
-    elif platform == "linkedin":
-        caption = source.get("facebook_caption", "") or source.get("instagram_caption", "")
-    else:
-        caption = source.get("instagram_caption", "")
+    if not caption_text:
+        if platform in ("facebook", "wechat", "pinterest"):
+            caption = source.get("facebook_caption", "")
+        elif platform in ("instagram", "line"):
+            caption = source.get("instagram_caption", "")
+        elif platform == "youtube":
+            caption = source.get("youtube_shorts_caption", "") or source.get("facebook_caption", "")
+        elif platform in ("tiktok", "x", "twitch", "shopee", "lazada"):
+            caption = source.get("instagram_caption", "") or source.get("facebook_caption", "")
+        elif platform == "linkedin":
+            caption = source.get("facebook_caption", "") or source.get("instagram_caption", "")
+        else:
+            caption = source.get("instagram_caption", "")
 
-    if caption and hashtags:
-        return f"{caption}\n\n{hashtags}"
-    if caption:
-        return caption
+        if caption and hashtags:
+            caption_text = f"{caption}\n\n{hashtags}"
+        elif caption:
+            caption_text = caption
 
-    product_info = {
-        "title": source.get("product_name", "Diamond Jewelry"),
-        "description": source.get("product_name", ""),
-        "keywords": [source.get("product_name", "")],
-    }
-    auto_caption = generate_caption(product_info, account.get("account_name", ""))
-    auto_hashtags = generate_hashtags(product_info, account.get("account_name", ""))
-    return f"{auto_caption}\n\n{auto_hashtags}"
+    if not caption_text:
+        product_info = {
+            "title": source.get("product_name", "Diamond Jewelry"),
+            "description": source.get("product_name", ""),
+            "keywords": [source.get("product_name", "")],
+        }
+        auto_caption = generate_caption(product_info, account.get("account_name", ""))
+        auto_hashtags = generate_hashtags(product_info, account.get("account_name", ""))
+        caption_text = f"{auto_caption}\n\n{auto_hashtags}"
+
+    return _append_product_link(caption_text, source)
 
 
 def _carousel_images(media):
-    return [u for u in media if not any(ext in u.lower() for ext in _VIDEO_EXTS)]
+    return [u for u in media if not _is_video_url(u)]
 
 
 def _facebook_post_url(page_id, post_id):
@@ -248,9 +318,6 @@ def publish_job(job, source, account):
         uploader = YouTubeUploader(refresh_token=yt_token)
         title = (job.get("title") or source.get("product_name") or "Video")[:100]
         description = caption
-        product_link = source.get("product_link", "")
-        if product_link:
-            description = f"{description}\n\nProduct: {product_link}" if description else f"Product: {product_link}"
         response = uploader.upload(media[0], title, description)
         post_id = response.get("id", "")
         url = f"https://youtu.be/{post_id}"
@@ -342,6 +409,7 @@ def publish_job(job, source, account):
             raise Exception("Shopee media upload supports image/carousel jobs only")
         uploader = ShopeeUploader(account_name=account.get("account_name", ""))
         images = _carousel_images(media)
+        title = (job.get("title") or source.get("product_name") or "Product")[:100]
         results = uploader.upload_carousel(images or media, caption, title)
         first = results[0] if results else {}
         post_id = first.get("id", "")
@@ -353,6 +421,7 @@ def publish_job(job, source, account):
             raise Exception("Lazada media upload supports image/carousel jobs only")
         uploader = LazadaUploader(account_name=account.get("account_name", ""))
         images = _carousel_images(media)
+        title = (job.get("title") or source.get("product_name") or "Product")[:100]
         results = uploader.upload_carousel(images or media, caption, title)
         first = results[0] if results else {}
         post_id = first.get("id", "")
@@ -651,11 +720,14 @@ def run_direct(media_url, caption, platform, product_url="", product_id=""):
             "language": account.get("primary_language", ""),
         }
         source = {
+            "sku": product_id or "direct",
             "video_url": media_url,
             "main_image": "" if is_video else media_url,
             "side_images": [],
             "images": [media_url],
             "model_videos": [],
+            "certificate_media_url": "",
+            "product_link": product_url or "",
             "product_name": (caption or "Video")[:100],
             "facebook_caption": caption or "",
             "instagram_caption": caption or "",
