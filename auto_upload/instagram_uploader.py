@@ -1,4 +1,7 @@
 import logging
+import os
+import shutil
+import subprocess
 import time
 
 import requests
@@ -24,6 +27,31 @@ class IGAccountNotLinkedError(Exception):
     (which produces confusing API failures). Jobs stay pending and publish
     automatically once the account is linked in Meta Business Suite.
     """
+
+
+def _probe_video(media_url):
+    """Return (width, height) of a video, or None if it cannot be probed.
+
+    Reads the remote file's metadata only (no full download). Returns None when
+    ffprobe is unavailable, the URL is dead, or probing fails so callers can
+    fall back to a safe default.
+    """
+    if not shutil.which("ffprobe"):
+        return None
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x",
+             media_url],
+            check=False, capture_output=True, text=True, timeout=60,
+        )
+        line = out.stdout.strip()
+        if not line:
+            return None
+        w, h = line.split("x")
+        return int(w), int(h)
+    except Exception:
+        return None
 
 
 class InstagramUploader:
@@ -121,7 +149,21 @@ class InstagramUploader:
         else:
             params["caption"] = caption
         if is_video:
-            params["media_type"] = "REELS" if not carousel_item else "VIDEO"
+            # Standalone posts use REELS; carousel children must use VIDEO.
+            # Reels force a 9:16 canvas: Instagram center-crops or letterboxes
+            # any non-vertical source, which looks like "resized" media. Only
+            # post a true Reel for vertical videos; landscape and square videos
+            # are posted as feed VIDEO posts so their full size and aspect
+            # ratio are preserved.
+            if carousel_item:
+                params["media_type"] = "VIDEO"
+            else:
+                # Only strictly taller (vertical) sources fit a 9:16 Reel
+                # without cropping. Landscape, square and unknown videos are
+                # posted as feed VIDEO posts to keep their full size and aspect
+                # ratio intact.
+                dims = _probe_video(media_url)
+                params["media_type"] = "REELS" if (dims and dims[1] > dims[0]) else "VIDEO"
             params["video_url"] = media_url
         else:
             params["image_url"] = media_url
@@ -131,8 +173,13 @@ class InstagramUploader:
         url = f"{FB_GRAPH_URL}/{self.ig_user_id}/media"
         files = None
         if is_video and not carousel_item:
+            # Upload the original file bytes instead of a remote URL.
+            # Instagram re-fetches and re-encodes URLs, which degrades quality
+            # and can downscale; sending the original bytes preserves the full
+            # resolution. prepare_video returns the untouched original unless
+            # MIX_BACKGROUND_MUSIC=true requires an approved instrumental mix.
             params.pop("video_url", None)
-            files = {"video": prepare_video(media_url, fill_9x16=True)}
+            files = {"video": prepare_video(media_url)}
         logger.info(f"[{self.page_name}] Creating IG {'video' if is_video else 'image'} container")
         resp = requests.post(url, data=params, files=files, timeout=60)
         result = resp.json()
