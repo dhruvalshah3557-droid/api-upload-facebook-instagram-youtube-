@@ -1,0 +1,1 @@
+Verify refreshed Meta token with known-good Facebook and Instagram carousel media.
