@@ -16,7 +16,7 @@ from instagram_uploader import IGAccountNotLinkedError, InstagramUploader
 from job_generator import generate_jobs
 from line_uploader import LineUploader
 from linkedin_uploader import LinkedInUploader
-from lazada_uploader import LazadaUploader
+from media_prep import media_kind, validate_media_url
 from pinterest_uploader import PinterestUploader
 from shopee_uploader import ShopeeUploader
 from sheets_reader import SheetsReader
@@ -43,6 +43,9 @@ _BROKEN_MEDIA_MARKERS = (
     "could not be fetched from this uri",
     "video download failed with",
     "only photo or video can be accepted as media type",
+    "media validation failed",
+    "video transcoding error",
+    "broken container",
 )
 
 
@@ -112,6 +115,28 @@ def _filter_valid_media(media):
         else:
             kept.append(url)
     return kept
+
+
+def _probe_job_media(job, media):
+    """Strictly probe media that passed the content-type filter.
+
+    _filter_valid_media only checks that a URL reports an image/video
+    Content-Type. A truncated or corrupt video (e.g. an MP4 missing its moov
+    box) still passes that check and then fails on the platform API with a
+    "Video Transcoding Error / Broken container" that retries forever. When
+    MEDIA_VALIDATION is enabled, videos are also probed with ffprobe and the
+    job is raised as needs_review so it stops burning attempts.
+    """
+    if not Config.MEDIA_VALIDATION:
+        return media
+    strict = []
+    for url in media:
+        if media_kind(url) == "video":
+            reason = validate_media_url(url, kind="video", ffprobe=True)
+            if reason:
+                raise Exception(f"Media validation failed ({url}): {reason}")
+        strict.append(url)
+    return strict
 
 
 def open_sheets_with_retry():
@@ -330,6 +355,10 @@ def publish_job(job, source, account):
     media = _filter_valid_media(media)
     if not media:
         raise Exception("All resolved media URLs are unavailable (404/dead links); nothing to publish")
+
+    media = _probe_job_media(job, media)
+    if not media:
+        raise Exception("All resolved media URLs failed validation; nothing to publish")
 
     tag = _tag_value(job) if account.get("product_tagging") else ""
     # Instagram product tagging needs a real product item ID from a connected

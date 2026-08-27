@@ -410,6 +410,7 @@ def test_publish_new_platforms_routing():
 
     with patch.object(Config, "MAX_JOB_ATTEMPTS", 1), \
          patch.object(Config, "MAX_JOBS_PER_RUN", 40), \
+         patch.object(Config, "MEDIA_VALIDATION", False), \
          patch("main.time.sleep"), \
          patch("main.LineUploader", FakeLine), \
          patch("main.WeChatUploader", FakeWeChat), \

@@ -11,6 +11,32 @@ logger = logging.getLogger(__name__)
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
+_VIDEO_EXTS = (".mp4", ".mov", ".avi", ".mkv", ".webm")
+
+_IMAGE_MAGIC = (
+    (b"\xff\xd8\xff", "JPEG"),
+    (b"\x89PNG\r\n\x1a\n", "PNG"),
+    (b"GIF87a", "GIF"),
+    (b"GIF89a", "GIF"),
+    (b"RIFF", "WebP/RIFF"),
+)
+
+_VIDEO_MAGIC = (
+    (b"\x1a\x45\xdf\xa3", "WebM/MKV"),
+    (b"RIFF", "AVI"),
+)
+
+_IMAGE_TYPES = ("image/jpeg", "image/png", "image/gif", "image/webp", "image/bmp")
+_VIDEO_TYPES = (
+    "video/mp4",
+    "video/quicktime",
+    "video/x-msvideo",
+    "video/webm",
+    "video/x-matroska",
+    "video/mov",
+    "video/mpeg",
+)
+
 
 def _env(key, default=""):
     value = os.getenv(key)
@@ -171,3 +197,83 @@ def prepare_video(media_url, fill_9x16=False):
                 os.remove(path)
             except OSError:
                 pass
+
+
+def media_kind(media_url):
+    """Return 'image' or 'video' from the URL extension ('' if unknown)."""
+    lower = (media_url.split("?")[0] or "").lower()
+    if lower.endswith(_VIDEO_EXTS):
+        return "video"
+    return "image"
+
+
+def _matches_magic(header, kind):
+    """Check magic bytes of the first bytes for the expected kind."""
+    if kind == "video":
+        # MP4/MOV families all start with an ftyp box at offset 4.
+        if len(header) >= 8 and header[4:8] == b"ftyp":
+            return True
+        return any(header.startswith(m) for m, _ in _VIDEO_MAGIC)
+    return any(header.startswith(m) for m, _ in _IMAGE_MAGIC)
+
+
+def _probe_video(media_url):
+    """Return a validation detail string if ffprobe rejects the video."""
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        return ""
+    try:
+        out = subprocess.run(
+            [
+                ffprobe, "-v", "error",
+                "-show_entries", "format=format_name,duration",
+                "-of", "csv=p=0",
+                media_url,
+            ],
+            check=False, capture_output=True, text=True, timeout=300,
+        )
+        if out.returncode != 0:
+            detail = (out.stderr or "").strip().splitlines()
+            return (detail[-1] if detail else "ffprobe rejected the file")[:300]
+        if "N/A" in out.stdout or not out.stdout.strip():
+            return "ffprobe could not read a valid stream"
+        return ""
+    except subprocess.TimeoutExpired:
+        return "ffprobe timed out"
+    except Exception as exc:
+        return f"ffprobe error: {exc}"
+
+
+def validate_media_url(media_url, kind=None, ffprobe=True):
+    """Validate a media URL before handing it to a platform API.
+
+    Checks in order: HTTP status, Content-Type, magic bytes, and (for videos,
+    when ffprobe is available) a real probe. Returns an empty string when the
+    media is usable, otherwise a human-readable reason. Downloads only the
+    first bytes so broken/truncated files are caught cheaply.
+    """
+    kind = kind or media_kind(media_url)
+    if not kind:
+        return "cannot determine media kind"
+
+    resp = requests.get(
+        media_url,
+        timeout=180,
+        headers={"User-Agent": USER_AGENT, "Range": "bytes=0-65535"},
+    )
+    try:
+        resp.raise_for_status()
+    except Exception:
+        return f"HTTP {resp.status_code} for {media_url}"
+
+    content_type = (resp.headers.get("Content-Type", "") or "").lower().split(";")[0]
+    expected = _VIDEO_TYPES if kind == "video" else _IMAGE_TYPES
+    if content_type and content_type != "application/octet-stream" and content_type not in expected:
+        return f"unexpected Content-Type '{content_type}' (expected {kind})"
+
+    if not _matches_magic(resp.content[:16], kind):
+        return f"magic bytes do not match {kind} media"
+
+    if kind == "video" and ffprobe:
+        return _probe_video(media_url)
+    return ""

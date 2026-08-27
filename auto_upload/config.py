@@ -34,6 +34,11 @@ class Config:
     USE_SECRET_MANAGER = _env("USE_SECRET_MANAGER", "false").lower() == "true"
 
     MAX_JOB_ATTEMPTS = int(_env("MAX_JOB_ATTEMPTS", "3"))
+    # Validate media (HTTP status, content-type, magic bytes, ffprobe for
+    # videos) before calling a platform API. Broken/truncated files are then
+    # marked needs_review instead of burning retry attempts. Set to false in
+    # unit tests or when the media host is unreachable from CI.
+    MEDIA_VALIDATION = _env("MEDIA_VALIDATION", "true").lower() in ("true", "1", "yes")
     # Keep each scheduled run intentionally small. The workflow runs every
     # 15 minutes, so 5 jobs/run can process up to ~40 jobs across 2 hours while
     # spreading Google Sheets and platform API traffic instead of bursting it.
