@@ -1,0 +1,47 @@
+name: Targeted FB IG Smoke
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - .github/targeted-trigger.txt
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: auto_upload
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Set up Python with pip cache
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: auto_upload/requirements.txt
+      - name: Install ffmpeg only if missing
+        run: |
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y ffmpeg
+          fi
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Write service account credentials
+        env:
+          GOOGLE_SHEET_CREDENTIALS_JSON: ${{ secrets.GOOGLE_SHEET_CREDENTIALS_JSON }}
+        run: echo "$GOOGLE_SHEET_CREDENTIALS_JSON" > credentials/service_account.json
+      - name: Run targeted live verification
+        env:
+          GOOGLE_SHEET_CREDENTIALS: credentials/service_account.json
+          GOOGLE_SHEET_URL: ${{ secrets.GOOGLE_SHEET_URL }}
+          SOURCE_IMPORT_SHEET: Source Import
+          ACCOUNTS_SHEET: Accounts
+          QUEUE_SHEET: Publishing Queue
+          LOG_SHEET: Publishing Log
+          FB_ACCESS_TOKEN: ${{ secrets.FACEBOOKTOKEN || secrets.FACEBOOKDEBUGTOKEN }}
+          META_TOKEN_FB_BKK: ${{ secrets.META_TOKEN_FB_BKK || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_IG_RUS: ${{ secrets.META_TOKEN_IG_RUS || secrets.FACEBOOKTOKEN }}
+        run: python targeted_smoke.py
