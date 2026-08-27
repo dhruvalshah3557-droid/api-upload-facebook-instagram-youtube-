@@ -1,0 +1,135 @@
+name: Auto Upload Optimized
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+    inputs:
+      direct_media_url:
+        description: "Media URL to upload directly (optional)"
+        required: false
+      direct_caption:
+        description: "Caption for direct upload (optional)"
+        required: false
+      direct_platform:
+        description: "Platform: facebook/instagram/both/youtube/all"
+        required: false
+        default: "both"
+      direct_product_url:
+        description: "Product page URL for tagging (optional)"
+        required: false
+      direct_product_id:
+        description: "Product ID / SKU for tagging (optional)"
+        required: false
+
+concurrency:
+  group: auto-upload
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: auto_upload
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python with pip cache
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: auto_upload/requirements.txt
+
+      - name: Cache YouTube OAuth token
+        uses: actions/cache@v5
+        with:
+          path: auto_upload/credentials/youtube_token.pickle
+          key: youtube-token-${{ runner.os }}
+
+      - name: Install ffmpeg only if missing
+        run: |
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y ffmpeg
+          fi
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write service account credentials
+        env:
+          GOOGLE_SHEET_CREDENTIALS_JSON: ${{ secrets.GOOGLE_SHEET_CREDENTIALS_JSON }}
+        run: echo "$GOOGLE_SHEET_CREDENTIALS_JSON" > credentials/service_account.json
+
+      - name: Write YouTube client secret
+        env:
+          YOUTUBE_CLIENT_SECRET_JSON: ${{ secrets.YOUTUBEJSON || secrets.YOUTUBE_CLIENT_SECRET_JSON }}
+        run: echo "$YOUTUBE_CLIENT_SECRET_JSON" > credentials/youtube_client_secret.json
+
+      - name: Run auto upload
+        env:
+          GOOGLE_SHEET_CREDENTIALS: credentials/service_account.json
+          GOOGLE_SHEET_URL: ${{ secrets.GOOGLE_SHEET_URL }}
+          SOURCE_IMPORT_SHEET: Source Import
+          ACCOUNTS_SHEET: Accounts
+          QUEUE_SHEET: Publishing Queue
+          LOG_SHEET: Publishing Log
+          MAX_JOBS_PER_RUN: "3"
+          MAX_GENERATE_JOBS: "3"
+          MEDIA_URL: ${{ inputs.direct_media_url }}
+          CAPTION: ${{ inputs.direct_caption }}
+          PLATFORM: ${{ inputs.direct_platform }}
+          PRODUCT_URL: ${{ inputs.direct_product_url }}
+          PRODUCT_ID: ${{ inputs.direct_product_id }}
+          FB_ACCESS_TOKEN: ${{ secrets.FACEBOOKTOKEN || secrets.FACEBOOKDEBUGTOKEN }}
+          META_TOKEN_FB_ISR: ${{ secrets.META_TOKEN_FB_ISR || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_FB_JPN: ${{ secrets.META_TOKEN_FB_JPN || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_FB_KOR: ${{ secrets.META_TOKEN_FB_KOR || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_FB_RUS: ${{ secrets.META_TOKEN_FB_RUS || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_FB_PH: ${{ secrets.META_TOKEN_FB_PH || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_FB_JIYA: ${{ secrets.META_TOKEN_FB_JIYA || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_FB_MMR: ${{ secrets.META_TOKEN_FB_MMR || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_FB_GLOBAL: ${{ secrets.META_TOKEN_FB_GLOBAL || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_FB_BKK: ${{ secrets.META_TOKEN_FB_BKK || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_FB_TREND: ${{ secrets.META_TOKEN_FB_TREND || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_FB_LTD: ${{ secrets.META_TOKEN_FB_LTD || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_FB_CD: ${{ secrets.META_TOKEN_FB_CD || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_FB_NFCD: ${{ secrets.META_TOKEN_FB_NFCD || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_FB_INDO: ${{ secrets.META_TOKEN_FB_INDO || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_IG_BKK: ${{ secrets.META_TOKEN_IG_BKK || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_IG_TREND: ${{ secrets.META_TOKEN_IG_TREND || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_IG_LTD: ${{ secrets.META_TOKEN_IG_LTD || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_IG_CD: ${{ secrets.META_TOKEN_IG_CD || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_IG_INDO: ${{ secrets.META_TOKEN_IG_INDO || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_IG_RUS: ${{ secrets.META_TOKEN_IG_RUS || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_IG_KOR: ${{ secrets.META_TOKEN_IG_KOR || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_IG_ISR: ${{ secrets.META_TOKEN_IG_ISR || secrets.FACEBOOKTOKEN }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_OAUTH_REFRESH_TOKEN: ${{ secrets.YOUTUBE_OAUTH_REFRESH_TOKEN }}
+          YOUTUBE_OAUTH_REFRESH_TOKEN_JIYA: ${{ secrets.YOUTUBE_OAUTH_REFRESH_TOKEN_JIYA }}
+          PINTEREST_ACCESS_TOKEN: ${{ secrets.PINTEREST_ACCESS_TOKEN }}
+          META_TOKEN_PINTEREST_CD: ${{ secrets.META_TOKEN_PINTEREST_CD || secrets.PINTEREST_ACCESS_TOKEN }}
+        run: |
+          set -o pipefail
+          if [ -n "$MEDIA_URL" ]; then
+            python main.py --direct
+          else
+            python main.py --cycle
+          fi
+
+          if grep -Eqi "Sheets connection failed|Google Sheets connection failed" /tmp/auto_upload.log; then
+            echo "ERROR: Auto upload could not connect to Google Sheets."
+            exit 1
+          fi
+
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: auto-upload-log
+          path: /tmp/auto_upload.log
