@@ -5,6 +5,8 @@ import sys
 import time
 from pathlib import Path
 
+import requests
+
 sys.path.insert(0, str(Path(__file__).parent))
 
 from caption_generator import generate_caption, generate_hashtags
@@ -48,6 +50,68 @@ def _is_broken_media_error(message):
     """Dead/broken media (404, un-fetchable URI) will not heal on retry."""
     lowered = message.lower()
     return any(marker in lowered for marker in _BROKEN_MEDIA_MARKERS)
+
+
+_MEDIA_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; auto-upload)"}
+_MEDIA_CLASS_CACHE = {}
+
+
+def _classify_media_url(url):
+    """Classify a media URL as 'image', 'video', 'invalid' or 'unknown'.
+
+    Used to drop dead links before handing media to uploaders. The Instagram
+    Graph API rejects carousel children whose URL does not return an actual
+    image or video with "Only photo or video can be accepted as media type.".
+    URLs that are unreachable or report no usable content type are treated as
+    'unknown' (kept): the failure is likely transient and the uploader's
+    normal error handling still applies.
+    """
+    url = str(url or "").strip()
+    if not url:
+        return "invalid"
+    if url in _MEDIA_CLASS_CACHE:
+        return _MEDIA_CLASS_CACHE[url]
+    result = "unknown"
+    try:
+        resp = requests.get(
+            url, headers=_MEDIA_HEADERS, timeout=20, stream=True, allow_redirects=True
+        )
+        content_type = (resp.headers.get("Content-Type") or "").lower().split(";", 1)[0]
+        status = resp.status_code
+        resp.close()
+        if status not in (200, 206):
+            result = "invalid"
+        elif content_type.startswith("image/"):
+            result = "image"
+        elif content_type.startswith("video/"):
+            result = "video"
+        elif content_type in ("", "application/octet-stream"):
+            result = "unknown"
+        else:
+            result = "invalid"
+    except requests.RequestException:
+        result = "unknown"
+    _MEDIA_CLASS_CACHE[url] = result
+    return result
+
+
+def _filter_valid_media(media):
+    """Drop media URLs that definitively do not point to an image/video.
+
+    A single dead URL (404 HTML page, PDF, etc.) fails the whole post on the
+    IG/FB APIs, so broken links are removed up front; if none of the resolved
+    media is usable the job fails with a clear message instead of an opaque
+    platform API error.
+    """
+    kept = []
+    for url in media:
+        if _classify_media_url(url) == "invalid":
+            logger.warning(
+                f"Media URL is not an accessible image/video, dropping from post: {url}"
+            )
+        else:
+            kept.append(url)
+    return kept
 
 
 def open_sheets_with_retry():
@@ -262,6 +326,11 @@ def publish_job(job, source, account):
     platform = job.get("platform", "")
     format_type = job.get("format", "")
     caption = build_caption(job, source, account)
+
+    media = _filter_valid_media(media)
+    if not media:
+        raise Exception("All resolved media URLs are unavailable (404/dead links); nothing to publish")
+
     tag = _tag_value(job) if account.get("product_tagging") else ""
     # Instagram product tagging needs a real product item ID from a connected
     # catalog. Sending the raw SKU as product_id makes the whole post fail with

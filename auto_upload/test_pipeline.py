@@ -46,7 +46,25 @@ _install("oauth2client.service_account", {
 })
 
 _install("dotenv", {"load_dotenv": lambda *a, **k: None})
-_install("requests", {"get": lambda *a, **k: None, "post": lambda *a, **k: None})
+
+
+class _FakeResponse:
+    status_code = 200
+    headers = {"Content-Type": "image/jpeg"}
+
+    def close(self):
+        pass
+
+
+def _fake_requests_get(*a, **k):
+    return _FakeResponse()
+
+
+_install("requests", {
+    "get": _fake_requests_get,
+    "post": lambda *a, **k: None,
+    "RequestException": Exception,
+})
 
 _install("google_auth_oauthlib", {})
 _install("google_auth_oauthlib.flow", {"InstalledAppFlow": lambda *a, **k: None})
@@ -460,6 +478,25 @@ def test_resolve_ig_user_id_handles_linked_and_unlinked_pages():
     print("OK test_resolve_ig_user_id_handles_linked_and_unlinked_pages")
 
 
+def test_filter_valid_media_drops_dead_links():
+    good = "https://colourdiam.com/Product/Jewellery/2518/white45/2518_1.jpg"
+    video = "https://colourdiam.com/Product/Jewellery/3832/white45/video.mp4"
+    dead = "https://www.colourdiam.com/Product/Jewellery/7988/white45/center.jpg"
+
+    def fake_classify(url):
+        if url == dead:
+            return "invalid"
+        if url == video:
+            return "video"
+        return "image"
+
+    with patch("main._classify_media_url", side_effect=fake_classify):
+        assert main._filter_valid_media([good, video]) == [good, video]
+        assert main._filter_valid_media([dead, good, video]) == [good, video]
+        assert main._filter_valid_media([dead]) == []
+    print("OK test_filter_valid_media_drops_dead_links")
+
+
 if __name__ == "__main__":
     test_generate_is_idempotent()
     test_one_failure_does_not_stop_others()
@@ -468,4 +505,5 @@ if __name__ == "__main__":
     test_publish_new_platforms_routing()
     test_round_robin_jobs_mix_platforms()
     test_resolve_ig_user_id_handles_linked_and_unlinked_pages()
+    test_filter_valid_media_drops_dead_links()
     print("All pipeline tests passed.")
