@@ -40,12 +40,12 @@ class Config:
     # unit tests or when the media host is unreachable from CI.
     MEDIA_VALIDATION = _env("MEDIA_VALIDATION", "true").lower() in ("true", "1", "yes")
     # Keep each scheduled run intentionally small. The workflow runs every
-    # 15 minutes, so 5 jobs/run can process up to ~40 jobs across 2 hours while
-    # spreading Google Sheets and platform API traffic instead of bursting it.
-    MAX_JOBS_PER_RUN = int(_env("MAX_JOBS_PER_RUN", "5"))
+    # 2 minutes and uploads one job at a time to stay well under Google Sheets
+    # and platform API quota while still draining the queue continuously.
+    MAX_JOBS_PER_RUN = int(_env("MAX_JOBS_PER_RUN", "1"))
     # Generate only a small number of new queue rows per run as well. This
     # prevents queue generation itself from causing a Google Sheets write spike.
-    MAX_GENERATE_JOBS = int(_env("MAX_GENERATE_JOBS", "5"))
+    MAX_GENERATE_JOBS = int(_env("MAX_GENERATE_JOBS", "1"))
     JOB_STATUS_FAILED = "failed"
     JOB_STATUS_UPLOADED = "uploaded"
     JOB_STATUS_SKIPPED = "skipped"

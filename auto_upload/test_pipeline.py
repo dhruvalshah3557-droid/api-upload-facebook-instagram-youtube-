@@ -259,19 +259,20 @@ def test_generate_is_idempotent():
     fake = FakeSheets(sources, accounts, [])
     assert fake.get_existing_job_keys() == set()
 
-    main.run_generate(fake)
-    first_count = len(fake.appended_jobs)
-    # 1 FB account x (carousel + product_video + model_video:0) = 3 jobs
-    assert first_count == 3, f"expected 3 jobs, got {first_count}"
+    with patch.object(Config, "MAX_GENERATE_JOBS", 3):
+        main.run_generate(fake)
+        first_count = len(fake.appended_jobs)
+        # 1 FB account x (carousel + product_video + model_video:0) = 3 jobs
+        assert first_count == 3, f"expected 3 jobs, got {first_count}"
 
-    # Second identical run must append NOTHING new.
-    main.run_generate(fake)
-    assert len(fake.appended_jobs) == first_count, "duplicate jobs generated on second run"
+        # Second identical run must append NOTHING new.
+        main.run_generate(fake)
+        assert len(fake.appended_jobs) == first_count, "duplicate jobs generated on second run"
 
-    # A brand-new SKU appears -> only its missing jobs are added.
-    fake.source_rows["200"] = _source("200")
-    main.run_generate(fake)
-    assert len(fake.appended_jobs) == first_count + 3
+        # A brand-new SKU appears -> only its missing jobs are added.
+        fake.source_rows["200"] = _source("200")
+        main.run_generate(fake)
+        assert len(fake.appended_jobs) == first_count + 3
 
     # No duplicate unique keys ever.
     keys = [main.job_unique_key(j) for j in fake.appended_jobs]

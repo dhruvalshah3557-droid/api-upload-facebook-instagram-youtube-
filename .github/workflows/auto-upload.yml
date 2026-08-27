@@ -2,7 +2,7 @@ name: Auto Upload
 
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    - cron: "*/2 * * * *"
   workflow_dispatch:
     inputs:
       direct_media_url:
@@ -91,8 +91,8 @@ jobs:
           LOG_SHEET: ${{ secrets.LOG_SHEET || 'Publishing Log' }}
           GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
           USE_SECRET_MANAGER: ${{ secrets.USE_SECRET_MANAGER }}
-          MAX_JOBS_PER_RUN: "5"
-          MAX_GENERATE_JOBS: "5"
+          MAX_JOBS_PER_RUN: "1"
+          MAX_GENERATE_JOBS: "1"
           MEDIA_URL: ${{ inputs.direct_media_url }}
           CAPTION: ${{ inputs.direct_caption }}
           PLATFORM: ${{ inputs.direct_platform }}

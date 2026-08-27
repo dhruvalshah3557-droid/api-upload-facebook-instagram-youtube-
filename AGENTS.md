@@ -34,7 +34,7 @@ Flow: Source Import → Accounts → Publishing Queue → Publishing Log.
 - GitHub Secrets are write-only and cannot be read back via API. To access the workbook locally, either:
   - Share the sheet to anyone with the link (public read) and fetch via `https://docs.google.com/spreadsheets/d/<ID>/gviz/tq?tqx=out:json&sheet=<Tab>`, or
   - Paste the service account JSON locally into `auto_upload/credentials/service_account.json` (gitignored).
-- GitHub Actions workflow: `.github/workflows/auto-upload.yml` — runs every 15 min via cron (`*/15 * * * *`) + manual dispatch + push on `.github/trigger-auto-upload.txt`, materializes credentials from secrets, runs `python main.py --cycle` (one command: generates missing queue rows then uploads pending jobs; NOT `--loop`, NOT separate `--generate`). Concurrency group `auto-upload` with `cancel-in-progress: false`. The workflow env sets `MAX_JOBS_PER_RUN: "5"` and `MAX_GENERATE_JOBS: "5"` (config.py default is also 5).
+- GitHub Actions workflow: `.github/workflows/auto-upload.yml` — runs every 2 min via cron (`*/2 * * * *`) + manual dispatch + push on `.github/trigger-auto-upload.txt`, materializes credentials from secrets, runs `python main.py --cycle` (one command: generates missing queue rows then uploads pending jobs; NOT `--loop`, NOT separate `--generate`). Concurrency group `auto-upload` with `cancel-in-progress: false`. The workflow env sets `MAX_JOBS_PER_RUN: "1"` and `MAX_GENERATE_JOBS: "1"` (config.py default is also 1). This keeps the pipeline under Google Sheets and platform API quota while draining the queue one job at a time every 2 minutes.
 - Per-account tokens: `Accounts.credential_property_key` names an env var (e.g. `META_TOKEN_FB_ISR`). `Config.get_token()` reads it, falling back to the shared `FB_ACCESS_TOKEN`. The workflow maps each `META_TOKEN_*` to a GitHub secret.
 - The workbook is publicly readable: column maps can be re-verified with the gviz endpoint above without credentials.
 - To run the pipeline from a local/agent environment, trigger the GitHub Actions workflow (secrets live only there). The environment's git credential helper can provide a GitHub token: `printf "protocol=https\nhost=github.com\n\n" | git credential fill` → `password`. Use it to `POST /repos/<owner>/<repo>/actions/workflows/auto-upload.yml/dispatches` with `{"ref":"master"}` (HTTP 204 = accepted). Never print the token; reuse it in a shell var and unset after. Credentials are ALWAYS in GitHub Secrets, never local env or the repo.
@@ -65,7 +65,7 @@ Columns: `job_id, sku, account_id, media_selection, platform, format, language, 
 
 - `media_selection` values: `carousel`, `product_video`, `model_video:<n>`.
 - `status` lifecycle: empty/pending → `uploaded` | `failed` (after `MAX_JOB_ATTEMPTS`) | `skipped` | `needs_review`.
-- `python main.py --generate` fills the queue idempotently from clean Source Import rows (carousel + product Reel + one job per model video, per enabled account). `python main.py --cycle` (used by CI) generates missing rows then processes pending jobs; `MAX_GENERATE_JOBS` / `MAX_JOBS_PER_RUN` (default 5 each) cap generation and uploads per run.
+- `python main.py --generate` fills the queue idempotently from clean Source Import rows (carousel + product Reel + one job per model video, per enabled account). `python main.py --cycle` (used by CI) generates missing rows then processes pending jobs; `MAX_GENERATE_JOBS` / `MAX_JOBS_PER_RUN` (default 1 each) cap generation and uploads per run.
 
 ## Publishing Log
 
