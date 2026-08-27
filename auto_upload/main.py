@@ -46,6 +46,13 @@ _BROKEN_MEDIA_MARKERS = (
     "media validation failed",
     "video transcoding error",
     "broken container",
+    "dead links",
+    "media urls are unavailable",
+    "failed validation",
+    "nothing to publish",
+    "name or service not known",
+    "failed to resolve",
+    "name resolutionerror",
 )
 
 
