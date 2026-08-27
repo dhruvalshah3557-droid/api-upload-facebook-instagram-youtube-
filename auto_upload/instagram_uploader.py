@@ -64,7 +64,6 @@ class InstagramUploader:
             ig = data.get("instagram_business_account") or {}
             resolved = str(ig.get("id", "") or "").strip()
             if not resolved and ("media_count" in data or "ig_id" in data):
-                # The configured id is itself an Instagram business account.
                 resolved = configured_id
             if not resolved:
                 api_err = (data.get("error") or {}).get("message", "")
@@ -122,7 +121,6 @@ class InstagramUploader:
         else:
             params["caption"] = caption
         if is_video:
-            # Standalone posts use REELS; carousel children must use VIDEO.
             params["media_type"] = "REELS" if not carousel_item else "VIDEO"
             params["video_url"] = media_url
         else:
@@ -133,8 +131,6 @@ class InstagramUploader:
         url = f"{FB_GRAPH_URL}/{self.ig_user_id}/media"
         files = None
         if is_video and not carousel_item:
-            # Reels must be 9:16; upload the prepared file (re-encoded to
-            # 1080x1920 with blurred fill) instead of handing IG the raw URL.
             params.pop("video_url", None)
             files = {"video": prepare_video(media_url, fill_9x16=True)}
         logger.info(f"[{self.page_name}] Creating IG {'video' if is_video else 'image'} container")
@@ -195,6 +191,11 @@ class InstagramUploader:
         raise last_error
 
     def upload_carousel(self, media_urls, caption, product_id=""):
+        # Keep the first video as the first carousel card. main.py supplies the
+        # remaining order as main product image -> certificate -> other images.
+        # Python's stable sort preserves the relative order of all non-video
+        # cards while moving video card(s) to the front.
+        media_urls = sorted(media_urls, key=lambda url: 0 if _is_video_url(url) else 1)
         child_ids = []
         for media_url in media_urls:
             child_id = self._create_media_container(
