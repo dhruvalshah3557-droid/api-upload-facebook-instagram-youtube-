@@ -381,6 +381,16 @@ class SheetsReader:
                 if u not in model_videos:
                     model_videos.append(u)
 
+            certificate_media_url = self._pick(
+                rec,
+                "CERTIFICATE IMAGE LINK",
+                "Certificate Image Link",
+                "certificate image link",
+                "CERTIFICATE MEDIA LINK",
+                "Certificate Media Link",
+                "certificate media link",
+            )
+
             lang_captions = {}
             for code, col in self.LANG_CAPTION_COLS.items():
                 lang_captions[code] = self._pick(rec, col)
@@ -394,6 +404,7 @@ class SheetsReader:
                 "sr_no": str(rec.get("SR NO", "")).strip(),
                 "lab": str(rec.get("LAB", "")).strip(),
                 "certificate_id": str(rec.get("CERTIFICATE ID.", "")).strip(),
+                "certificate_media_url": certificate_media_url,
                 "source_status": str(rec.get("Status", "")).strip(),
                 "product_link": str(rec.get("PRODUCT LINK", "")).strip(),
                 "product_name": str(rec.get("PRODUCT NAME", "")).strip(),
