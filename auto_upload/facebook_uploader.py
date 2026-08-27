@@ -39,13 +39,7 @@ class FacebookUploader:
 
     @classmethod
     def _resolve_page_token(cls, page_id, token):
-        """Resolve a page-scoped token from a user token.
-
-        Publishing must be done as the page itself; a user token fails with
-        (#200) "Unpublished posts must be posted to a page as the page itself"
-        and (#100) "No permission to publish the video". Page tokens are
-        resolved via the Graph API and cached per page.
-        """
+        """Resolve a page-scoped token from a user token."""
         cached = _PAGE_TOKEN_CACHE.get(page_id)
         if cached:
             return cached
@@ -66,10 +60,7 @@ class FacebookUploader:
 
     def upload_photo(self, media_url, caption, product_id=""):
         url = f"{FB_GRAPH_URL}/{self.page_id}/photos"
-        data = {
-            "caption": caption,
-            "access_token": self.access_token,
-        }
+        data = {"caption": caption, "access_token": self.access_token}
         if product_id:
             data["product_tags"] = json.dumps([{"product_id": product_id}])
         logger.info(f"[{self.page_name}] Posting photo" + (" with product tag" if product_id else ""))
@@ -83,10 +74,7 @@ class FacebookUploader:
 
     def upload_video(self, media_url, caption, product_id=""):
         url = f"{FB_GRAPH_URL}/{self.page_id}/videos"
-        data = {
-            "description": caption,
-            "access_token": self.access_token,
-        }
+        data = {"description": caption, "access_token": self.access_token}
         if product_id:
             data["product_tags"] = json.dumps([{"product_id": product_id}])
         logger.info(f"[{self.page_name}] Posting video" + (" with product tag" if product_id else ""))
@@ -99,21 +87,12 @@ class FacebookUploader:
         raise Exception(result.get("error", {}).get("message", str(result)))
 
     def upload_carousel(self, image_urls, caption, product_id=""):
-        """Publish a multi-image carousel post on the page.
-
-        Children are created as unpublished photo objects, then attached to a
-        feed post so the whole set publishes together as one carousel.
-        """
         if not image_urls:
             raise Exception("No images provided for carousel")
-
         photos_url = f"{FB_GRAPH_URL}/{self.page_id}/photos"
         child_ids = []
         for image_url in image_urls:
-            params = {
-                "published": "false",
-                "access_token": self.access_token,
-            }
+            params = {"published": "false", "access_token": self.access_token}
             resp = requests.post(photos_url, data=params, files={"source": self._download_media(image_url)}, timeout=120)
             result = resp.json()
             if "id" not in result:
@@ -143,13 +122,20 @@ class FacebookUploader:
             return self.upload_video(media_url, caption, product_id)
         return self.upload_photo(media_url, caption, product_id)
 
-    def permalink_url(self, object_id):
-        """Resolve the canonical public URL for a created object (post/photo/video).
+    @staticmethod
+    def _absolute_permalink(value):
+        """Normalize Meta permalink_url into a full public Facebook URL."""
+        value = str(value or "").strip()
+        if not value:
+            return ""
+        if value.startswith("https://") or value.startswith("http://"):
+            return value
+        if value.startswith("/"):
+            return f"https://www.facebook.com{value}"
+        return f"https://www.facebook.com/{value.lstrip('/')}"
 
-        Feed posts return a composite id like "<page_id>_<post_id>" which does
-        not map to a working /posts/ URL directly; photos return a photo id, not
-        a post id. The Graph API `permalink_url` field is authoritative.
-        """
+    def permalink_url(self, object_id):
+        """Resolve the canonical public URL for a created object."""
         if not object_id:
             return ""
         try:
@@ -159,6 +145,6 @@ class FacebookUploader:
                 timeout=15,
             )
             data = resp.json()
-            return str(data.get("permalink_url", "") or "").strip()
+            return self._absolute_permalink(data.get("permalink_url", ""))
         except Exception:
             return ""
