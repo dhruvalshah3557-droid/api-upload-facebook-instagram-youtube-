@@ -91,8 +91,10 @@ jobs:
           LOG_SHEET: ${{ secrets.LOG_SHEET || 'Publishing Log' }}
           GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
           USE_SECRET_MANAGER: ${{ secrets.USE_SECRET_MANAGER }}
-          MAX_JOBS_PER_RUN: "1"
-          MAX_GENERATE_JOBS: "1"
+          # Process a small batch per run. This is still conservative enough for
+          # Sheets/API quotas, but prevents one broken job from blocking the queue.
+          MAX_JOBS_PER_RUN: "3"
+          MAX_GENERATE_JOBS: "3"
           MEDIA_URL: ${{ inputs.direct_media_url }}
           CAPTION: ${{ inputs.direct_caption }}
           PLATFORM: ${{ inputs.direct_platform }}
@@ -112,6 +114,7 @@ jobs:
           META_TOKEN_FB_LTD: ${{ secrets.META_TOKEN_FB_LTD || secrets.FACEBOOKTOKEN }}
           META_TOKEN_FB_CD: ${{ secrets.META_TOKEN_FB_CD || secrets.FACEBOOKTOKEN }}
           META_TOKEN_FB_NFCD: ${{ secrets.META_TOKEN_FB_NFCD || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_FB_INDO: ${{ secrets.META_TOKEN_FB_INDO || secrets.FACEBOOKTOKEN }}
           META_TOKEN_IG_BKK: ${{ secrets.META_TOKEN_IG_BKK || secrets.FACEBOOKTOKEN }}
           META_TOKEN_IG_TREND: ${{ secrets.META_TOKEN_IG_TREND || secrets.FACEBOOKTOKEN }}
           META_TOKEN_IG_LTD: ${{ secrets.META_TOKEN_IG_LTD || secrets.FACEBOOKTOKEN }}
@@ -122,7 +125,7 @@ jobs:
           META_TOKEN_IG_INDO: ${{ secrets.META_TOKEN_IG_INDO || secrets.FACEBOOKTOKEN }}
           META_TOKEN_IG_RUS: ${{ secrets.META_TOKEN_IG_RUS || secrets.FACEBOOKTOKEN }}
           META_TOKEN_IG_KOR: ${{ secrets.META_TOKEN_IG_KOR || secrets.FACEBOOKTOKEN }}
-          META_TOKEN_FB_INDO: ${{ secrets.META_TOKEN_FB_INDO || secrets.FACEBOOKTOKEN }}
+          META_TOKEN_IG_ISR: ${{ secrets.META_TOKEN_IG_ISR || secrets.FACEBOOKTOKEN }}
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_OAUTH_REFRESH_TOKEN: ${{ secrets.YOUTUBE_OAUTH_REFRESH_TOKEN }}
