@@ -1,1 +1,1 @@
-Verify refreshed Meta token with known-good Facebook and Instagram carousel media.
+Verify refreshed Meta token after Instagram Business ID resolver fix.
