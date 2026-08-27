@@ -22,20 +22,11 @@ def _is_video_url(url):
 class IGAccountNotLinkedError(Exception):
     """The configured Facebook page is not linked to an Instagram Business
     Account, so the IG Graph API cannot publish to it.
-
-    Raised instead of silently using the Facebook page ID as the IG user ID
-    (which produces confusing API failures). Jobs stay pending and publish
-    automatically once the account is linked in Meta Business Suite.
     """
 
 
 def _probe_video(media_url):
-    """Return (width, height) of a video, or None if it cannot be probed.
-
-    Reads the remote file's metadata only (no full download). Returns None when
-    ffprobe is unavailable, the URL is dead, or probing fails so callers can
-    fall back to a safe default.
-    """
+    """Return (width, height) of a video, or None if it cannot be probed."""
     if not shutil.which("ffprobe"):
         return None
     try:
@@ -64,81 +55,62 @@ class InstagramUploader:
 
     @classmethod
     def _resolve_ig_user_id(cls, configured_id, access_token, page_name=""):
-        """Resolve the real Instagram Business Account ID from a page token.
+        """Return the Instagram Business Account ID used for publishing.
 
-        The Accounts sheet may hold the Facebook page ID (or be empty) for an
-        Instagram account, but the IG Graph API needs the IG business account
-        ID. Resolve it via the Graph API and cache it per account.
+        Accounts.platform_account_id is authoritative when present. Those IDs
+        are populated from /me/accounts?fields=instagram_business_account and
+        are already Instagram Business IDs, so querying
+        `instagram_business_account` on them again is incorrect and returns
+        Graph error #100. Only fall back to Facebook Page discovery when the
+        sheet has no configured IG ID.
         """
         configured_id = str(configured_id or "").strip()
         cache_key = configured_id or page_name
         if cache_key and cache_key in cls._IG_ID_CACHE:
             return cls._IG_ID_CACHE[cache_key]
 
-        def _graph_get(node_id, fields=""):
-            try:
-                resp = requests.get(
-                    f"{FB_GRAPH_URL}/{node_id}",
-                    params={"fields": fields, "access_token": access_token},
-                    timeout=15,
-                )
-                return resp.json()
-            except Exception:
-                return {}
-
-        resolved = ""
         if configured_id:
-            data = _graph_get(configured_id, "instagram_business_account,id,media_count,ig_id")
-            ig = data.get("instagram_business_account") or {}
-            resolved = str(ig.get("id", "") or "").strip()
-            if not resolved and ("media_count" in data or "ig_id" in data):
-                resolved = configured_id
-            if not resolved:
-                api_err = (data.get("error") or {}).get("message", "")
-                if data.get("id") or api_err:
-                    detail = f" (API: {api_err})" if api_err else ""
-                    raise IGAccountNotLinkedError(
-                        f"No Instagram Business Account is linked to node "
-                        f"{configured_id}{detail}. Link the Instagram account "
-                        f"'{page_name}' to this Facebook page in Meta Business "
-                        "Suite; the pipeline will resolve it automatically."
-                    )
-                raise Exception(
-                    f"Could not resolve Instagram business account ID for "
-                    f"{configured_id} (Graph API unavailable); will retry"
-                )
+            cls._IG_ID_CACHE[cache_key] = configured_id
+            return configured_id
+
+        try:
+            payload = requests.get(
+                f"{FB_GRAPH_URL}/me/accounts",
+                params={
+                    "fields": "id,name,instagram_business_account{id,username}",
+                    "access_token": access_token,
+                },
+                timeout=15,
+            ).json()
+            pages = payload.get("data", [])
+        except Exception:
+            pages = []
+
+        matches = []
+        wanted = str(page_name or "").strip().lower()
+        for page in pages:
+            ig = page.get("instagram_business_account") or {}
+            ig_id = str(ig.get("id", "") or "").strip()
+            if not ig_id:
+                continue
+            page_label = str(page.get("name", "") or "").strip().lower()
+            ig_username = str(ig.get("username", "") or "").strip().lower()
+            if not wanted or wanted in page_label or wanted in ig_username:
+                matches.append(ig_id)
+
+        if len(matches) == 1:
+            resolved = matches[0]
+        elif len(matches) > 1 and not wanted:
+            resolved = matches[0]
         else:
-            try:
-                pages = requests.get(
-                    f"{FB_GRAPH_URL}/me/accounts",
-                    params={"access_token": access_token},
-                    timeout=15,
-                ).json().get("data", [])
-            except Exception:
-                pages = []
-            matches = []
-            for page in pages:
-                ig = page.get("instagram_business_account") or {}
-                ig_id = str(ig.get("id", "") or "").strip()
-                if not ig_id:
-                    continue
-                name = str(page.get("name", "") or "")
-                if not page_name or page_name.lower() in name.lower():
-                    matches.append(ig_id)
-            if len(matches) == 1:
-                resolved = matches[0]
-            elif len(matches) > 1 and not page_name:
-                resolved = matches[0]
-            elif not matches and len(pages) == 1:
-                ig = pages[0].get("instagram_business_account") or {}
-                resolved = str(ig.get("id", "") or "").strip()
+            resolved = ""
 
         if resolved and cache_key:
             cls._IG_ID_CACHE[cache_key] = resolved
         if not resolved:
-            raise Exception(
-                "Could not resolve Instagram business account ID; link the "
-                "page to an IG business account or set platform_account_id"
+            raise IGAccountNotLinkedError(
+                f"Could not resolve Instagram Business Account ID for '{page_name}'. "
+                "Set the verified Instagram Business ID in Accounts.platform_account_id."
             )
         return resolved
 
@@ -149,19 +121,9 @@ class InstagramUploader:
         else:
             params["caption"] = caption
         if is_video:
-            # Standalone posts use REELS; carousel children must use VIDEO.
-            # Reels force a 9:16 canvas: Instagram center-crops or letterboxes
-            # any non-vertical source, which looks like "resized" media. Only
-            # post a true Reel for vertical videos; landscape and square videos
-            # are posted as feed VIDEO posts so their full size and aspect
-            # ratio are preserved.
             if carousel_item:
                 params["media_type"] = "VIDEO"
             else:
-                # Only strictly taller (vertical) sources fit a 9:16 Reel
-                # without cropping. Landscape, square and unknown videos are
-                # posted as feed VIDEO posts to keep their full size and aspect
-                # ratio intact.
                 dims = _probe_video(media_url)
                 params["media_type"] = "REELS" if (dims and dims[1] > dims[0]) else "VIDEO"
             params["video_url"] = media_url
@@ -173,11 +135,6 @@ class InstagramUploader:
         url = f"{FB_GRAPH_URL}/{self.ig_user_id}/media"
         files = None
         if is_video and not carousel_item:
-            # Upload the original file bytes instead of a remote URL.
-            # Instagram re-fetches and re-encodes URLs, which degrades quality
-            # and can downscale; sending the original bytes preserves the full
-            # resolution. prepare_video returns the untouched original unless
-            # MIX_BACKGROUND_MUSIC=true requires an approved instrumental mix.
             params.pop("video_url", None)
             files = {"video": prepare_video(media_url)}
         logger.info(f"[{self.page_name}] Creating IG {'video' if is_video else 'image'} container")
@@ -238,10 +195,9 @@ class InstagramUploader:
         raise last_error
 
     def upload_carousel(self, media_urls, caption, product_id=""):
-        # Keep the first video as the first carousel card. main.py supplies the
-        # remaining order as main product image -> certificate -> other images.
-        # Python's stable sort preserves the relative order of all non-video
-        # cards while moving video card(s) to the front.
+        # Required order: main product video -> main product image -> certificate
+        # -> remaining images. Stable sorting moves video(s) to the front while
+        # preserving the source order of all non-video cards.
         media_urls = sorted(media_urls, key=lambda url: 0 if _is_video_url(url) else 1)
         child_ids = []
         for media_url in media_urls:
@@ -263,12 +219,7 @@ class InstagramUploader:
         return self._publish_container(container_id)
 
     def permalink(self, media_id):
-        """Resolve the canonical public URL for a published media object.
-
-        The media_publish response returns the numeric media ID, but the
-        https://www.instagram.com/p/<numeric-id> form only serves a login/blank
-        page. The Graph API `permalink` field returns the real shortcode URL.
-        """
+        """Resolve the canonical public URL for a published media object."""
         if not media_id:
             return ""
         try:
