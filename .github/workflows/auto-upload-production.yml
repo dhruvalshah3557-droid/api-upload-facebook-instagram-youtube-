@@ -1,0 +1,88 @@
+name: Auto Upload Production
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - .github/production-trigger.txt
+
+concurrency:
+  group: auto-upload-production
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: auto_upload
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python with pip cache
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: auto_upload/requirements.txt
+
+      - name: Cache YouTube OAuth token
+        uses: actions/cache@v5
+        with:
+          path: auto_upload/credentials/youtube_token.pickle
+          key: youtube-token-${{ runner.os }}
+
+      - name: Install ffmpeg only if missing
+        run: |
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y --no-install-recommends ffmpeg
+          fi
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write service account credentials
+        env:
+          GOOGLE_SHEET_CREDENTIALS_JSON: ${{ secrets.GOOGLE_SHEET_CREDENTIALS_JSON }}
+        run: echo "$GOOGLE_SHEET_CREDENTIALS_JSON" > credentials/service_account.json
+
+      - name: Write YouTube client secret
+        env:
+          YOUTUBE_CLIENT_SECRET_JSON: ${{ secrets.YOUTUBEJSON || secrets.YOUTUBE_CLIENT_SECRET_JSON }}
+        run: echo "$YOUTUBE_CLIENT_SECRET_JSON" > credentials/youtube_client_secret.json
+
+      - name: Run auto upload
+        env:
+          GOOGLE_SHEET_CREDENTIALS: credentials/service_account.json
+          GOOGLE_SHEET_URL: ${{ secrets.GOOGLE_SHEET_URL }}
+          SOURCE_IMPORT_SHEET: Source Import
+          ACCOUNTS_SHEET: Accounts
+          QUEUE_SHEET: Publishing Queue
+          LOG_SHEET: Publishing Log
+          MAX_JOBS_PER_RUN: "6"
+          MAX_GENERATE_JOBS: "3"
+          FB_ACCESS_TOKEN: ${{ secrets.FACEBOOKTOKEN }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_OAUTH_REFRESH_TOKEN: ${{ secrets.YOUTUBE_OAUTH_REFRESH_TOKEN }}
+          YOUTUBE_OAUTH_REFRESH_TOKEN_JIYA: ${{ secrets.YOUTUBE_OAUTH_REFRESH_TOKEN_JIYA }}
+          PINTEREST_ACCESS_TOKEN: ${{ secrets.PINTEREST_ACCESS_TOKEN }}
+        run: |
+          set -o pipefail
+          python main.py --cycle
+          if grep -Eqi "Sheets connection failed|Google Sheets connection failed" /tmp/auto_upload.log; then
+            echo "ERROR: Auto upload could not connect to Google Sheets."
+            exit 1
+          fi
+
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: auto-upload-production-log
+          path: /tmp/auto_upload.log
