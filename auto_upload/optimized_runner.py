@@ -8,7 +8,9 @@ publishing, and Instagram carousel ordering. Account selection rotates on every
 Quota budget: production is tuned for up to 20 publish attempts/run. Maintenance
 writes remain capped so the higher Google Sheets quota has comfortable headroom.
 """
+import socket
 import time
+from urllib.parse import urlparse
 
 import main
 from config import Config
@@ -19,6 +21,7 @@ HOUSEKEEPING_LIMIT = 8
 REVIVE_LIMIT = 12
 LOCK_PREFIX = "IDEMPOTENCY_LOCK"
 _CURRENT_SHEETS = None
+_DNS_CACHE = {}
 
 _META_RETRY_MARKERS = (
     "unpublished posts must be posted to a page as the page itself",
@@ -60,6 +63,33 @@ def _media_fingerprint(job, source):
         str(job.get("platform", "")),
         tuple(main._dedupe_media(media)),
     )
+
+
+def _dns_resolves(url):
+    """Return False for media hosts that do not exist in DNS.
+
+    requests classifies DNS failures as generic connection errors. main.py keeps
+    generic connection errors as 'unknown' so temporary network outages can retry,
+    but a hostname with no DNS record is not transient. Reject it in preflight so
+    one bad source URL cannot consume the account's publishing slot or fail the run.
+    """
+    try:
+        host = (urlparse(str(url or "").strip()).hostname or "").strip().lower()
+    except Exception:
+        return False
+    if not host:
+        return False
+    if host in _DNS_CACHE:
+        return _DNS_CACHE[host]
+    try:
+        socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+        ok = True
+    except socket.gaierror:
+        ok = False
+    _DNS_CACHE[host] = ok
+    if not ok:
+        main.logger.warning("Media host does not resolve in DNS; rejecting URL: %s", url)
+    return ok
 
 
 def _enabled_account_order(accounts, platform):
@@ -203,13 +233,16 @@ def _healthy_candidates(jobs, accounts, sources, sheets, limit):
                 housekeeping += 1
             continue
 
-        usable = [url for url in media if main._classify_media_url(url) != "invalid"]
+        usable = [
+            url for url in media
+            if _dns_resolves(url) and main._classify_media_url(url) != "invalid"
+        ]
         if not usable:
             if housekeeping < HOUSEKEEPING_LIMIT:
                 sheets.update_job(job, {
                     "status": Config.JOB_STATUS_NEEDS_REVIEW,
-                    "notes": "Auto-cleaned: all media URLs are unavailable/dead",
-                    "error_message": "All resolved media URLs are unavailable (404/dead links); nothing to publish",
+                    "notes": "Auto-cleaned: all media URLs are unavailable/dead or DNS-invalid",
+                    "error_message": "All resolved media URLs are unavailable (404/dead/DNS-invalid); nothing to publish",
                 })
                 housekeeping += 1
             continue
