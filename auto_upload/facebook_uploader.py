@@ -20,12 +20,7 @@ class FacebookUploader:
 
     @staticmethod
     def _download_media(media_url):
-        """Download the media file bytes so the original is uploaded.
-
-        Passing a URL to the Graph API makes Facebook re-fetch and re-compress
-        the media, which degrades image/video quality. Uploading the original
-        bytes via multipart preserves quality.
-        """
+        """Download original media bytes for image uploads."""
         resp = requests.get(
             media_url,
             timeout=180,
@@ -77,8 +72,16 @@ class FacebookUploader:
         data = {"description": caption, "access_token": self.access_token}
         if product_id:
             data["product_tags"] = json.dumps([{"product_id": product_id}])
-        logger.info(f"[{self.page_name}] Posting video" + (" with product tag" if product_id else ""))
-        resp = requests.post(url, data=data, files={"source": prepare_video(media_url)}, timeout=600)
+        logger.info(
+            f"[{self.page_name}] Posting Facebook video/Reel in normalized 9:16 format"
+            + (" with product tag" if product_id else "")
+        )
+        # All Facebook video uploads are normalized to a 1080x1920 vertical canvas.
+        # media_prep preserves the full source frame (no destructive crop) and also
+        # guarantees silent/muted videos receive licensed/trending audio when
+        # configured, otherwise an original instrumental fallback.
+        prepared = prepare_video(media_url, fill_9x16=True)
+        resp = requests.post(url, data=data, files={"source": prepared}, timeout=600)
         result = resp.json()
         if "id" in result:
             logger.info(f"[{self.page_name}] Video posted: {result['id']}")
