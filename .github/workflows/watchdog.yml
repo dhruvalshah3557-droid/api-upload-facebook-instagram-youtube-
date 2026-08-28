@@ -6,7 +6,8 @@ name: Watchdog
 
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    # Stagger away from minute 0/30 so GitHub's scheduler is less likely to delay it.
+    - cron: "7,37 * * * *"
   workflow_dispatch:
 
 permissions:
