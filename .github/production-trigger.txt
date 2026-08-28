@@ -1,1 +1,1 @@
-Verify page rotation, stale Meta retry repair, duplicate lock, and healthy-media prioritization.
+Verify rotating coverage across all enabled Facebook and Instagram accounts with duplicate protection.
