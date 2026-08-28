@@ -112,11 +112,9 @@ class InstagramUploader:
         else:
             params["caption"] = caption
         if is_video:
-            # Meta deprecated media_type=VIDEO for Instagram publishing.
-            # Standalone videos must be REELS; carousel video children are
-            # inferred from video_url and should not send the deprecated type.
-            if not carousel_item:
-                params["media_type"] = "REELS"
+            # Carousel video children must explicitly identify themselves as VIDEO.
+            # Standalone Instagram videos are published as REELS.
+            params["media_type"] = "VIDEO" if carousel_item else "REELS"
             params["video_url"] = media_url
         else:
             params["image_url"] = media_url
@@ -186,7 +184,15 @@ class InstagramUploader:
         raise last_error
 
     def upload_carousel(self, media_urls, caption, product_id=""):
-        media_urls = sorted(media_urls, key=lambda url: 0 if _is_video_url(url) else 1)
+        # Preserve source order. If broken media filtering leaves only one item,
+        # publish it normally rather than creating an invalid one-child carousel.
+        media_urls = [str(url or "").strip() for url in media_urls if str(url or "").strip()]
+        if not media_urls:
+            raise Exception("Instagram carousel has no usable media")
+        if len(media_urls) == 1:
+            logger.warning(f"[{self.page_name}] Carousel reduced to one media item; publishing as a single post")
+            return self.upload(media_urls[0], caption, product_id)
+
         child_ids = []
         for media_url in media_urls:
             child_id = self._create_media_container(
