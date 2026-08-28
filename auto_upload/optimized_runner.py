@@ -4,6 +4,12 @@
 This leaves the proven uploader implementations untouched while fixing queue
 starvation. It also enforces the requested Instagram carousel order:
 video -> main image -> certificate image -> remaining product images.
+
+Duplicate protection: immediately before any platform API call the queue row is
+locked in Sheets. If the platform accepts the post but the runner dies before
+Sheets records success, that lock remains and later runs will not publish the
+same job again. If the API call itself fails normally, the lock is cleared so
+main.py can apply the usual retry/needs_review policy.
 """
 import time
 
@@ -13,6 +19,8 @@ from config import Config
 PRIMARY_PLATFORMS = ("instagram", "facebook", "youtube")
 PREFLIGHT_SCAN_LIMIT = 180
 HOUSEKEEPING_LIMIT = 12
+LOCK_PREFIX = "IDEMPOTENCY_LOCK"
+_CURRENT_SHEETS = None
 
 
 def resolve_media_fixed(job, source):
@@ -40,19 +48,37 @@ def _priority(job):
     except ValueError:
         p = 9
     attempts = int(job.get("attempts", 0) or 0)
-    # Healthy core platforms and never-attempted jobs first.
     return (p, attempts, int(job.get("row", 0) or 0))
+
+
+def _is_locked(job):
+    return LOCK_PREFIX in str(job.get("notes", "") or "")
+
+
+def _media_fingerprint(job, source):
+    media = resolve_media_fixed(job, source)
+    return (
+        str(job.get("account_id", "")),
+        str(job.get("platform", "")),
+        tuple(main._dedupe_media(media)),
+    )
 
 
 def _healthy_candidates(jobs, accounts, sources, sheets, limit):
     selected = []
     housekeeping = 0
     per_platform = {p: 0 for p in PRIMARY_PLATFORMS}
+    seen_fingerprints = set()
     jobs = sorted(jobs, key=_priority)
 
     for job in jobs[:PREFLIGHT_SCAN_LIMIT]:
         if len(selected) >= limit:
             break
+
+        if _is_locked(job):
+            main.logger.warning("Job %s skipped by idempotency lock", job.get("job_id"))
+            continue
+
         account = accounts.get(job.get("account_id"))
         if not account or not account.get("enabled"):
             if housekeeping < HOUSEKEEPING_LIMIT:
@@ -98,19 +124,65 @@ def _healthy_candidates(jobs, accounts, sources, sheets, limit):
                 housekeeping += 1
             continue
 
+        fingerprint = _media_fingerprint(job, source)
+        if fingerprint in seen_fingerprints:
+            main.logger.warning(
+                "Job %s skipped: duplicate account/media fingerprint in this batch",
+                job.get("job_id"),
+            )
+            continue
+
         platform = job.get("platform", "")
-        # Keep the batch balanced so one account/platform cannot starve others.
         if platform in per_platform and per_platform[platform] >= max(1, (limit + 2) // 3):
             continue
+
         selected.append(job)
+        seen_fingerprints.add(fingerprint)
         if platform in per_platform:
             per_platform[platform] += 1
 
     return selected
 
 
+def guarded_publish(job, source, account):
+    """Lock a job before the external publish call to guarantee at-most-once posting."""
+    sheets = _CURRENT_SHEETS
+    if sheets is None:
+        return ORIGINAL_PUBLISH_JOB(job, source, account)
+
+    old_notes = str(job.get("notes", "") or "")
+    lock_note = f"{LOCK_PREFIX}:{int(time.time())}"
+    if old_notes:
+        lock_note = f"{lock_note} | {old_notes}"
+
+    sheets.update_job(job, {
+        "status": "hold",
+        "notes": lock_note,
+        "last_attempt_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    })
+    main.logger.info("Job %s: idempotency lock saved before publish", job.get("job_id"))
+
+    try:
+        return ORIGINAL_PUBLISH_JOB(job, source, account)
+    except Exception:
+        try:
+            sheets.update_job(job, {
+                "status": "pending",
+                "notes": old_notes,
+            })
+            main.logger.info("Job %s: idempotency lock released after API failure", job.get("job_id"))
+        except Exception as unlock_error:
+            main.logger.error(
+                "Job %s: could not release idempotency lock: %s",
+                job.get("job_id"), unlock_error,
+            )
+        raise
+
+
 def process_optimized():
+    global _CURRENT_SHEETS
     sheets = main.open_sheets_with_retry()
+    _CURRENT_SHEETS = sheets
     main.read_upload_guide(sheets)
     accounts = {a["account_id"]: a for a in sheets.get_accounts()}
     sources = sheets.get_source_rows()
@@ -128,18 +200,19 @@ def process_optimized():
         main.logger.warning("No healthy upload candidates found in preflight window")
         return
 
-    # process_pending normally rereads the queue; temporarily return only the
-    # preflight-approved jobs so upload slots cannot be consumed by legacy junk.
     original_get_pending = sheets.get_pending_jobs
     sheets.get_pending_jobs = lambda: selected
     try:
         main.process_pending(sheets)
     finally:
         sheets.get_pending_jobs = original_get_pending
+        _CURRENT_SHEETS = None
 
 
 ORIGINAL_RESOLVE_MEDIA = main.resolve_media
+ORIGINAL_PUBLISH_JOB = main.publish_job
 main.resolve_media = resolve_media_fixed
+main.publish_job = guarded_publish
 
 if __name__ == "__main__":
     main.logger.info("=== Optimized Production Upload ===")
