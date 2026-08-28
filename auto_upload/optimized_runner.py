@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Production runner that drains healthy jobs before legacy broken queue items.
+"""Production runner for fair, safe social publishing.
 
 Fixes queue starvation, account starvation, stale Meta auth failures, duplicate
-publishing, and Instagram carousel ordering.
+publishing, and Instagram carousel ordering. Account selection rotates on every
+10-minute production slot so every enabled page receives publishing turns.
 """
 import time
 
@@ -10,7 +11,7 @@ import main
 from config import Config
 
 PRIMARY_PLATFORMS = ("instagram", "facebook", "youtube")
-PREFLIGHT_SCAN_LIMIT = 240
+PREFLIGHT_SCAN_LIMIT = 600
 HOUSEKEEPING_LIMIT = 12
 REVIVE_LIMIT = 24
 LOCK_PREFIX = "IDEMPOTENCY_LOCK"
@@ -45,16 +46,6 @@ def resolve_media_fixed(job, source):
     return ORIGINAL_RESOLVE_MEDIA(job, source)
 
 
-def _priority(job):
-    platform = job.get("platform", "")
-    try:
-        p = PRIMARY_PLATFORMS.index(platform)
-    except ValueError:
-        p = 9
-    attempts = int(job.get("attempts", 0) or 0)
-    return (p, attempts, int(job.get("row", 0) or 0))
-
-
 def _is_locked(job):
     return LOCK_PREFIX in str(job.get("notes", "") or "")
 
@@ -68,9 +59,55 @@ def _media_fingerprint(job, source):
     )
 
 
+def _enabled_account_order(accounts, platform):
+    return [
+        aid for aid, account in accounts.items()
+        if account.get("enabled") and account.get("platform") == platform
+    ]
+
+
+def _platform_limits(limit):
+    """Reserve meaningful capacity for FB + IG while keeping YouTube active."""
+    if limit <= 1:
+        return {"facebook": 1, "instagram": 0, "youtube": 0}
+    if limit <= 3:
+        return {"facebook": 1, "instagram": 1, "youtube": limit - 2}
+    # Production currently uses 6: 3 Facebook, 2 Instagram, 1 YouTube.
+    fb = max(2, limit // 2)
+    ig = max(1, limit - fb - 1)
+    yt = max(0, limit - fb - ig)
+    return {"facebook": fb, "instagram": ig, "youtube": yt}
+
+
+def _rotation_rank(account_id, platform, accounts, slots):
+    """Return rotating rank for an account in the current 10-minute slot."""
+    order = _enabled_account_order(accounts, platform)
+    if not order or account_id not in order:
+        return 999999
+    per_run = max(1, slots.get(platform, 1))
+    slot_number = int(time.time() // 600)
+    start = (slot_number * per_run) % len(order)
+    idx = order.index(account_id)
+    return (idx - start) % len(order)
+
+
+def _priority(job, accounts, slots):
+    platform = job.get("platform", "")
+    try:
+        p = PRIMARY_PLATFORMS.index(platform)
+    except ValueError:
+        p = 9
+    rank = _rotation_rank(job.get("account_id", ""), platform, accounts, slots)
+    attempts = int(job.get("attempts", 0) or 0)
+    return (p, rank, attempts, int(job.get("row", 0) or 0))
+
+
 def _revive_stale_meta_failures(sheets, accounts):
     """Reopen old FB/IG auth/permission failures now that the shared token works."""
-    enabled = {aid for aid, a in accounts.items() if a.get("enabled") and a.get("platform") in ("facebook", "instagram")}
+    enabled = {
+        aid for aid, a in accounts.items()
+        if a.get("enabled") and a.get("platform") in ("facebook", "instagram")
+    }
     if not enabled:
         return 0
     records = sheets.queue_ws.get_all_records(head=sheets.queue_header_row)
@@ -104,10 +141,16 @@ def _revive_stale_meta_failures(sheets, accounts):
 def _healthy_candidates(jobs, accounts, sources, sheets, limit):
     selected = []
     housekeeping = 0
+    slots = _platform_limits(limit)
     per_platform = {p: 0 for p in PRIMARY_PLATFORMS}
     seen_fingerprints = set()
     seen_accounts = set()
-    jobs = sorted(jobs, key=_priority)
+    jobs = sorted(jobs, key=lambda j: _priority(j, accounts, slots))
+
+    main.logger.info(
+        "Account rotation slot: FB=%s IG=%s YT=%s",
+        slots.get("facebook", 0), slots.get("instagram", 0), slots.get("youtube", 0),
+    )
 
     for job in jobs[:PREFLIGHT_SCAN_LIMIT]:
         if len(selected) >= limit:
@@ -118,21 +161,40 @@ def _healthy_candidates(jobs, accounts, sources, sheets, limit):
         account = accounts.get(job.get("account_id"))
         if not account or not account.get("enabled"):
             if housekeeping < HOUSEKEEPING_LIMIT:
-                sheets.update_job(job, {"status": Config.JOB_STATUS_SKIPPED, "notes": "Auto-cleaned: account disabled or missing"})
+                sheets.update_job(job, {
+                    "status": Config.JOB_STATUS_SKIPPED,
+                    "notes": "Auto-cleaned: account disabled or missing",
+                })
                 housekeeping += 1
+            continue
+
+        platform = job.get("platform", "")
+        if platform not in PRIMARY_PLATFORMS:
+            continue
+        if per_platform.get(platform, 0) >= slots.get(platform, 0):
             continue
 
         source = sources.get(job.get("sku"))
         if not source:
             if housekeeping < HOUSEKEEPING_LIMIT:
-                sheets.update_job(job, {"status": Config.JOB_STATUS_SKIPPED, "notes": "Auto-cleaned: SKU missing from Source Import"})
+                sheets.update_job(job, {
+                    "status": Config.JOB_STATUS_SKIPPED,
+                    "notes": "Auto-cleaned: SKU missing from Source Import",
+                })
                 housekeeping += 1
+            continue
+
+        account_id = job.get("account_id", "")
+        if account_id in seen_accounts:
             continue
 
         media = resolve_media_fixed(job, source)
         if not media:
             if housekeeping < HOUSEKEEPING_LIMIT:
-                sheets.update_job(job, {"status": Config.JOB_STATUS_NEEDS_REVIEW, "notes": "Auto-cleaned: no media resolved"})
+                sheets.update_job(job, {
+                    "status": Config.JOB_STATUS_NEEDS_REVIEW,
+                    "notes": "Auto-cleaned: no media resolved",
+                })
                 housekeeping += 1
             continue
 
@@ -147,23 +209,18 @@ def _healthy_candidates(jobs, accounts, sources, sheets, limit):
                 housekeeping += 1
             continue
 
-        account_id = job.get("account_id", "")
-        if account_id in seen_accounts:
-            continue
-
         fingerprint = _media_fingerprint(job, source)
         if fingerprint in seen_fingerprints:
-            continue
-
-        platform = job.get("platform", "")
-        if platform in per_platform and per_platform[platform] >= max(1, (limit + 2) // 3):
             continue
 
         selected.append(job)
         seen_accounts.add(account_id)
         seen_fingerprints.add(fingerprint)
-        if platform in per_platform:
-            per_platform[platform] += 1
+        per_platform[platform] = per_platform.get(platform, 0) + 1
+        main.logger.info(
+            "Selected account %s (%s), rotation rank=%s",
+            account_id, platform, _rotation_rank(account_id, platform, accounts, slots),
+        )
 
     return selected
 
@@ -191,7 +248,10 @@ def guarded_publish(job, source, account):
         try:
             sheets.update_job(job, {"status": "pending", "notes": old_notes})
         except Exception as unlock_error:
-            main.logger.error("Job %s: could not release idempotency lock: %s", job.get("job_id"), unlock_error)
+            main.logger.error(
+                "Job %s: could not release idempotency lock: %s",
+                job.get("job_id"), unlock_error,
+            )
         raise
 
 
@@ -210,7 +270,10 @@ def process_optimized():
         return
 
     selected = _healthy_candidates(jobs, accounts, sources, sheets, Config.MAX_JOBS_PER_RUN)
-    main.logger.info("Optimized queue: %s pending -> %s healthy job(s) selected", len(jobs), len(selected))
+    main.logger.info(
+        "Optimized queue: %s pending -> %s healthy job(s) selected",
+        len(jobs), len(selected),
+    )
     if not selected:
         main.logger.warning("No healthy upload candidates found in preflight window")
         return
