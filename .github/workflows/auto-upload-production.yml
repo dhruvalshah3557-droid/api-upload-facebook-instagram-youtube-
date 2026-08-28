@@ -79,9 +79,19 @@ jobs:
         run: |
           set -o pipefail
           python optimized_runner.py
+
           if grep -Eqi "Sheets connection failed|Google Sheets connection failed" /tmp/auto_upload.log; then
             echo "ERROR: Auto upload could not connect to Google Sheets."
             exit 1
+          fi
+
+          # Do not report a green workflow when publishing was actually attempted
+          # but every selected job failed. This makes upload outages visible.
+          if grep -Eq "Processing [1-9][0-9]* pending job\(s\)" /tmp/auto_upload.log; then
+            if ! grep -Eq "uploaded ->" /tmp/auto_upload.log; then
+              echo "ERROR: Upload jobs were processed, but none published successfully."
+              exit 1
+            fi
           fi
 
       - name: Upload log
