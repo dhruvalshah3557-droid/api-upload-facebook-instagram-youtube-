@@ -58,7 +58,7 @@ jobs:
           YOUTUBE_CLIENT_SECRET_JSON: ${{ secrets.YOUTUBEJSON || secrets.YOUTUBE_CLIENT_SECRET_JSON }}
         run: echo "$YOUTUBE_CLIENT_SECRET_JSON" > credentials/youtube_client_secret.json
 
-      - name: Run auto upload
+      - name: Run optimized auto upload
         env:
           GOOGLE_SHEET_CREDENTIALS: credentials/service_account.json
           GOOGLE_SHEET_URL: ${{ secrets.GOOGLE_SHEET_URL }}
@@ -67,7 +67,6 @@ jobs:
           QUEUE_SHEET: Publishing Queue
           LOG_SHEET: Publishing Log
           MAX_JOBS_PER_RUN: "6"
-          MAX_GENERATE_JOBS: "3"
           AUTO_ADD_AUDIO: "true"
           TRENDING_AUDIO_URL: ${{ secrets.TRENDING_AUDIO_URL }}
           BACKGROUND_MUSIC_URL: ${{ secrets.BACKGROUND_MUSIC_URL }}
@@ -79,7 +78,7 @@ jobs:
           PINTEREST_ACCESS_TOKEN: ${{ secrets.PINTEREST_ACCESS_TOKEN }}
         run: |
           set -o pipefail
-          python main.py --cycle
+          python optimized_runner.py
           if grep -Eqi "Sheets connection failed|Google Sheets connection failed" /tmp/auto_upload.log; then
             echo "ERROR: Auto upload could not connect to Google Sheets."
             exit 1
