@@ -4,6 +4,10 @@
 Fixes queue starvation, account starvation, stale Meta auth failures, duplicate
 publishing, and Instagram carousel ordering. Account selection rotates on every
 10-minute production slot so every enabled page receives publishing turns.
+
+Quota budget: production is tuned for up to 10 publish attempts/run while
+keeping worst-case Google Sheets writes below the standard 60 writes/minute
+per-user/service-account limit. Maintenance writes are deliberately capped.
 """
 import time
 
@@ -11,9 +15,9 @@ import main
 from config import Config
 
 PRIMARY_PLATFORMS = ("instagram", "facebook", "youtube")
-PREFLIGHT_SCAN_LIMIT = 600
-HOUSEKEEPING_LIMIT = 12
-REVIVE_LIMIT = 24
+PREFLIGHT_SCAN_LIMIT = 800
+HOUSEKEEPING_LIMIT = 8
+REVIVE_LIMIT = 12
 LOCK_PREFIX = "IDEMPOTENCY_LOCK"
 _CURRENT_SHEETS = None
 
@@ -67,12 +71,12 @@ def _enabled_account_order(accounts, platform):
 
 
 def _platform_limits(limit):
-    """Reserve meaningful capacity for FB + IG while keeping YouTube active."""
+    """Reserve most capacity for Meta while keeping YouTube continuously active."""
     if limit <= 1:
         return {"facebook": 1, "instagram": 0, "youtube": 0}
     if limit <= 3:
         return {"facebook": 1, "instagram": 1, "youtube": limit - 2}
-    # Production currently uses 6: 3 Facebook, 2 Instagram, 1 YouTube.
+    # At production limit 10 this gives 5 FB, 4 IG, 1 YouTube.
     fb = max(2, limit // 2)
     ig = max(1, limit - fb - 1)
     yt = max(0, limit - fb - ig)
@@ -80,7 +84,6 @@ def _platform_limits(limit):
 
 
 def _rotation_rank(account_id, platform, accounts, slots):
-    """Return rotating rank for an account in the current 10-minute slot."""
     order = _enabled_account_order(accounts, platform)
     if not order or account_id not in order:
         return 999999
@@ -103,7 +106,6 @@ def _priority(job, accounts, slots):
 
 
 def _revive_stale_meta_failures(sheets, accounts):
-    """Reopen old FB/IG auth/permission failures now that the shared token works."""
     enabled = {
         aid for aid, a in accounts.items()
         if a.get("enabled") and a.get("platform") in ("facebook", "instagram")
