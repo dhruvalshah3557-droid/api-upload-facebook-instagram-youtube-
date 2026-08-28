@@ -95,7 +95,6 @@ def audio_state(video_path):
         if not ffmpeg:
             return "unknown"
 
-        # Analyze up to 30 seconds. max_volume catches muted/near-muted tracks.
         detect = subprocess.run(
             [ffmpeg, "-hide_banner", "-nostats", "-t", "30", "-i", video_path, "-vn", "-af", "volumedetect", "-f", "null", "-"],
             check=False, capture_output=True, text=True, timeout=90,
@@ -133,7 +132,6 @@ def _generate_trend_style_music(video_path, out_path):
 
     duration = _probe_duration(video_path)
     fade_out_start = max(0.0, duration - 0.6)
-    # 120 BPM pulse: bass + bright tone + soft pink-noise texture.
     cmd = [
         ffmpeg, "-y",
         "-f", "lavfi", "-i", f"sine=frequency=110:sample_rate=44100:duration={duration}",
@@ -203,25 +201,30 @@ def _mix_music(video_path, music_path, out_path, volume=0.34):
 
 
 def _to_9x16_fill(video_path, out_path):
-    """Re-encode a video to fill a 1080x1920 (9:16) frame."""
+    """Fit the entire source inside 1080x1920 without blur or cropping.
+
+    The original frame is preserved completely and centered on a clean black
+    9:16 canvas when its aspect ratio does not already match vertical video.
+    """
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         logger.error("ffmpeg not found; skipping 9:16 conversion")
         return False
     filter_complex = (
-        f"[0:v]scale={REELS_WIDTH}:{REELS_HEIGHT}:force_original_aspect_ratio=increase,"
-        f"crop={REELS_WIDTH}:{REELS_HEIGHT}:(in_w-out_w)/2:(in_h-out_h)/2[v]"
+        f"[0:v]scale={REELS_WIDTH}:{REELS_HEIGHT}:force_original_aspect_ratio=decrease,"
+        f"pad={REELS_WIDTH}:{REELS_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black[v]"
     )
     cmd = [
         ffmpeg, "-y", "-i", video_path,
         "-filter_complex", filter_complex,
         "-map", "[v]", "-map", "0:a?",
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-        "-c:a", "aac", "-shortest", out_path,
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
+        "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+        "-c:a", "aac", "-b:a", "192k", "-shortest", out_path,
     ]
     try:
         subprocess.run(cmd, check=True, capture_output=True)
-        logger.info(f"Converted video to fill 9:16 frame ({REELS_WIDTH}x{REELS_HEIGHT})")
+        logger.info(f"Fitted full video into 9:16 frame ({REELS_WIDTH}x{REELS_HEIGHT}) without crop or blur")
         return True
     except subprocess.CalledProcessError as e:
         detail = (e.stderr or b"").decode(errors="ignore")[:500]
@@ -236,7 +239,6 @@ def prepare_video(media_url, fill_9x16=False):
     Audible videos preserve their original soundtrack. Priority for silent
     videos is TRENDING_AUDIO_URL/BACKGROUND_MUSIC_URL (a licensed track), then
     BACKGROUND_MUSIC_PATH, then an original generated trend-style instrumental.
-    Set AUTO_ADD_AUDIO=false only for deliberate maintenance/testing.
     """
     auto_audio = _env_true("AUTO_ADD_AUDIO", "true")
     suffix = Path(media_url.split("?")[0]).suffix or ".mp4"
@@ -265,7 +267,6 @@ def prepare_video(media_url, fill_9x16=False):
         elif state == "audible":
             logger.info("Video already has usable audio; preserving original sound")
         elif auto_audio and state == "unknown":
-            # Fail closed rather than silently publishing a video we could not verify.
             raise RuntimeError("Could not verify video audio; refusing silent-risk upload")
 
         if fill_9x16:
