@@ -5,9 +5,8 @@ Fixes queue starvation, account starvation, stale Meta auth failures, duplicate
 publishing, and Instagram carousel ordering. Account selection rotates on every
 10-minute production slot so every enabled page receives publishing turns.
 
-Quota budget: production is tuned for up to 10 publish attempts/run while
-keeping worst-case Google Sheets writes below the standard 60 writes/minute
-per-user/service-account limit. Maintenance writes are deliberately capped.
+Quota budget: production is tuned for up to 20 publish attempts/run. Maintenance
+writes remain capped so the higher Google Sheets quota has comfortable headroom.
 """
 import time
 
@@ -15,7 +14,7 @@ import main
 from config import Config
 
 PRIMARY_PLATFORMS = ("instagram", "facebook", "youtube")
-PREFLIGHT_SCAN_LIMIT = 800
+PREFLIGHT_SCAN_LIMIT = 1000
 HOUSEKEEPING_LIMIT = 8
 REVIVE_LIMIT = 12
 LOCK_PREFIX = "IDEMPOTENCY_LOCK"
@@ -76,7 +75,11 @@ def _platform_limits(limit):
         return {"facebook": 1, "instagram": 0, "youtube": 0}
     if limit <= 3:
         return {"facebook": 1, "instagram": 1, "youtube": limit - 2}
-    # At production limit 10 this gives 5 FB, 4 IG, 1 YouTube.
+    if limit >= 20:
+        # Current production fleet: up to 16 Facebook pages, 8 enabled IG,
+        # and one enabled YouTube channel. Eleven FB + all eight IG + one YT
+        # gives broadest account coverage per 20-job cycle; FB rotates next run.
+        return {"facebook": 11, "instagram": 8, "youtube": 1}
     fb = max(2, limit // 2)
     ig = max(1, limit - fb - 1)
     yt = max(0, limit - fb - ig)
