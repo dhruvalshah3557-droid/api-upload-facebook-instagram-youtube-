@@ -1,15 +1,8 @@
 #!/usr/bin/env python3
 """Production runner that drains healthy jobs before legacy broken queue items.
 
-This leaves the proven uploader implementations untouched while fixing queue
-starvation. It also enforces the requested Instagram carousel order:
-video -> main image -> certificate image -> remaining product images.
-
-Duplicate protection: immediately before any platform API call the queue row is
-locked in Sheets. If the platform accepts the post but the runner dies before
-Sheets records success, that lock remains and later runs will not publish the
-same job again. If the API call itself fails normally, the lock is cleared so
-main.py can apply the usual retry/needs_review policy.
+Fixes queue starvation, account starvation, stale Meta auth failures, duplicate
+publishing, and Instagram carousel ordering.
 """
 import time
 
@@ -17,10 +10,21 @@ import main
 from config import Config
 
 PRIMARY_PLATFORMS = ("instagram", "facebook", "youtube")
-PREFLIGHT_SCAN_LIMIT = 180
+PREFLIGHT_SCAN_LIMIT = 240
 HOUSEKEEPING_LIMIT = 12
+REVIVE_LIMIT = 24
 LOCK_PREFIX = "IDEMPOTENCY_LOCK"
 _CURRENT_SHEETS = None
+
+_META_RETRY_MARKERS = (
+    "unpublished posts must be posted to a page as the page itself",
+    "no permission to publish the video",
+    "error validating access token",
+    "session is invalid",
+    "session has been invalidated",
+    "user logged out",
+    "oauth",
+)
 
 
 def resolve_media_fixed(job, source):
@@ -64,56 +68,75 @@ def _media_fingerprint(job, source):
     )
 
 
+def _revive_stale_meta_failures(sheets, accounts):
+    """Reopen old FB/IG auth/permission failures now that the shared token works."""
+    enabled = {aid for aid, a in accounts.items() if a.get("enabled") and a.get("platform") in ("facebook", "instagram")}
+    if not enabled:
+        return 0
+    records = sheets.queue_ws.get_all_records(head=sheets.queue_header_row)
+    revived = 0
+    for idx, rec in enumerate(records, start=sheets.queue_header_row + 1):
+        if revived >= REVIVE_LIMIT:
+            break
+        if str(rec.get("status", "")).strip().lower() != Config.JOB_STATUS_FAILED:
+            continue
+        account_id = str(rec.get("account_id", "")).strip()
+        if account_id not in enabled:
+            continue
+        platform = str(rec.get("platform", "")).strip().lower()
+        if platform not in ("facebook", "instagram"):
+            continue
+        error = str(rec.get("error_message", "") or "").lower()
+        if not any(marker in error for marker in _META_RETRY_MARKERS):
+            continue
+        sheets.update_job({"row": idx}, {
+            "status": "pending",
+            "attempts": 0,
+            "error_message": "",
+            "notes": "Auto-revived after Meta credential/page-token repair",
+        })
+        revived += 1
+    if revived:
+        main.logger.info("Revived %s stale Meta auth/permission job(s)", revived)
+    return revived
+
+
 def _healthy_candidates(jobs, accounts, sources, sheets, limit):
     selected = []
     housekeeping = 0
     per_platform = {p: 0 for p in PRIMARY_PLATFORMS}
     seen_fingerprints = set()
+    seen_accounts = set()
     jobs = sorted(jobs, key=_priority)
 
     for job in jobs[:PREFLIGHT_SCAN_LIMIT]:
         if len(selected) >= limit:
             break
-
         if _is_locked(job):
-            main.logger.warning("Job %s skipped by idempotency lock", job.get("job_id"))
             continue
 
         account = accounts.get(job.get("account_id"))
         if not account or not account.get("enabled"):
             if housekeeping < HOUSEKEEPING_LIMIT:
-                sheets.update_job(job, {
-                    "status": Config.JOB_STATUS_SKIPPED,
-                    "notes": "Auto-cleaned: account disabled or missing",
-                })
+                sheets.update_job(job, {"status": Config.JOB_STATUS_SKIPPED, "notes": "Auto-cleaned: account disabled or missing"})
                 housekeeping += 1
             continue
 
         source = sources.get(job.get("sku"))
         if not source:
             if housekeeping < HOUSEKEEPING_LIMIT:
-                sheets.update_job(job, {
-                    "status": Config.JOB_STATUS_SKIPPED,
-                    "notes": "Auto-cleaned: SKU missing from Source Import",
-                })
+                sheets.update_job(job, {"status": Config.JOB_STATUS_SKIPPED, "notes": "Auto-cleaned: SKU missing from Source Import"})
                 housekeeping += 1
             continue
 
         media = resolve_media_fixed(job, source)
         if not media:
             if housekeeping < HOUSEKEEPING_LIMIT:
-                sheets.update_job(job, {
-                    "status": Config.JOB_STATUS_NEEDS_REVIEW,
-                    "notes": "Auto-cleaned: no media resolved",
-                })
+                sheets.update_job(job, {"status": Config.JOB_STATUS_NEEDS_REVIEW, "notes": "Auto-cleaned: no media resolved"})
                 housekeeping += 1
             continue
 
-        usable = []
-        for url in media:
-            kind = main._classify_media_url(url)
-            if kind != "invalid":
-                usable.append(url)
+        usable = [url for url in media if main._classify_media_url(url) != "invalid"]
         if not usable:
             if housekeeping < HOUSEKEEPING_LIMIT:
                 sheets.update_job(job, {
@@ -124,12 +147,12 @@ def _healthy_candidates(jobs, accounts, sources, sheets, limit):
                 housekeeping += 1
             continue
 
+        account_id = job.get("account_id", "")
+        if account_id in seen_accounts:
+            continue
+
         fingerprint = _media_fingerprint(job, source)
         if fingerprint in seen_fingerprints:
-            main.logger.warning(
-                "Job %s skipped: duplicate account/media fingerprint in this batch",
-                job.get("job_id"),
-            )
             continue
 
         platform = job.get("platform", "")
@@ -137,6 +160,7 @@ def _healthy_candidates(jobs, accounts, sources, sheets, limit):
             continue
 
         selected.append(job)
+        seen_accounts.add(account_id)
         seen_fingerprints.add(fingerprint)
         if platform in per_platform:
             per_platform[platform] += 1
@@ -145,7 +169,6 @@ def _healthy_candidates(jobs, accounts, sources, sheets, limit):
 
 
 def guarded_publish(job, source, account):
-    """Lock a job before the external publish call to guarantee at-most-once posting."""
     sheets = _CURRENT_SHEETS
     if sheets is None:
         return ORIGINAL_PUBLISH_JOB(job, source, account)
@@ -166,16 +189,9 @@ def guarded_publish(job, source, account):
         return ORIGINAL_PUBLISH_JOB(job, source, account)
     except Exception:
         try:
-            sheets.update_job(job, {
-                "status": "pending",
-                "notes": old_notes,
-            })
-            main.logger.info("Job %s: idempotency lock released after API failure", job.get("job_id"))
+            sheets.update_job(job, {"status": "pending", "notes": old_notes})
         except Exception as unlock_error:
-            main.logger.error(
-                "Job %s: could not release idempotency lock: %s",
-                job.get("job_id"), unlock_error,
-            )
+            main.logger.error("Job %s: could not release idempotency lock: %s", job.get("job_id"), unlock_error)
         raise
 
 
@@ -186,16 +202,15 @@ def process_optimized():
     main.read_upload_guide(sheets)
     accounts = {a["account_id"]: a for a in sheets.get_accounts()}
     sources = sheets.get_source_rows()
+
+    _revive_stale_meta_failures(sheets, accounts)
     jobs = sheets.get_pending_jobs()
     if not jobs:
         main.logger.info("No pending jobs")
         return
 
     selected = _healthy_candidates(jobs, accounts, sources, sheets, Config.MAX_JOBS_PER_RUN)
-    main.logger.info(
-        "Optimized queue: %s pending -> %s healthy job(s) selected",
-        len(jobs), len(selected),
-    )
+    main.logger.info("Optimized queue: %s pending -> %s healthy job(s) selected", len(jobs), len(selected))
     if not selected:
         main.logger.warning("No healthy upload candidates found in preflight window")
         return
