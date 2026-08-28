@@ -1,1 +1,1 @@
-Trigger production uploader after Facebook and Instagram live verification.
+Verify production uploader with strict automatic audio for silent videos.
