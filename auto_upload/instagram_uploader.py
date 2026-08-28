@@ -55,15 +55,6 @@ class InstagramUploader:
 
     @classmethod
     def _resolve_ig_user_id(cls, configured_id, access_token, page_name=""):
-        """Return the Instagram Business Account ID used for publishing.
-
-        Accounts.platform_account_id is authoritative when present. Those IDs
-        are populated from /me/accounts?fields=instagram_business_account and
-        are already Instagram Business IDs, so querying
-        `instagram_business_account` on them again is incorrect and returns
-        Graph error #100. Only fall back to Facebook Page discovery when the
-        sheet has no configured IG ID.
-        """
         configured_id = str(configured_id or "").strip()
         cache_key = configured_id or page_name
         if cache_key and cache_key in cls._IG_ID_CACHE:
@@ -121,11 +112,11 @@ class InstagramUploader:
         else:
             params["caption"] = caption
         if is_video:
-            if carousel_item:
-                params["media_type"] = "VIDEO"
-            else:
-                dims = _probe_video(media_url)
-                params["media_type"] = "REELS" if (dims and dims[1] > dims[0]) else "VIDEO"
+            # Meta deprecated media_type=VIDEO for Instagram publishing.
+            # Standalone videos must be REELS; carousel video children are
+            # inferred from video_url and should not send the deprecated type.
+            if not carousel_item:
+                params["media_type"] = "REELS"
             params["video_url"] = media_url
         else:
             params["image_url"] = media_url
@@ -137,7 +128,7 @@ class InstagramUploader:
         if is_video and not carousel_item:
             params.pop("video_url", None)
             files = {"video": prepare_video(media_url)}
-        logger.info(f"[{self.page_name}] Creating IG {'video' if is_video else 'image'} container")
+        logger.info(f"[{self.page_name}] Creating IG {'reel' if is_video and not carousel_item else 'video' if is_video else 'image'} container")
         resp = requests.post(url, data=params, files=files, timeout=60)
         result = resp.json()
         if "id" not in result:
@@ -195,9 +186,6 @@ class InstagramUploader:
         raise last_error
 
     def upload_carousel(self, media_urls, caption, product_id=""):
-        # Required order: main product video -> main product image -> certificate
-        # -> remaining images. Stable sorting moves video(s) to the front while
-        # preserving the source order of all non-video cards.
         media_urls = sorted(media_urls, key=lambda url: 0 if _is_video_url(url) else 1)
         child_ids = []
         for media_url in media_urls:
@@ -219,7 +207,6 @@ class InstagramUploader:
         return self._publish_container(container_id)
 
     def permalink(self, media_id):
-        """Resolve the canonical public URL for a published media object."""
         if not media_id:
             return ""
         try:
