@@ -1,1 +1,1 @@
-Verify optimized production queue draining, healthy-media prioritization, and Instagram carousel order.
+Verify page rotation, stale Meta retry repair, duplicate lock, and healthy-media prioritization.
