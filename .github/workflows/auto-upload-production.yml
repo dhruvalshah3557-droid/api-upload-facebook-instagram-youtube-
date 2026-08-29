@@ -70,6 +70,10 @@ jobs:
           AUTO_ADD_AUDIO: "true"
           TRENDING_AUDIO_URL: ${{ secrets.TRENDING_AUDIO_URL }}
           BACKGROUND_MUSIC_URL: ${{ secrets.BACKGROUND_MUSIC_URL }}
+          IG_AUTO_TRENDING_AUDIO: "true"
+          IG_AUDIO_SEARCH_QUERY: ${{ vars.IG_AUDIO_SEARCH_QUERY }}
+          IG_AUDIO_VOLUME: "80"
+          IG_VIDEO_VOLUME: "60"
           FB_ACCESS_TOKEN: ${{ secrets.FACEBOOKTOKEN }}
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
