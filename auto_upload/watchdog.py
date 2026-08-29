@@ -8,17 +8,19 @@ Actions using only the public gviz endpoint and the Actions/Issues APIs.
 No secrets are required: workflow-run data comes from the Actions API and
 queue state comes from the publicly readable Google Sheet via gviz.
 """
+import io
 import json
 import os
 import re
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 
 WORKBOOK_ID = "1jjC4oaWsyqLzG6vT5EwJkVAgJCXGpz_7fWr6wb7OU3o"
 GVIZ_URL = "https://docs.google.com/spreadsheets/d/%s/gviz/tq" % WORKBOOK_ID
 QUEUE_SHEET = "Publishing Queue"
-WORKFLOW_FILE = ".github/workflows/auto-upload.yml"
+WORKFLOW_FILE = ".github/workflows/auto-upload-production.yml"
 LEDGER_TITLE = "Watchdog Ledger"
 AUTO_FIX_LABEL = "auto-fix"
 CONSECUTIVE_FAILURE_THRESHOLD = 3
@@ -31,7 +33,7 @@ QUEUE_HEADERS = {
     "caption_final",
 }
 STATUS_HEADER = "status"
-WORKFLOW_NAME = "Auto Upload"
+WORKFLOW_NAME = "Auto Upload Production"
 
 API_ROOT = "https://api.github.com/repos"
 USER_AGENT = "auto-upload-watchdog"
@@ -75,7 +77,16 @@ def get_run_log(token, run_id):
     req.add_header("User-Agent", USER_AGENT)
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:
-            return resp.read().decode("utf-8", errors="replace")
+            raw = resp.read()
+        try:
+            with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+                parts = []
+                for name in sorted(archive.namelist()):
+                    if not name.endswith("/"):
+                        parts.append(archive.read(name).decode("utf-8", errors="replace"))
+                return "\n".join(parts)
+        except zipfile.BadZipFile:
+            return raw.decode("utf-8", errors="replace")
     except Exception:
         return ""
 
