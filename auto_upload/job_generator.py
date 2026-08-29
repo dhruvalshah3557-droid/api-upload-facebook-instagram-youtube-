@@ -4,6 +4,9 @@ logger = logging.getLogger(__name__)
 
 
 def _is_clean_source(source):
+    integrity_error = str(source.get("integrity_error", "") or "").strip()
+    if integrity_error:
+        return False, f"Source row integrity mismatch - {integrity_error}"
     lab = source.get("lab", "").upper()
     if lab == "NON CERTIFIED":
         return False, "NON CERTIFIED - requires manual review"
