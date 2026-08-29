@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 
 import requests
-from media_prep import audio_state
+from media_prep import audio_state, prepare_video
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +142,52 @@ class InstagramUploader:
             "should_loop_audio": True,
         })
 
+    def _create_resumable_reel(self, media_url, caption, product_id=""):
+        """Mix audio into a silent Reel and upload the resulting bytes to Meta."""
+        name, content, content_type = prepare_video(media_url, fill_9x16=False)
+        params = {
+            "media_type": "REELS",
+            "upload_type": "resumable",
+            "caption": caption,
+            "access_token": self.access_token,
+        }
+        if product_id:
+            params["product_tags"] = f'[{{"product_id":"{product_id}"}}]'
+        response = requests.post(
+            f"{FB_GRAPH_URL}/{self.ig_user_id}/media",
+            data=params,
+            timeout=60,
+        )
+        session = self._json_or_error(response)
+        container_id = str(session.get("id", "") or "").strip()
+        if not container_id:
+            raise Exception(session.get("error", {}).get("message", str(session)))
+        upload_url = session.get("uri") or (
+            f"https://rupload.facebook.com/ig-api-upload/v26.0/{container_id}"
+        )
+        upload = requests.post(
+            upload_url,
+            headers={
+                "Authorization": f"OAuth {self.access_token}",
+                "Content-Type": content_type or "video/mp4",
+                "file_size": str(len(content)),
+                "offset": "0",
+            },
+            data=content,
+            timeout=300,
+        )
+        upload_result = self._json_or_error(upload)
+        if not upload.ok or not upload_result.get("success"):
+            raise Exception(
+                upload_result.get("error", {}).get("message")
+                or upload_result.get("debug_info", {}).get("message")
+                or str(upload_result)
+            )
+        logger.info(
+            f"[{self.page_name}] Uploaded processed Reel with background audio: {name}"
+        )
+        return container_id
+
     def _create_media_container(self, media_url, caption, is_video=False, product_id="", carousel_item=False):
         media_url = str(media_url or "").strip()
         if not media_url:
@@ -162,7 +208,16 @@ class InstagramUploader:
                 state = self._remote_audio_state(media_url)
                 logger.info(f"[{self.page_name}] Reel audio state: {state}")
                 if state in ("missing", "silent"):
-                    params["audio_configuration"] = self._trending_audio_configuration()
+                    try:
+                        params["audio_configuration"] = self._trending_audio_configuration()
+                    except Exception as exc:
+                        logger.warning(
+                            f"[{self.page_name}] Instagram audio catalog unavailable "
+                            f"({exc}); mixing audio into the video instead"
+                        )
+                        return self._create_resumable_reel(
+                            media_url, caption, product_id
+                        )
                 elif state == "unknown":
                     raise Exception("Could not verify Reel audio; refusing a potentially silent upload")
         else:
