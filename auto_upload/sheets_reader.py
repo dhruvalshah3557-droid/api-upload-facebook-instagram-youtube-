@@ -321,6 +321,27 @@ class SheetsReader:
             )
             lang_captions = {code: self._pick(rec, col) for code, col in self.LANG_CAPTION_COLS.items()}
             lang_hashtags = {code: self._pick(rec, col) for code, col in self.LANG_TAG_COLS.items()}
+            integrity_errors = []
+            sku_token = sku.lower()
+            if main_image and sku_token not in main_image.lower():
+                integrity_errors.append(
+                    f"main image belongs to another SKU ({main_image})"
+                )
+            mismatched_product_images = [
+                url for url in images
+                if "/product/jewellery/" in url.lower()
+                and sku_token not in url.lower()
+            ]
+            if mismatched_product_images:
+                integrity_errors.append(
+                    "product image set contains another SKU "
+                    f"({mismatched_product_images[0]})"
+                )
+            product_link = str(rec.get("PRODUCT LINK", "")).strip()
+            if product_link and sku_token not in product_link.lower():
+                integrity_errors.append(
+                    f"product link belongs to another SKU ({product_link})"
+                )
             sources[sku] = {
                 "row": idx,
                 "sku": sku,
@@ -329,7 +350,7 @@ class SheetsReader:
                 "certificate_id": str(rec.get("CERTIFICATE ID.", "")).strip(),
                 "certificate_media_url": certificate_media_url,
                 "source_status": str(rec.get("Status", "")).strip(),
-                "product_link": str(rec.get("PRODUCT LINK", "")).strip(),
+                "product_link": product_link,
                 "product_name": str(rec.get("PRODUCT NAME", "")).strip(),
                 "images": images,
                 "main_image": main_image,
@@ -345,6 +366,7 @@ class SheetsReader:
                 "hashtags": self._pick(rec, "HASHTAGS", "Hashtags"),
                 "lang_captions": lang_captions,
                 "lang_hashtags": lang_hashtags,
+                "integrity_error": "; ".join(integrity_errors),
             }
         return sources
 
