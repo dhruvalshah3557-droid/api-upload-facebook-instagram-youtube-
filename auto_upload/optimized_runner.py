@@ -10,6 +10,8 @@ writes remain capped so the higher Google Sheets quota has comfortable headroom.
 """
 import hashlib
 import socket
+
+import requests
 import time
 from urllib.parse import urlparse
 
@@ -383,6 +385,19 @@ def _healthy_candidates(jobs, accounts, sources, sheets, limit, reserved_fingerp
     return selected
 
 
+def _is_ambiguous_delivery_error(exc):
+    """True when the platform may have accepted the post before the error."""
+    if isinstance(exc, (requests.Timeout, requests.ConnectionError)):
+        return True
+    message = str(exc).lower()
+    markers = (
+        "timed out", "timeout", "connection reset", "remote disconnected",
+        "broken pipe", "bad gateway", "service unavailable", "gateway timeout",
+        "http 502", "http 503", "http 504",
+    )
+    return any(marker in message for marker in markers)
+
+
 def guarded_publish(job, source, account):
     sheets = _CURRENT_SHEETS
     if sheets is None:
@@ -403,7 +418,17 @@ def guarded_publish(job, source, account):
 
     try:
         return ORIGINAL_PUBLISH_JOB(job, source, account)
-    except Exception:
+    except Exception as exc:
+        if _is_ambiguous_delivery_error(exc):
+            uncertain_note = f"{lock_note} | DELIVERY_UNCERTAIN:{str(exc)[:500]}"
+            try:
+                sheets.update_job(job, {"status": "hold", "notes": uncertain_note})
+            except Exception as hold_error:
+                main.logger.error(
+                    "Job %s: could not persist uncertain delivery state: %s",
+                    job.get("job_id"), hold_error,
+                )
+            raise main.DeliveryUncertainError(str(exc)) from exc
         try:
             sheets.update_job(job, {"status": "pending", "notes": old_notes})
         except Exception as unlock_error:
