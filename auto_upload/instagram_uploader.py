@@ -1,11 +1,16 @@
+import json
 import logging
+import os
+import tempfile
 import time
+from pathlib import Path
 
 import requests
+from media_prep import audio_state
 
 logger = logging.getLogger(__name__)
 
-FB_GRAPH_URL = "https://graph.facebook.com/v19.0"
+FB_GRAPH_URL = "https://graph.facebook.com/v26.0"
 
 _VIDEO_EXTS = (".mp4", ".mov", ".avi", ".mkv", ".webm")
 
@@ -86,6 +91,57 @@ class InstagramUploader:
         except Exception:
             return {"error": {"message": f"Instagram API returned HTTP {resp.status_code}: {resp.text[:500]}"}}
 
+    def _remote_audio_state(self, media_url):
+        suffix = Path(str(media_url).split("?")[0]).suffix or ".mp4"
+        fd, path = tempfile.mkstemp(suffix=suffix)
+        os.close(fd)
+        try:
+            with requests.get(media_url, stream=True, timeout=180) as resp:
+                resp.raise_for_status()
+                with open(path, "wb") as out:
+                    for chunk in resp.iter_content(1024 * 1024):
+                        if chunk:
+                            out.write(chunk)
+            return audio_state(path)
+        except Exception as exc:
+            logger.warning(f"[{self.page_name}] Could not inspect Reel audio: {exc}")
+            return "unknown"
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+    def _trending_audio_configuration(self):
+        params = {
+            "audio_type": "music",
+            "user_id": self.ig_user_id,
+            "access_token": self.access_token,
+        }
+        search_query = os.getenv("IG_AUDIO_SEARCH_QUERY", "").strip()
+        if search_query:
+            params["search_query"] = search_query
+        resp = requests.get(f"{FB_GRAPH_URL}/ig_audio", params=params, timeout=30)
+        result = self._json_or_error(resp)
+        tracks = result.get("data") or []
+        if not tracks:
+            message = result.get("error", {}).get("message", "No authorized Instagram audio returned")
+            raise Exception(f"Could not select Instagram music: {message}")
+        track = tracks[0]
+        audio_id = str(track.get("audio_id") or track.get("id") or "").strip()
+        if not audio_id:
+            raise Exception("Instagram audio search returned a track without an audio ID")
+        logger.info(
+            f"[{self.page_name}] Selected Instagram audio: "
+            f"{track.get('title', audio_id)}"
+        )
+        return json.dumps({
+            "audio_id": audio_id,
+            "audio_volume": int(os.getenv("IG_AUDIO_VOLUME", "80")),
+            "video_volume": int(os.getenv("IG_VIDEO_VOLUME", "60")),
+            "should_loop_audio": True,
+        })
+
     def _create_media_container(self, media_url, caption, is_video=False, product_id="", carousel_item=False):
         media_url = str(media_url or "").strip()
         if not media_url:
@@ -102,6 +158,13 @@ class InstagramUploader:
             # video_url with a multipart local file; Meta requires video_url.
             params["media_type"] = "VIDEO" if carousel_item else "REELS"
             params["video_url"] = media_url
+            if not carousel_item and os.getenv("IG_AUTO_TRENDING_AUDIO", "true").lower() in ("1", "true", "yes", "on"):
+                state = self._remote_audio_state(media_url)
+                logger.info(f"[{self.page_name}] Reel audio state: {state}")
+                if state in ("missing", "silent"):
+                    params["audio_configuration"] = self._trending_audio_configuration()
+                elif state == "unknown":
+                    raise Exception("Could not verify Reel audio; refusing a potentially silent upload")
         else:
             params["image_url"] = media_url
 
