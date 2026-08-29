@@ -20,5 +20,28 @@ jobs:
         env:
           FB_ACCESS_TOKEN: ${{ secrets.FACEBOOKTOKEN }}
         run: python auto_upload/dump_pages.py
+      - name: Test Instagram authorized audio API
+        env:
+          FB_ACCESS_TOKEN: ${{ secrets.FACEBOOKTOKEN }}
+        run: |
+          python - <<'PY'
+          import os, requests
+          response = requests.get(
+              "https://graph.facebook.com/v26.0/ig_audio",
+              params={
+                  "audio_type": "music",
+                  "user_id": "17841445243076913",
+                  "access_token": os.environ["FB_ACCESS_TOKEN"],
+              },
+              timeout=30,
+          )
+          data = response.json()
+          tracks = data.get("data") or []
+          print({"status": response.status_code, "track_count": len(tracks)})
+          if not tracks:
+              print({"error": data.get("error", {}).get("message", "No audio returned")})
+              raise SystemExit(1)
+          print({"first_track": tracks[0].get("title"), "audio_id_present": bool(tracks[0].get("audio_id") or tracks[0].get("id"))})
+          PY
 
-# refresh: 2026-08-29T17:10Z
+# refresh: 2026-08-29T17:20Z
