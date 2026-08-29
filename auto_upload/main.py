@@ -56,6 +56,10 @@ _BROKEN_MEDIA_MARKERS = (
 )
 
 
+class DeliveryUncertainError(Exception):
+    """The platform may have accepted a post; automatic retry is unsafe."""
+
+
 def _is_broken_media_error(message):
     """Dead/broken media (404, un-fetchable URI) will not heal on retry."""
     lowered = message.lower()
@@ -665,6 +669,7 @@ def process_pending(sheets=None):
                 continue
 
             caption = build_caption(job, source, account)
+            post_id, url = "", ""
             try:
                 post_id, url = publish_job(job, source, account)
                 updates = {
@@ -683,6 +688,21 @@ def process_pending(sheets=None):
                     "success",
                 ))
                 logger.info(f"Job {job_id}: uploaded -> {url}")
+            except DeliveryUncertainError as e:
+                message = str(e)
+                sheets.update_job(job, {
+                    "status": "hold",
+                    "last_attempt_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "error_message": message[:2000],
+                    "notes": (
+                        f"{job.get('notes', '')} | DELIVERY_UNCERTAIN: "
+                        "platform may have accepted the post; do not auto-retry"
+                    ).strip(" |"),
+                })
+                log_buffer.append(sheets.log_entry(job, "uncertain", message))
+                logger.error(
+                    f"Job {job_id}: delivery uncertain; held to prevent duplicate: {message}"
+                )
             except IGAccountNotLinkedError as e:
                 sheets.update_job(job, {
                     "status": "pending",
@@ -695,27 +715,46 @@ def process_pending(sheets=None):
                     f"keeping pending (no attempt consumed): {e}"
                 )
             except Exception as e:
-                attempts = job.get("attempts", 0) + 1
                 message = str(e)
-                if _is_broken_media_error(message):
-                    status = Config.JOB_STATUS_NEEDS_REVIEW
-                else:
-                    status = Config.JOB_STATUS_FAILED if attempts >= Config.MAX_JOB_ATTEMPTS else "pending"
                 api_code = ""
                 if "error" in message.lower():
                     try:
                         api_code = message.split("(")[-1].rstrip(")").split(" ")[0]
                     except Exception:
                         api_code = ""
-                updates = {
-                    "status": status,
-                    "attempts": attempts,
-                    "last_attempt_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                    "error_message": message[:2000],
-                    "tagging_status": "Failed"
-                        if (status == Config.JOB_STATUS_FAILED and account.get("product_tagging"))
-                        else job.get("tagging_status", "Pending"),
-                }
+                if post_id:
+                    attempts = int(job.get("attempts", 0) or 0)
+                    status = Config.JOB_STATUS_NEEDS_REVIEW
+                    updates = {
+                        "status": status,
+                        "attempts": attempts,
+                        "platform_post_id": post_id,
+                        "published_url": url,
+                        "last_attempt_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                        "error_message": (
+                            "Platform publish succeeded but final Sheets update failed: "
+                            + message
+                        )[:2000],
+                        "notes": "DELIVERY_CONFIRMED_DO_NOT_RETRY; reconcile queue/log manually",
+                    }
+                else:
+                    attempts = job.get("attempts", 0) + 1
+                    if _is_broken_media_error(message):
+                        status = Config.JOB_STATUS_NEEDS_REVIEW
+                    else:
+                        status = (
+                            Config.JOB_STATUS_FAILED
+                            if attempts >= Config.MAX_JOB_ATTEMPTS else "pending"
+                        )
+                    updates = {
+                        "status": status,
+                        "attempts": attempts,
+                        "last_attempt_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                        "error_message": message[:2000],
+                        "tagging_status": "Failed"
+                            if (status == Config.JOB_STATUS_FAILED and account.get("product_tagging"))
+                            else job.get("tagging_status", "Pending"),
+                    }
                 sheets.update_job(job, updates)
                 log_buffer.append(sheets.log_entry(job, "failed", message, api_code))
                 logger.error(f"Job {job_id}: failed ({status}): {message}")
