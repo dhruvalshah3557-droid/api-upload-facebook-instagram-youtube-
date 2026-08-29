@@ -30,6 +30,7 @@ jobs:
               "https://graph.facebook.com/v26.0/ig_audio",
               params={
                   "audio_type": "music",
+                  "search_query": "luxury",
                   "user_id": "17841445243076913",
                   "access_token": os.environ["FB_ACCESS_TOKEN"],
               },
@@ -44,4 +45,4 @@ jobs:
           print({"first_track": tracks[0].get("title"), "audio_id_present": bool(tracks[0].get("audio_id") or tracks[0].get("id"))})
           PY
 
-# refresh: 2026-08-29T17:20Z
+# refresh: 2026-08-29T17:25Z
