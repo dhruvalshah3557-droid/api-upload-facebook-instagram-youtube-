@@ -23,6 +23,7 @@ REVIVE_LIMIT = 12
 LOCK_PREFIX = "IDEMPOTENCY_LOCK"
 _CURRENT_SHEETS = None
 _DNS_CACHE = {}
+_VIDEO_VALIDATION_CACHE = {}
 
 _META_RETRY_MARKERS = (
     "unpublished posts must be posted to a page as the page itself",
@@ -91,6 +92,46 @@ def _dns_resolves(url):
     if not ok:
         main.logger.warning("Media host does not resolve in DNS; rejecting URL: %s", url)
     return ok
+
+
+def _video_validation_reason(url):
+    """Return a stable corruption reason for a video, or an empty string.
+
+    Content-Type checks cannot detect truncated MP4s or broken containers.  Probe
+    each distinct video once per run and cache the result because the same product
+    media is commonly queued for many destination accounts.  Network exceptions
+    are treated as transient and left to the normal uploader retry path.
+    """
+    url = str(url or "").strip()
+    if not url or main.media_kind(url) != "video":
+        return ""
+    if url in _VIDEO_VALIDATION_CACHE:
+        return _VIDEO_VALIDATION_CACHE[url]
+    try:
+        reason = main.validate_media_url(url, kind="video", ffprobe=True) or ""
+    except Exception as exc:
+        main.logger.warning("Video preflight was inconclusive for %s: %s", url, exc)
+        return ""
+    _VIDEO_VALIDATION_CACHE[url] = reason
+    return reason
+
+
+def _media_preflight_reason(media):
+    """Return why a job's media is definitively unusable, if known."""
+    usable = 0
+    for url in media:
+        if not _dns_resolves(url):
+            continue
+        classification = main._classify_media_url(url)
+        if classification == "invalid":
+            continue
+        usable += 1
+        reason = _video_validation_reason(url)
+        if reason:
+            return f"video failed validation ({url}): {reason}"
+    if not usable:
+        return "all media URLs are unavailable, dead, DNS-invalid, or not media"
+    return ""
 
 
 def _enabled_account_order(accounts, platform):
@@ -257,16 +298,13 @@ def _healthy_candidates(jobs, accounts, sources, sheets, limit):
                         housekeeping += 1
                     continue
 
-                usable = [
-                    url for url in media
-                    if _dns_resolves(url) and main._classify_media_url(url) != "invalid"
-                ]
-                if not usable:
+                media_problem = _media_preflight_reason(media)
+                if media_problem:
                     if housekeeping < HOUSEKEEPING_LIMIT:
                         sheets.update_job(job, {
                             "status": Config.JOB_STATUS_NEEDS_REVIEW,
-                            "notes": "Auto-cleaned: all media URLs are unavailable/dead or DNS-invalid",
-                            "error_message": "All resolved media URLs are unavailable (404/dead/DNS-invalid); nothing to publish",
+                            "notes": "Auto-cleaned: media failed production preflight",
+                            "error_message": f"Media preflight failed: {media_problem}",
                         })
                         housekeeping += 1
                     continue
