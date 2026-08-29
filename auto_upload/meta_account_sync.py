@@ -147,7 +147,7 @@ def sync_accounts(pages, sheets):
             existing_keys.add(("instagram", ig_id))
 
     if new_rows:
-        sheets.accounts_ws.append_rows(new_rows, value_input_option="USER_ENTERED")
+        sheets.accounts_ws.append_rows(new_rows, value_input_option="RAW")
     return discovered
 
 
