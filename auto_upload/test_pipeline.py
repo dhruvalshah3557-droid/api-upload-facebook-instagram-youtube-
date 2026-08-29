@@ -457,28 +457,33 @@ def test_resolve_ig_user_id_handles_linked_and_unlinked_pages():
     main.InstagramUploader._IG_ID_CACHE.clear()
 
     def _resp(data):
-        return types.SimpleNamespace(json=lambda: data)
+        return types.SimpleNamespace(json=lambda: data, raise_for_status=lambda: None)
 
     def fake_get(url, params, timeout=15):
-        node_id = url.rstrip("/").rsplit("/", 1)[-1]
-        if node_id == "IG_ACCT":
-            return _resp({"id": "IG_ACCT", "media_count": 12, "ig_id": "IG_ACCT"})
-        if node_id == "LINKED_PAGE":
-            return _resp({"id": "LINKED_PAGE", "instagram_business_account": {"id": "IG_ACCT"}})
-        if node_id == "UNLINKED_PAGE":
-            return _resp({"id": "UNLINKED_PAGE"})
-        return _resp({"error": {"message": "bad node"}})
+        assert url.endswith("/me/accounts")
+        return _resp({"data": [
+            {
+                "id": "LINKED_PAGE",
+                "name": "Colour Diam Linked",
+                "instagram_business_account": {"id": "IG_ACCT", "username": "colourdiamlinked"},
+            },
+            {"id": "UNLINKED_PAGE", "name": "Unlinked Page"},
+        ]})
 
     with patch("instagram_uploader.requests.get", side_effect=fake_get):
+        # A configured Instagram Business ID is authoritative.
         assert main.InstagramUploader._resolve_ig_user_id("IG_ACCT", "tok") == "IG_ACCT"
-        assert main.InstagramUploader._resolve_ig_user_id("LINKED_PAGE", "tok") == "IG_ACCT"
+        # A blank ID can be resolved from the linked Facebook page name.
+        assert (
+            main.InstagramUploader._resolve_ig_user_id("", "tok", "Colour Diam Linked")
+            == "IG_ACCT"
+        )
         try:
-            main.InstagramUploader._resolve_ig_user_id("UNLINKED_PAGE", "tok")
+            main.InstagramUploader._resolve_ig_user_id("", "tok", "Unlinked Page")
             assert False, "expected IGAccountNotLinkedError"
         except IGAccountNotLinkedError:
             pass
     print("OK test_resolve_ig_user_id_handles_linked_and_unlinked_pages")
-
 
 def test_filter_valid_media_drops_dead_links():
     good = "https://colourdiam.com/Product/Jewellery/2518/white45/2518_1.jpg"
