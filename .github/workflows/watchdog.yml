@@ -5,8 +5,11 @@ name: Watchdog
 # Runs 24/7 on a 30-minute schedule; no secrets required.
 
 on:
+  workflow_run:
+    workflows: ["Auto Upload Production"]
+    types: [completed]
   schedule:
-    # Stagger away from minute 0/30 so GitHub's scheduler is less likely to delay it.
+    # Scheduled fallback in case a workflow_run event is delayed.
     - cron: "7,37 * * * *"
   workflow_dispatch:
 
