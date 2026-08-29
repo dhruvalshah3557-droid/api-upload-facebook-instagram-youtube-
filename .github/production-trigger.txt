@@ -1,1 +1,1 @@
-Run production after workflow safety improvements (2026-08-29 18:37 UTC).
+Run production after Sheets quota reset fix (2026-08-29 18:40 UTC).
