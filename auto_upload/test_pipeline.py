@@ -499,6 +499,55 @@ def test_filter_valid_media_drops_dead_links():
     print("OK test_filter_valid_media_drops_dead_links")
 
 
+def test_optimized_preflight_skips_corrupt_video_and_uses_next_job():
+    import optimized_runner
+
+    bad = {
+        "job_id": "bad", "account_id": "FB-CD", "platform": "facebook",
+        "sku": "1", "row": 3, "attempts": 0, "notes": "",
+    }
+    good = {
+        "job_id": "good", "account_id": "FB-CD", "platform": "facebook",
+        "sku": "2", "row": 4, "attempts": 0, "notes": "",
+    }
+    updates = []
+    sheets = types.SimpleNamespace(update_job=lambda job, values: updates.append((job, values)))
+    accounts = {"FB-CD": {"enabled": True, "platform": "facebook"}}
+    sources = {"1": {"sku": "1"}, "2": {"sku": "2"}}
+
+    def media_for(job, source):
+        suffix = "broken.mp4" if job["job_id"] == "bad" else "healthy.jpg"
+        return [f"https://media.example/{suffix}"]
+
+    optimized_runner._VIDEO_VALIDATION_CACHE.clear()
+    with patch("optimized_runner.resolve_media_fixed", side_effect=media_for), \
+         patch("optimized_runner._dns_resolves", return_value=True), \
+         patch("optimized_runner.main._classify_media_url", side_effect=lambda u: "video" if u.endswith(".mp4") else "image"), \
+         patch("optimized_runner.main.validate_media_url", return_value="ffprobe rejected the file"), \
+         patch("optimized_runner._rotation_rank", return_value=0):
+        selected = optimized_runner._healthy_candidates(
+            [bad, good], accounts, sources, sheets, limit=1
+        )
+
+    assert [job["job_id"] for job in selected] == ["good"], selected
+    assert updates[0][0]["job_id"] == "bad"
+    assert updates[0][1]["status"] == Config.JOB_STATUS_NEEDS_REVIEW
+    assert "ffprobe rejected" in updates[0][1]["error_message"]
+    print("OK test_optimized_preflight_skips_corrupt_video_and_uses_next_job")
+
+
+def test_video_preflight_result_is_cached_across_accounts():
+    import optimized_runner
+
+    url = "https://media.example/shared.mp4"
+    optimized_runner._VIDEO_VALIDATION_CACHE.clear()
+    with patch("optimized_runner.main.validate_media_url", return_value="broken container") as validate:
+        assert optimized_runner._video_validation_reason(url) == "broken container"
+        assert optimized_runner._video_validation_reason(url) == "broken container"
+    assert validate.call_count == 1
+    print("OK test_video_preflight_result_is_cached_across_accounts")
+
+
 if __name__ == "__main__":
     test_generate_is_idempotent()
     test_one_failure_does_not_stop_others()
@@ -508,4 +557,6 @@ if __name__ == "__main__":
     test_round_robin_jobs_mix_platforms()
     test_resolve_ig_user_id_handles_linked_and_unlinked_pages()
     test_filter_valid_media_drops_dead_links()
+    test_optimized_preflight_skips_corrupt_video_and_uses_next_job()
+    test_video_preflight_result_is_cached_across_accounts()
     print("All pipeline tests passed.")
