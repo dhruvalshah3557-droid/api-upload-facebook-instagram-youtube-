@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 
 import main
 from config import Config
+from job_generator import _is_clean_source
 
 PRIMARY_PLATFORMS = ("instagram", "facebook", "youtube")
 PREFLIGHT_SCAN_LIMIT = 1000
@@ -284,6 +285,17 @@ def _healthy_candidates(jobs, accounts, sources, sheets, limit):
                         sheets.update_job(job, {
                             "status": Config.JOB_STATUS_SKIPPED,
                             "notes": "Auto-cleaned: SKU missing from Source Import",
+                        })
+                        housekeeping += 1
+                    continue
+
+                clean_source, source_reason = _is_clean_source(source)
+                if not clean_source:
+                    if housekeeping < HOUSEKEEPING_LIMIT:
+                        sheets.update_job(job, {
+                            "status": Config.JOB_STATUS_NEEDS_REVIEW,
+                            "notes": "Auto-blocked: source row integrity mismatch",
+                            "error_message": source_reason,
                         })
                         housekeeping += 1
                     continue
