@@ -8,6 +8,7 @@ publishing, and Instagram carousel ordering. Account selection rotates on every
 Quota budget: production is tuned for up to 20 publish attempts/run. Maintenance
 writes remain capped so the higher Google Sheets quota has comfortable headroom.
 """
+import hashlib
 import socket
 import time
 from urllib.parse import urlparse
@@ -22,6 +23,7 @@ PER_ACCOUNT_SCAN_LIMIT = 300
 HOUSEKEEPING_LIMIT = 8
 REVIVE_LIMIT = 12
 LOCK_PREFIX = "IDEMPOTENCY_LOCK"
+FINGERPRINT_PREFIX = "MEDIA_FINGERPRINT"
 _CURRENT_SHEETS = None
 _DNS_CACHE = {}
 _VIDEO_VALIDATION_CACHE = {}
@@ -66,6 +68,28 @@ def _media_fingerprint(job, source):
         str(job.get("platform", "")),
         tuple(main._dedupe_media(media)),
     )
+
+
+def _fingerprint_marker(job, source):
+    raw = repr(_media_fingerprint(job, source)).encode("utf-8")
+    return f"{FINGERPRINT_PREFIX}:{hashlib.sha256(raw).hexdigest()}"
+
+
+def _reserved_fingerprints(sheets):
+    """Fingerprints already uploaded or locked during an uncertain publish."""
+    records = sheets.queue_ws.get_all_records(head=sheets.queue_header_row)
+    reserved = set()
+    pattern = f"{FINGERPRINT_PREFIX}:"
+    for rec in records:
+        status = str(rec.get("status", "")).strip().lower()
+        if status not in (Config.JOB_STATUS_UPLOADED, "hold"):
+            continue
+        notes = str(rec.get("notes", "") or "")
+        for part in notes.split("|"):
+            part = part.strip()
+            if part.startsWith(pattern):
+                reserved.add(part.split()[0])
+    return reserved
 
 
 def _dns_resolves(url):
@@ -213,7 +237,7 @@ def _revive_stale_meta_failures(sheets, accounts):
     return revived
 
 
-def _healthy_candidates(jobs, accounts, sources, sheets, limit):
+def _healthy_candidates(jobs, accounts, sources, sheets, limit, reserved_fingerprints=None):
     """Pick one healthy job per enabled account without cross-platform starvation.
 
     The old implementation globally sorted ~50k pending jobs and then inspected only
@@ -227,6 +251,7 @@ def _healthy_candidates(jobs, accounts, sources, sheets, limit):
     housekeeping = 0
     slots = _platform_limits(limit)
     seen_fingerprints = set()
+    reserved_fingerprints = set(reserved_fingerprints or ())
 
     jobs_by_account = {}
     for job in jobs:
@@ -322,11 +347,21 @@ def _healthy_candidates(jobs, accounts, sources, sheets, limit):
                     continue
 
                 fingerprint = _media_fingerprint(job, source)
+                marker = _fingerprint_marker(job, source)
+                if marker in reserved_fingerprints:
+                    if housekeeping < HOUSEKEEPING_LIMIT:
+                        sheets.update_job(job, {
+                            "status": Config.JOB_STATUS_SKIPPED,
+                            "notes": "Duplicate media already uploaded or protected by idempotency lock",
+                        })
+                        housekeeping += 1
+                    continue
                 if fingerprint in seen_fingerprints:
                     continue
 
                 chosen = job
                 seen_fingerprints.add(fingerprint)
+                reserved_fingerprints.add(marker)
                 break
 
             if chosen:
@@ -354,7 +389,8 @@ def guarded_publish(job, source, account):
         return ORIGINAL_PUBLISH_JOB(job, source, account)
 
     old_notes = str(job.get("notes", "") or "")
-    lock_note = f"{LOCK_PREFIX}:{int(time.time())}"
+    marker = _fingerprint_marker(job, source)
+    lock_note = f"{LOCK_PREFIX}:{int(time.time())} | {marker}"
     if old_notes:
         lock_note = f"{lock_note} | {old_notes}"
 
@@ -392,7 +428,11 @@ def process_optimized():
         main.logger.info("No pending jobs")
         return
 
-    selected = _healthy_candidates(jobs, accounts, sources, sheets, Config.MAX_JOBS_PER_RUN)
+    reserved_fingerprints = _reserved_fingerprints(sheets)
+    main.logger.info("Loaded %s persistent media fingerprint(s)", len(reserved_fingerprints))
+    selected = _healthy_candidates(
+        jobs, accounts, sources, sheets, Config.MAX_JOBS_PER_RUN, reserved_fingerprints
+    )
     main.logger.info(
         "Optimized queue: %s pending -> %s healthy job(s) selected",
         len(jobs), len(selected),
