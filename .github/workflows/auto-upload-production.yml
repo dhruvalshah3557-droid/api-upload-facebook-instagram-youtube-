@@ -58,7 +58,19 @@ jobs:
           YOUTUBE_CLIENT_SECRET_JSON: ${{ secrets.YOUTUBEJSON || secrets.YOUTUBE_CLIENT_SECRET_JSON }}
         run: echo "$YOUTUBE_CLIENT_SECRET_JSON" > credentials/youtube_client_secret.json
 
+      - name: Preflight Meta token and discover new pages
+        env:
+          GOOGLE_SHEET_CREDENTIALS: credentials/service_account.json
+          GOOGLE_SHEET_URL: ${{ secrets.GOOGLE_SHEET_URL }}
+          SOURCE_IMPORT_SHEET: Source Import
+          ACCOUNTS_SHEET: Accounts
+          QUEUE_SHEET: Publishing Queue
+          LOG_SHEET: Publishing Log
+          FB_ACCESS_TOKEN: ${{ secrets.FACEBOOKTOKEN }}
+        run: python meta_account_sync.py
+
       - name: Run optimized auto upload
+        id: upload
         env:
           GOOGLE_SHEET_CREDENTIALS: credentials/service_account.json
           GOOGLE_SHEET_URL: ${{ secrets.GOOGLE_SHEET_URL }}
@@ -99,9 +111,16 @@ jobs:
             fi
           fi
 
+      - name: Write production health summary
+        if: always()
+        env:
+          UPLOAD_STEP_CONCLUSION: ${{ steps.upload.outcome }}
+        run: python workflow_health.py
+
       - name: Upload log
         if: always()
         uses: actions/upload-artifact@v5
         with:
           name: auto-upload-production-log
           path: /tmp/auto_upload.log
+          if-no-files-found: ignore
