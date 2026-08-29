@@ -1,1 +1,1 @@
-Run production after Sheets quota reset fix (2026-08-29 18:40 UTC).
+Validate production after fingerprint and Meta ID fixes (2026-08-29 18:44 UTC).
