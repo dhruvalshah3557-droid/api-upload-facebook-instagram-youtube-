@@ -89,7 +89,7 @@ def _reserved_fingerprints(sheets):
         notes = str(rec.get("notes", "") or "")
         for part in notes.split("|"):
             part = part.strip()
-            if part.startsWith(pattern):
+            if part.startswith(pattern):
                 reserved.add(part.split()[0])
     return reserved
 
