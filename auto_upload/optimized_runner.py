@@ -17,6 +17,7 @@ from config import Config
 
 PRIMARY_PLATFORMS = ("instagram", "facebook", "youtube")
 PREFLIGHT_SCAN_LIMIT = 1000
+PER_ACCOUNT_SCAN_LIMIT = 300
 HOUSEKEEPING_LIMIT = 8
 REVIVE_LIMIT = 12
 LOCK_PREFIX = "IDEMPOTENCY_LOCK"
@@ -106,9 +107,6 @@ def _platform_limits(limit):
     if limit <= 3:
         return {"facebook": 1, "instagram": 1, "youtube": limit - 2}
     if limit >= 20:
-        # Current production fleet: up to 16 Facebook pages, 8 enabled IG,
-        # and one enabled YouTube channel. Eleven FB + all eight IG + one YT
-        # gives broadest account coverage per 20-job cycle; FB rotates next run.
         return {"facebook": 11, "instagram": 8, "youtube": 1}
     fb = max(2, limit // 2)
     ig = max(1, limit - fb - 1)
@@ -174,91 +172,128 @@ def _revive_stale_meta_failures(sheets, accounts):
 
 
 def _healthy_candidates(jobs, accounts, sources, sheets, limit):
+    """Pick one healthy job per enabled account without cross-platform starvation.
+
+    The old implementation globally sorted ~50k pending jobs and then inspected only
+    the first 1,000. Because Instagram sorts ahead of Facebook/YouTube, that window
+    could contain almost entirely one platform and produce just one selected job.
+    This version groups the queue by account first, rotates enabled accounts fairly,
+    and gives each account its own bounded preflight scan. A broken account/media
+    backlog can no longer hide healthy work for every other account.
+    """
     selected = []
     housekeeping = 0
     slots = _platform_limits(limit)
-    per_platform = {p: 0 for p in PRIMARY_PLATFORMS}
     seen_fingerprints = set()
-    seen_accounts = set()
-    jobs = sorted(jobs, key=lambda j: _priority(j, accounts, slots))
+
+    jobs_by_account = {}
+    for job in jobs:
+        account_id = str(job.get("account_id", "") or "").strip()
+        if not account_id:
+            continue
+        jobs_by_account.setdefault(account_id, []).append(job)
+
+    for account_jobs in jobs_by_account.values():
+        account_jobs.sort(key=lambda j: (
+            int(j.get("attempts", 0) or 0),
+            int(j.get("row", 0) or 0),
+        ))
 
     main.logger.info(
         "Account rotation slot: FB=%s IG=%s YT=%s",
         slots.get("facebook", 0), slots.get("instagram", 0), slots.get("youtube", 0),
     )
 
-    for job in jobs[:PREFLIGHT_SCAN_LIMIT]:
-        if len(selected) >= limit:
-            break
-        if _is_locked(job):
+    for platform in ("facebook", "instagram", "youtube"):
+        wanted = slots.get(platform, 0)
+        if wanted <= 0:
             continue
 
-        account = accounts.get(job.get("account_id"))
-        if not account or not account.get("enabled"):
-            if housekeeping < HOUSEKEEPING_LIMIT:
-                sheets.update_job(job, {
-                    "status": Config.JOB_STATUS_SKIPPED,
-                    "notes": "Auto-cleaned: account disabled or missing",
-                })
-                housekeeping += 1
-            continue
+        enabled_order = _enabled_account_order(accounts, platform)
+        enabled_order.sort(key=lambda aid: _rotation_rank(aid, platform, accounts, slots))
+        platform_selected = 0
 
-        platform = job.get("platform", "")
-        if platform not in PRIMARY_PLATFORMS:
-            continue
-        if per_platform.get(platform, 0) >= slots.get(platform, 0):
-            continue
+        for account_id in enabled_order:
+            if len(selected) >= limit or platform_selected >= wanted:
+                break
 
-        source = sources.get(job.get("sku"))
-        if not source:
-            if housekeeping < HOUSEKEEPING_LIMIT:
-                sheets.update_job(job, {
-                    "status": Config.JOB_STATUS_SKIPPED,
-                    "notes": "Auto-cleaned: SKU missing from Source Import",
-                })
-                housekeeping += 1
-            continue
+            account = accounts.get(account_id)
+            if not account or not account.get("enabled"):
+                continue
 
-        account_id = job.get("account_id", "")
-        if account_id in seen_accounts:
-            continue
+            account_jobs = jobs_by_account.get(account_id, [])
+            if not account_jobs:
+                continue
 
-        media = resolve_media_fixed(job, source)
-        if not media:
-            if housekeeping < HOUSEKEEPING_LIMIT:
-                sheets.update_job(job, {
-                    "status": Config.JOB_STATUS_NEEDS_REVIEW,
-                    "notes": "Auto-cleaned: no media resolved",
-                })
-                housekeeping += 1
-            continue
+            chosen = None
+            scanned = 0
+            for job in account_jobs:
+                if scanned >= PER_ACCOUNT_SCAN_LIMIT:
+                    break
+                scanned += 1
 
-        usable = [
-            url for url in media
-            if _dns_resolves(url) and main._classify_media_url(url) != "invalid"
-        ]
-        if not usable:
-            if housekeeping < HOUSEKEEPING_LIMIT:
-                sheets.update_job(job, {
-                    "status": Config.JOB_STATUS_NEEDS_REVIEW,
-                    "notes": "Auto-cleaned: all media URLs are unavailable/dead or DNS-invalid",
-                    "error_message": "All resolved media URLs are unavailable (404/dead/DNS-invalid); nothing to publish",
-                })
-                housekeeping += 1
-            continue
+                if _is_locked(job):
+                    continue
+                if str(job.get("platform", "") or "").lower() != platform:
+                    continue
 
-        fingerprint = _media_fingerprint(job, source)
-        if fingerprint in seen_fingerprints:
-            continue
+                source = sources.get(job.get("sku"))
+                if not source:
+                    if housekeeping < HOUSEKEEPING_LIMIT:
+                        sheets.update_job(job, {
+                            "status": Config.JOB_STATUS_SKIPPED,
+                            "notes": "Auto-cleaned: SKU missing from Source Import",
+                        })
+                        housekeeping += 1
+                    continue
 
-        selected.append(job)
-        seen_accounts.add(account_id)
-        seen_fingerprints.add(fingerprint)
-        per_platform[platform] = per_platform.get(platform, 0) + 1
-        main.logger.info(
-            "Selected account %s (%s), rotation rank=%s",
-            account_id, platform, _rotation_rank(account_id, platform, accounts, slots),
-        )
+                media = resolve_media_fixed(job, source)
+                if not media:
+                    if housekeeping < HOUSEKEEPING_LIMIT:
+                        sheets.update_job(job, {
+                            "status": Config.JOB_STATUS_NEEDS_REVIEW,
+                            "notes": "Auto-cleaned: no media resolved",
+                        })
+                        housekeeping += 1
+                    continue
+
+                usable = [
+                    url for url in media
+                    if _dns_resolves(url) and main._classify_media_url(url) != "invalid"
+                ]
+                if not usable:
+                    if housekeeping < HOUSEKEEPING_LIMIT:
+                        sheets.update_job(job, {
+                            "status": Config.JOB_STATUS_NEEDS_REVIEW,
+                            "notes": "Auto-cleaned: all media URLs are unavailable/dead or DNS-invalid",
+                            "error_message": "All resolved media URLs are unavailable (404/dead/DNS-invalid); nothing to publish",
+                        })
+                        housekeeping += 1
+                    continue
+
+                fingerprint = _media_fingerprint(job, source)
+                if fingerprint in seen_fingerprints:
+                    continue
+
+                chosen = job
+                seen_fingerprints.add(fingerprint)
+                break
+
+            if chosen:
+                selected.append(chosen)
+                platform_selected += 1
+                main.logger.info(
+                    "Selected account %s (%s), rotation rank=%s, account scan=%s",
+                    account_id,
+                    platform,
+                    _rotation_rank(account_id, platform, accounts, slots),
+                    scanned,
+                )
+            else:
+                main.logger.warning(
+                    "No healthy candidate for enabled account %s (%s) in first %s account jobs",
+                    account_id, platform, min(len(account_jobs), PER_ACCOUNT_SCAN_LIMIT),
+                )
 
     return selected
 
@@ -313,7 +348,7 @@ def process_optimized():
         len(jobs), len(selected),
     )
     if not selected:
-        main.logger.warning("No healthy upload candidates found in preflight window")
+        main.logger.warning("No healthy upload candidates found in per-account preflight")
         return
 
     original_get_pending = sheets.get_pending_jobs
