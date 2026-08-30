@@ -144,6 +144,11 @@ def _configured_music_urls():
     return [part.strip() for part in re.split(r"[\n,]+", raw) if part.strip()]
 
 
+def _music_url_library():
+    """Merge configured licensed tracks with the pinned CC0 fallback library."""
+    return list(dict.fromkeys(_configured_music_urls() + list(BUNDLED_CC0_MUSIC_URLS)))
+
+
 def _music_files(path):
     root = Path(path)
     if root.is_file() and root.suffix.lower() in _AUDIO_EXTS:
@@ -155,7 +160,7 @@ def _music_files(path):
 
 def _resolve_music(media_key, temp_paths):
     """Choose real music from configured sources or a pinned CC0 library."""
-    audio_urls = _configured_music_urls()
+    audio_urls = _music_url_library()
     local_path = _env("BACKGROUND_MUSIC_PATH", "")
 
     if audio_urls:
@@ -164,7 +169,12 @@ def _resolve_music(media_key, temp_paths):
         os.close(fd)
         temp_paths.append(path)
         _download_music_url(audio_url, path)
-        logger.info("Selected configured licensed music %d/%d", audio_urls.index(audio_url) + 1, len(audio_urls))
+        source = "configured licensed" if audio_url in _configured_music_urls() else "pinned CC0"
+        track_id = Path(audio_url.split("?")[0]).name
+        logger.info(
+            "Selected %s music %d/%d track=%s",
+            source, audio_urls.index(audio_url) + 1, len(audio_urls), track_id,
+        )
         return path
 
     music_files = _music_files(local_path) if local_path else []
@@ -173,17 +183,7 @@ def _resolve_music(media_key, temp_paths):
         logger.info("Selected configured music track: %s", selected.name)
         return str(selected)
 
-    audio_url = _stable_choice(BUNDLED_CC0_MUSIC_URLS, media_key)
-    fd, path = tempfile.mkstemp(suffix=".mp3")
-    os.close(fd)
-    temp_paths.append(path)
-    _download_music_url(audio_url, path)
-    logger.info(
-        "Selected pinned CC0 music %d/%d",
-        BUNDLED_CC0_MUSIC_URLS.index(audio_url) + 1,
-        len(BUNDLED_CC0_MUSIC_URLS),
-    )
-    return path
+    raise RuntimeError("No usable background music source is configured")
 
 
 def _mix_music(video_path, music_path, out_path, media_key, volume=0.72):
@@ -250,7 +250,7 @@ def _to_9x16_fill(video_path, out_path):
         return False
 
 
-def prepare_video(media_url, fill_9x16=False):
+def prepare_video(media_url, fill_9x16=False, selection_key=""):
     """Return (name, bytes, content_type) for a video upload.
 
     Production rule: silent/muted videos MUST receive audio automatically.
@@ -275,10 +275,11 @@ def prepare_video(media_url, fill_9x16=False):
         state = audio_state(tmp_path)
         logger.info(f"Video audio state: {state}")
         if auto_audio and state in ("missing", "silent"):
-            music_path = _resolve_music(media_url, temp_paths)
+            music_key = selection_key or media_url
+            music_path = _resolve_music(music_key, temp_paths)
             mixed_path = tmp_path + ".mixed.mp4"
             temp_paths.append(mixed_path)
-            current = _mix_music(tmp_path, music_path, mixed_path, media_url)
+            current = _mix_music(tmp_path, music_path, mixed_path, music_key)
             verify = audio_state(current)
             if verify in ("missing", "silent"):
                 raise RuntimeError("Automatic audio was added but output is still silent; refusing upload")
