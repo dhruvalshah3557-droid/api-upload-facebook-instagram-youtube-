@@ -11,6 +11,7 @@ writes remain capped so the higher Google Sheets quota has comfortable headroom.
 import hashlib
 import socket
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import requests
 import time
@@ -35,6 +36,8 @@ _VIDEO_VALIDATION_CACHE = {}
 # spacing prevents all three posts being dumped together.
 MINIMUM_POSTS_24H = 5
 MINIMUM_GAP_HOURS = 4
+LOCAL_POSTING_SLOTS = ((8, 0), (11, 50), (15, 0), (18, 0), (21, 0))
+SLOT_WINDOW_MINUTES = 45
 
 _META_RETRY_MARKERS = (
     "unpublished posts must be posted to a page as the page itself",
@@ -109,7 +112,10 @@ def _queue_state(sheets, now=None, accounts=None):
         }
         if accounts is not None else set()
     )
-    activity = {account_id: {"count": 0, "last": None} for account_id in protected}
+    activity = {
+        account_id: {"count": 0, "last": None, "success_times": []}
+        for account_id in protected
+    }
     pattern = f"{FINGERPRINT_PREFIX}:"
     for rec in records:
         status = str(rec.get("status", "")).strip().lower()
@@ -127,6 +133,7 @@ def _queue_state(sheets, now=None, accounts=None):
         if not uploaded_at or uploaded_at < cutoff or uploaded_at > now:
             continue
         activity[account_id]["count"] += 1
+        activity[account_id]["success_times"].append(uploaded_at)
         if activity[account_id]["last"] is None or uploaded_at > activity[account_id]["last"]:
             activity[account_id]["last"] = uploaded_at
     return reserved, activity
@@ -148,6 +155,32 @@ def _minimum_delivery_priority(account_id, activity, now=None):
     if last and now - last < timedelta(hours=MINIMUM_GAP_HOURS):
         return (1, count)
     return (0, count)
+
+
+def _local_slot_due(account_id, account, activity, now=None):
+    """Return True only during an unfilled publishing slot in account-local time."""
+    now = now or datetime.now(timezone.utc)
+    timezone_name = str((account or {}).get("timezone", "") or "").strip() or "UTC"
+    try:
+        local_tz = ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        main.logger.warning(
+            "Invalid timezone for %s: %s; using UTC", account_id, timezone_name
+        )
+        local_tz = timezone.utc
+    local_now = now.astimezone(local_tz)
+    slot = None
+    for hour, minute in LOCAL_POSTING_SLOTS:
+        candidate = local_now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if candidate <= local_now:
+            slot = candidate
+    if slot is None:
+        return False
+    if local_now - slot > timedelta(minutes=SLOT_WINDOW_MINUTES):
+        return False
+    slot_utc = slot.astimezone(timezone.utc)
+    successes = (activity or {}).get(account_id, {}).get("success_times", [])
+    return not any(slot_utc <= uploaded_at <= now for uploaded_at in successes)
 
 
 def _dns_resolves(url):
@@ -338,6 +371,10 @@ def _healthy_candidates(
             continue
 
         enabled_order = _enabled_account_order(accounts, platform)
+        enabled_order = [
+            aid for aid in enabled_order
+            if _local_slot_due(aid, accounts.get(aid), recent_upload_activity)
+        ]
         enabled_order.sort(key=lambda aid: (
             _minimum_delivery_priority(aid, recent_upload_activity),
             _rotation_rank(aid, platform, accounts, slots),
