@@ -2,9 +2,8 @@ name: Auto Upload Production
 
 on:
   schedule:
-    # Stagger away from minute 0/10 to reduce GitHub Actions schedule delays.
-    # Still runs every 10 minutes.
-    - cron: "3,13,23,33,43,53 * * * *"
+    # Run on 10-minute boundaries so account-local :00 and :50 slots are covered.
+    - cron: "0,10,20,30,40,50 * * * *"
   workflow_dispatch:
   push:
     branches: [master]
