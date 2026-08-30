@@ -1,1 +1,1 @@
-Trigger fair queue generation for Spain, Italy, Vietnam, Pakistan, Kuwait and Dubai (2026-08-30 13:24 UTC).
+Activate rolling 24-hour three-post delivery floor for Spain, Italy, Vietnam, Pakistan, Kuwait and Dubai (2026-08-30 13:37 UTC).
