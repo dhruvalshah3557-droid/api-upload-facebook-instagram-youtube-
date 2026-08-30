@@ -31,10 +31,10 @@ _CURRENT_SHEETS = None
 _DNS_CACHE = {}
 _VIDEO_VALIDATION_CACHE = {}
 
-# Every enabled primary account receives this rolling delivery floor. Five-hour
+# Every enabled primary account receives this rolling delivery floor. Four-hour
 # spacing prevents all three posts being dumped together.
-MINIMUM_POSTS_24H = 3
-MINIMUM_GAP_HOURS = 5
+MINIMUM_POSTS_24H = 5
+MINIMUM_GAP_HOURS = 4
 
 _META_RETRY_MARKERS = (
     "unpublished posts must be posted to a page as the page itself",
