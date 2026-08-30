@@ -90,6 +90,7 @@ jobs:
           # BACKGROUND_MUSIC_URL is intentionally retired.
           BACKGROUND_MUSIC_URLS: ${{ secrets.BACKGROUND_MUSIC_URLS }}
           IG_AUTO_TRENDING_AUDIO: "true"
+          IG_USE_AUDIO_CATALOG: "false"
           IG_AUDIO_SEARCH_QUERY: ${{ vars.IG_AUDIO_SEARCH_QUERY }}
           IG_AUDIO_SEARCH_QUERIES: ${{ vars.IG_AUDIO_SEARCH_QUERIES }}
           IG_AUDIO_VOLUME: "80"
