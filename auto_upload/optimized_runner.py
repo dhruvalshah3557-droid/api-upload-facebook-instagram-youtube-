@@ -31,14 +31,10 @@ _CURRENT_SHEETS = None
 _DNS_CACHE = {}
 _VIDEO_VALIDATION_CACHE = {}
 
-# Business delivery floor requested for these market accounts. A target is
-# prioritized until it has at least three confirmed uploads in the rolling
-# 24-hour window. Five-hour spacing prevents all three being dumped together.
-MINIMUM_IG_POSTS_24H = 3
-MINIMUM_IG_GAP_HOURS = 5
-GUARANTEED_IG_ACCOUNTS = (
-    "IG-SPAIN", "IG-ITALY", "IG-VNM", "IG-PAK", "IG-KUWAIT", "IG-DUBAI",
-)
+# Every enabled primary account receives this rolling delivery floor. Five-hour
+# spacing prevents all three posts being dumped together.
+MINIMUM_POSTS_24H = 3
+MINIMUM_GAP_HOURS = 5
 
 _META_RETRY_MARKERS = (
     "unpublished posts must be posted to a page as the page itself",
@@ -100,16 +96,20 @@ def _parse_queue_time(value):
         return None
 
 
-def _queue_state(sheets, now=None):
+def _queue_state(sheets, now=None, accounts=None):
     """Return duplicate locks plus rolling upload activity in one queue read."""
     records = sheets.queue_ws.get_all_records(head=sheets.queue_header_row)
     reserved = set()
     now = now or datetime.now(timezone.utc)
     cutoff = now - timedelta(hours=24)
-    activity = {
-        account_id: {"count": 0, "last": None}
-        for account_id in GUARANTEED_IG_ACCOUNTS
-    }
+    protected = (
+        {
+            account_id for account_id, account in (accounts or {}).items()
+            if account.get("enabled") and account.get("platform") in PRIMARY_PLATFORMS
+        }
+        if accounts is not None else set()
+    )
+    activity = {account_id: {"count": 0, "last": None} for account_id in protected}
     pattern = f"{FINGERPRINT_PREFIX}:"
     for rec in records:
         status = str(rec.get("status", "")).strip().lower()
@@ -138,17 +138,16 @@ def _reserved_fingerprints(sheets):
 
 
 def _minimum_delivery_priority(account_id, activity, now=None):
-    """0 when a guaranteed account is below its floor and due for another post."""
-    if account_id not in GUARANTEED_IG_ACCOUNTS:
-        return 1
+    """Prioritize lower delivery counts once the account's safety gap has elapsed."""
     now = now or datetime.now(timezone.utc)
     state = (activity or {}).get(account_id, {})
-    if int(state.get("count", 0) or 0) >= MINIMUM_IG_POSTS_24H:
-        return 1
+    count = int(state.get("count", 0) or 0)
+    if count >= MINIMUM_POSTS_24H:
+        return (1, count)
     last = state.get("last")
-    if last and now - last < timedelta(hours=MINIMUM_IG_GAP_HOURS):
-        return 1
-    return 0
+    if last and now - last < timedelta(hours=MINIMUM_GAP_HOURS):
+        return (1, count)
+    return (0, count)
 
 
 def _dns_resolves(url):
@@ -340,8 +339,7 @@ def _healthy_candidates(
 
         enabled_order = _enabled_account_order(accounts, platform)
         enabled_order.sort(key=lambda aid: (
-            _minimum_delivery_priority(aid, recent_upload_activity)
-            if platform == "instagram" else 1,
+            _minimum_delivery_priority(aid, recent_upload_activity),
             _rotation_rank(aid, platform, accounts, slots),
         ))
         platform_selected = 0
@@ -522,13 +520,12 @@ def process_optimized():
         main.logger.info("No pending jobs")
         return
 
-    reserved_fingerprints, recent_upload_activity = _queue_state(sheets)
+    reserved_fingerprints, recent_upload_activity = _queue_state(sheets, accounts=accounts)
     main.logger.info("Loaded %s persistent media fingerprint(s)", len(reserved_fingerprints))
-    for account_id in GUARANTEED_IG_ACCOUNTS:
-        state = recent_upload_activity.get(account_id, {})
+    for account_id, state in recent_upload_activity.items():
         main.logger.info(
-            "24h delivery floor %s: %s/%s uploaded",
-            account_id, state.get("count", 0), MINIMUM_IG_POSTS_24H,
+            "DELIVERY_COVERAGE account=%s count_24h=%s target=%s",
+            account_id, state.get("count", 0), MINIMUM_POSTS_24H,
         )
     selected = _healthy_candidates(
         jobs, accounts, sources, sheets, Config.MAX_JOBS_PER_RUN,
