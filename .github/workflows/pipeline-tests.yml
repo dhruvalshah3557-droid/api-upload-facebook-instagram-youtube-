@@ -32,4 +32,4 @@ jobs:
         run: python -m compileall -q auto_upload
       - name: Run pipeline safety tests
         working-directory: auto_upload
-        run: python test_pipeline.py
+        run: python -m unittest discover -p "test_*.py"
