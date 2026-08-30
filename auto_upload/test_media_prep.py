@@ -29,6 +29,25 @@ class MusicRotationTests(unittest.TestCase):
         second = media_prep._stable_choice(media_prep.BUNDLED_CC0_MUSIC_URLS, key)
         self.assertEqual(first, second)
 
+    def test_same_video_rotates_across_destination_accounts(self):
+        media_url = "https://media.example/shared-product.mp4"
+        keys = [f"instagram|account-{i}|{media_url}" for i in range(30)]
+        selected = {
+            media_prep._stable_choice(media_prep._music_url_library(), key)
+            for key in keys
+        }
+        self.assertGreaterEqual(len(selected), 5)
+
+    def test_single_configured_url_does_not_collapse_library(self):
+        with mock.patch.dict(
+            media_prep.os.environ,
+            {"BACKGROUND_MUSIC_URLS": "https://example.com/one-track.mp3"},
+            clear=True,
+        ):
+            library = media_prep._music_url_library()
+        self.assertEqual(len(library), len(media_prep.BUNDLED_CC0_MUSIC_URLS) + 1)
+        self.assertIn("https://example.com/one-track.mp3", library)
+
     def test_legacy_single_url_cannot_force_one_track(self):
         with mock.patch.dict(
             media_prep.os.environ,
