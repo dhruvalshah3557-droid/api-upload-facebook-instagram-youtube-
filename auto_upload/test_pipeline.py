@@ -569,18 +569,18 @@ def test_video_preflight_result_is_cached_across_accounts():
     print("OK test_video_preflight_result_is_cached_across_accounts")
 
 
-def test_guaranteed_instagram_accounts_prioritize_24h_deficit():
+def test_all_primary_accounts_prioritize_24h_deficit():
     import optimized_runner
 
     now = datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc)
     due = {"IG-SPAIN": {"count": 2, "last": now - timedelta(hours=6)}}
     recent = {"IG-SPAIN": {"count": 2, "last": now - timedelta(hours=2)}}
     complete = {"IG-SPAIN": {"count": 3, "last": now - timedelta(hours=6)}}
-    assert optimized_runner._minimum_delivery_priority("IG-SPAIN", due, now) == 0
-    assert optimized_runner._minimum_delivery_priority("IG-SPAIN", recent, now) == 1
-    assert optimized_runner._minimum_delivery_priority("IG-SPAIN", complete, now) == 1
-    assert optimized_runner._minimum_delivery_priority("IG-CD", {}, now) == 1
-    print("OK test_guaranteed_instagram_accounts_prioritize_24h_deficit")
+    assert optimized_runner._minimum_delivery_priority("IG-SPAIN", due, now) == (0, 2)
+    assert optimized_runner._minimum_delivery_priority("IG-SPAIN", recent, now) == (1, 2)
+    assert optimized_runner._minimum_delivery_priority("IG-SPAIN", complete, now) == (1, 3)
+    assert optimized_runner._minimum_delivery_priority("FB-CD", {}, now) == (0, 0)
+    print("OK test_all_primary_accounts_prioritize_24h_deficit")
 
 
 def test_queue_state_counts_only_successes_in_rolling_24h():
@@ -595,7 +595,8 @@ def test_queue_state_counts_only_successes_in_rolling_24h():
     ]
     queue_ws = types.SimpleNamespace(get_all_records=lambda head: records)
     sheets = types.SimpleNamespace(queue_ws=queue_ws, queue_header_row=1)
-    _, activity = optimized_runner._queue_state(sheets, now)
+    accounts = {"IG-DUBAI": {"enabled": True, "platform": "instagram"}}
+    _, activity = optimized_runner._queue_state(sheets, now, accounts)
     assert activity["IG-DUBAI"]["count"] == 2, activity
     assert activity["IG-DUBAI"]["last"] == datetime(2026, 8, 30, 8, 0, tzinfo=timezone.utc)
     print("OK test_queue_state_counts_only_successes_in_rolling_24h")
@@ -613,6 +614,6 @@ if __name__ == "__main__":
     test_filter_valid_media_drops_dead_links()
     test_optimized_preflight_skips_corrupt_video_and_uses_next_job()
     test_video_preflight_result_is_cached_across_accounts()
-    test_guaranteed_instagram_accounts_prioritize_24h_deficit()
+    test_all_primary_accounts_prioritize_24h_deficit()
     test_queue_state_counts_only_successes_in_rolling_24h()
     print("All pipeline tests passed.")
