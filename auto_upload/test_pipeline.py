@@ -618,6 +618,21 @@ def test_account_local_posting_slots_are_timezone_aware_and_idempotent():
     print("OK test_account_local_posting_slots_are_timezone_aware_and_idempotent")
 
 
+def test_source_import_duplicate_headers_do_not_abort_uploads():
+    from sheets_reader import SheetsReader
+
+    reader = SheetsReader.__new__(SheetsReader)
+    reader.SOURCE_HEADER_ROW = 1
+    reader.source_ws = types.SimpleNamespace(get_all_values=lambda: [
+        ["STK", "image1 link", "image1 link", "PRODUCT LINK"],
+        ["100", "https://media.example/100/center.jpg", "duplicate", "https://example.com/100"],
+    ])
+    sources = reader.get_source_rows()
+    assert "100" in sources, sources
+    assert sources["100"]["main_image"] == "https://media.example/100/center.jpg"
+    print("OK test_source_import_duplicate_headers_do_not_abort_uploads")
+
+
 if __name__ == "__main__":
     test_generate_is_idempotent()
     test_generation_cap_is_fair_across_accounts()
@@ -633,4 +648,5 @@ if __name__ == "__main__":
     test_all_primary_accounts_prioritize_24h_deficit()
     test_queue_state_counts_only_successes_in_rolling_24h()
     test_account_local_posting_slots_are_timezone_aware_and_idempotent()
+    test_source_import_duplicate_headers_do_not_abort_uploads()
     print("All pipeline tests passed.")
