@@ -85,9 +85,13 @@ jobs:
           MAX_GENERATE_JOBS: "20"
           AUTO_ADD_AUDIO: "true"
           TRENDING_AUDIO_URL: ${{ secrets.TRENDING_AUDIO_URL }}
-          BACKGROUND_MUSIC_URL: ${{ secrets.BACKGROUND_MUSIC_URL }}
+          # Optional comma-separated licensed library. When unset, the six
+          # bundled CC0 tracks rotate automatically. The former single-track
+          # BACKGROUND_MUSIC_URL is intentionally retired.
+          BACKGROUND_MUSIC_URLS: ${{ secrets.BACKGROUND_MUSIC_URLS }}
           IG_AUTO_TRENDING_AUDIO: "true"
           IG_AUDIO_SEARCH_QUERY: ${{ vars.IG_AUDIO_SEARCH_QUERY }}
+          IG_AUDIO_SEARCH_QUERIES: ${{ vars.IG_AUDIO_SEARCH_QUERIES }}
           IG_AUDIO_VOLUME: "80"
           IG_VIDEO_VOLUME: "60"
           FB_ACCESS_TOKEN: ${{ secrets.FACEBOOKTOKEN }}

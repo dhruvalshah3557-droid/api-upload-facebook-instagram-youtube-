@@ -1,6 +1,8 @@
 import json
+import hashlib
 import logging
 import os
+import re
 import tempfile
 import time
 from pathlib import Path
@@ -112,13 +114,19 @@ class InstagramUploader:
             except OSError:
                 pass
 
-    def _trending_audio_configuration(self):
+    def _trending_audio_configuration(self, media_key):
+        digest = hashlib.sha256(media_key.encode("utf-8", errors="ignore")).digest()
         params = {
             "audio_type": "music",
             "user_id": self.ig_user_id,
             "access_token": self.access_token,
         }
-        search_query = os.getenv("IG_AUDIO_SEARCH_QUERY", "").strip()
+        queries_raw = os.getenv("IG_AUDIO_SEARCH_QUERIES", "").strip()
+        queries = [q.strip() for q in re.split(r"[\n,]+", queries_raw) if q.strip()]
+        if not queries:
+            search_query = os.getenv("IG_AUDIO_SEARCH_QUERY", "").strip()
+            queries = [search_query] if search_query else []
+        search_query = queries[int.from_bytes(digest[:4], "big") % len(queries)] if queries else ""
         if search_query:
             params["search_query"] = search_query
         resp = requests.get(f"{FB_GRAPH_URL}/ig_audio", params=params, timeout=30)
@@ -127,7 +135,9 @@ class InstagramUploader:
         if not tracks:
             message = result.get("error", {}).get("message", "No authorized Instagram audio returned")
             raise Exception(f"Could not select Instagram music: {message}")
-        track = tracks[0]
+        # The old implementation always used tracks[0], making every Reel use
+        # the same song. Rotate deterministically across all returned results.
+        track = tracks[int.from_bytes(digest[4:12], "big") % len(tracks)]
         audio_id = str(track.get("audio_id") or track.get("id") or "").strip()
         if not audio_id:
             raise Exception("Instagram audio search returned a track without an audio ID")
@@ -209,7 +219,7 @@ class InstagramUploader:
                 logger.info(f"[{self.page_name}] Reel audio state: {state}")
                 if state in ("missing", "silent"):
                     try:
-                        params["audio_configuration"] = self._trending_audio_configuration()
+                        params["audio_configuration"] = self._trending_audio_configuration(media_url)
                     except Exception as exc:
                         logger.warning(
                             f"[{self.page_name}] Instagram audio catalog unavailable "

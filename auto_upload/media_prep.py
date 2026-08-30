@@ -1,5 +1,5 @@
 import logging
-import math
+import hashlib
 import os
 import re
 import shutil
@@ -41,6 +41,19 @@ _VIDEO_TYPES = (
 
 REELS_WIDTH, REELS_HEIGHT = 1080, 1920
 SILENCE_THRESHOLD_DB = -45.0
+_AUDIO_EXTS = (".mp3", ".m4a", ".aac", ".wav", ".flac", ".ogg")
+_CC0_SOURCE = (
+    "https://raw.githubusercontent.com/effacestudios/"
+    "Royalty-Free-Music-Pack/2ce8458293fe4eeb91414a19d6d7ecd1562a5949"
+)
+BUNDLED_CC0_MUSIC_URLS = (
+    f"{_CC0_SOURCE}/Cinemato.mp3",
+    f"{_CC0_SOURCE}/Newness.mp3",
+    f"{_CC0_SOURCE}/Mysterious.mp3",
+    f"{_CC0_SOURCE}/Planning.mp3",
+    f"{_CC0_SOURCE}/Illusionist.mp3",
+    f"{_CC0_SOURCE}/slow%20down.mp3",
+)
 
 
 def _env(key, default=""):
@@ -120,74 +133,79 @@ def _download_music_url(url, out_path):
     return out_path
 
 
-def _generate_trend_style_music(video_path, out_path):
-    """Generate an upbeat, modern instrumental bed when no licensed track is configured.
-
-    This is original synthetic audio, not a copyrighted platform song. It is
-    deliberately rhythmic so silent product videos never publish mute.
-    """
-    ffmpeg = shutil.which("ffmpeg")
-    if not ffmpeg:
-        raise RuntimeError("ffmpeg is required to add audio to silent video")
-
-    duration = _probe_duration(video_path)
-    fade_out_start = max(0.0, duration - 0.6)
-    cmd = [
-        ffmpeg, "-y",
-        "-f", "lavfi", "-i", f"sine=frequency=110:sample_rate=44100:duration={duration}",
-        "-f", "lavfi", "-i", f"sine=frequency=220:sample_rate=44100:duration={duration}",
-        "-f", "lavfi", "-i", f"anoisesrc=color=pink:amplitude=0.08:sample_rate=44100:duration={duration}",
-        "-filter_complex",
-        (
-            "[0:a]volume=0.32,tremolo=f=2:d=0.88[bass];"
-            "[1:a]volume=0.10,tremolo=f=4:d=0.65[bright];"
-            "[2:a]lowpass=f=1200,highpass=f=120,volume=0.035[tex];"
-            f"[bass][bright][tex]amix=inputs=3:normalize=0,"
-            f"afade=t=in:st=0:d=0.25,afade=t=out:st={fade_out_start}:d=0.6[a]"
-        ),
-        "-map", "[a]", "-c:a", "aac", "-b:a", "192k", out_path,
-    ]
-    proc = subprocess.run(cmd, check=False, capture_output=True)
-    if proc.returncode != 0:
-        detail = (proc.stderr or b"").decode(errors="ignore")[-800:]
-        raise RuntimeError(f"Could not generate automatic background audio: {detail}")
-    logger.info("Generated original trend-style instrumental for silent video")
-    return out_path
+def _stable_choice(items, media_key):
+    """Choose repeatably from a library while distributing different videos."""
+    digest = hashlib.sha256(media_key.encode("utf-8", errors="ignore")).digest()
+    return items[int.from_bytes(digest[:8], "big") % len(items)]
 
 
-def _resolve_music(video_path, temp_paths):
-    """Resolve the music source in priority order: URL, local path, generated."""
-    audio_url = _env("TRENDING_AUDIO_URL", "") or _env("BACKGROUND_MUSIC_URL", "")
+def _configured_music_urls():
+    raw = _env("BACKGROUND_MUSIC_URLS", "")
+    return [part.strip() for part in re.split(r"[\n,]+", raw) if part.strip()]
+
+
+def _music_files(path):
+    root = Path(path)
+    if root.is_file() and root.suffix.lower() in _AUDIO_EXTS:
+        return [root]
+    if root.is_dir():
+        return sorted(p for p in root.iterdir() if p.is_file() and p.suffix.lower() in _AUDIO_EXTS)
+    return []
+
+
+def _resolve_music(media_key, temp_paths):
+    """Choose real music from configured sources or a pinned CC0 library."""
+    audio_urls = _configured_music_urls()
     local_path = _env("BACKGROUND_MUSIC_PATH", "")
 
-    if audio_url:
+    if audio_urls:
+        audio_url = _stable_choice(audio_urls, media_key)
         fd, path = tempfile.mkstemp(suffix=".music")
         os.close(fd)
         temp_paths.append(path)
         _download_music_url(audio_url, path)
-        logger.info("Using configured licensed/trending audio URL for silent video")
+        logger.info("Selected configured licensed music %d/%d", audio_urls.index(audio_url) + 1, len(audio_urls))
         return path
 
-    if local_path and Path(local_path).is_file():
-        logger.info("Using configured local background music for silent video")
-        return local_path
+    music_files = _music_files(local_path) if local_path else []
+    if music_files:
+        selected = _stable_choice(music_files, media_key)
+        logger.info("Selected configured music track: %s", selected.name)
+        return str(selected)
 
-    fd, path = tempfile.mkstemp(suffix=".m4a")
+    audio_url = _stable_choice(BUNDLED_CC0_MUSIC_URLS, media_key)
+    fd, path = tempfile.mkstemp(suffix=".mp3")
     os.close(fd)
     temp_paths.append(path)
-    return _generate_trend_style_music(video_path, path)
+    _download_music_url(audio_url, path)
+    logger.info(
+        "Selected pinned CC0 music %d/%d",
+        BUNDLED_CC0_MUSIC_URLS.index(audio_url) + 1,
+        len(BUNDLED_CC0_MUSIC_URLS),
+    )
+    return path
 
 
-def _mix_music(video_path, music_path, out_path, volume=0.34):
+def _mix_music(video_path, music_path, out_path, media_key, volume=0.72):
     """Attach background music to a silent/muted video."""
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         raise RuntimeError("ffmpeg is required to add audio to silent video")
+    video_duration = _probe_duration(video_path)
+    music_duration = _probe_duration(music_path)
+    usable_start = max(0.0, music_duration - video_duration - 1.0)
+    digest = hashlib.sha256((media_key + "|offset").encode("utf-8", errors="ignore")).digest()
+    start_offset = (int.from_bytes(digest[:8], "big") / ((1 << 64) - 1)) * usable_start
+    fade_out_start = max(0.0, video_duration - 0.8)
     cmd = [
         ffmpeg, "-y",
         "-i", video_path,
-        "-stream_loop", "-1", "-i", music_path,
-        "-filter_complex", f"[1:a]volume={volume}[a]",
+        "-stream_loop", "-1", "-ss", f"{start_offset:.3f}", "-i", music_path,
+        "-filter_complex",
+        (
+            f"[1:a]loudnorm=I=-16:TP=-1.5:LRA=11,volume={volume},"
+            f"afade=t=in:st=0:d=0.35,afade=t=out:st={fade_out_start}:d=0.8[a]"
+        ),
         "-map", "0:v:0", "-map", "[a]",
         "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest",
         out_path,
@@ -196,7 +214,7 @@ def _mix_music(video_path, music_path, out_path, volume=0.34):
     if proc.returncode != 0:
         detail = (proc.stderr or b"").decode(errors="ignore")[-800:]
         raise RuntimeError(f"Automatic audio mix failed: {detail}")
-    logger.info("Added background audio to silent video")
+    logger.info("Added real background music (start %.1fs)", start_offset)
     return out_path
 
 
@@ -237,8 +255,8 @@ def prepare_video(media_url, fill_9x16=False):
 
     Production rule: silent/muted videos MUST receive audio automatically.
     Audible videos preserve their original soundtrack. Priority for silent
-    videos is TRENDING_AUDIO_URL/BACKGROUND_MUSIC_URL (a licensed track), then
-    BACKGROUND_MUSIC_PATH, then an original generated trend-style instrumental.
+    videos is BACKGROUND_MUSIC_URLS (licensed tracks), then
+    BACKGROUND_MUSIC_PATH (file/directory), then six pinned CC0 music tracks.
     """
     auto_audio = _env_true("AUTO_ADD_AUDIO", "true")
     suffix = Path(media_url.split("?")[0]).suffix or ".mp4"
@@ -257,10 +275,10 @@ def prepare_video(media_url, fill_9x16=False):
         state = audio_state(tmp_path)
         logger.info(f"Video audio state: {state}")
         if auto_audio and state in ("missing", "silent"):
-            music_path = _resolve_music(tmp_path, temp_paths)
+            music_path = _resolve_music(media_url, temp_paths)
             mixed_path = tmp_path + ".mixed.mp4"
             temp_paths.append(mixed_path)
-            current = _mix_music(tmp_path, music_path, mixed_path)
+            current = _mix_music(tmp_path, music_path, mixed_path, media_url)
             verify = audio_state(current)
             if verify in ("missing", "silent"):
                 raise RuntimeError("Automatic audio was added but output is still silent; refusing upload")
