@@ -287,7 +287,28 @@ class SheetsReader:
 
     @_retry_gsheet
     def get_source_rows(self):
-        records = self.source_ws.get_all_records(head=self.SOURCE_HEADER_ROW)
+        # IMPORTRANGE/source changes can temporarily create duplicate headers.
+        # gspread refuses get_all_records in that case and used to stop every
+        # upload. Read raw values and keep the first occurrence of each header.
+        values = self.source_ws.get_all_values()
+        header_index = self.SOURCE_HEADER_ROW - 1
+        if len(values) <= header_index:
+            return {}
+        columns = []
+        seen_headers = set()
+        for col_index, value in enumerate(values[header_index]):
+            header = str(value or "").strip()
+            if not header or header in seen_headers:
+                continue
+            seen_headers.add(header)
+            columns.append((col_index, header))
+        records = [
+            {
+                header: (row[col_index] if col_index < len(row) else "")
+                for col_index, header in columns
+            }
+            for row in values[header_index + 1:]
+        ]
         sources = {}
         for idx, rec in enumerate(records, start=self.SOURCE_HEADER_ROW + 1):
             sku = self._normalize_sku(rec.get("STK", ""))
