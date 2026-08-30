@@ -80,7 +80,11 @@ class FacebookUploader:
         # media_prep preserves the full source frame (no destructive crop) and also
         # guarantees silent/muted videos receive licensed/trending audio when
         # configured, otherwise an original instrumental fallback.
-        prepared = prepare_video(media_url, fill_9x16=True)
+        prepared = prepare_video(
+            media_url,
+            fill_9x16=True,
+            selection_key=f"facebook|{self.page_id}|{media_url}",
+        )
         resp = requests.post(url, data=data, files={"source": prepared}, timeout=600)
         result = resp.json()
         if "id" in result:
