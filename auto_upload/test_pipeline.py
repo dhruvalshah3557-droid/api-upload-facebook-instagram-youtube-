@@ -280,6 +280,21 @@ def test_generate_is_idempotent():
     print("OK test_generate_is_idempotent")
 
 
+def test_generation_cap_is_fair_across_accounts():
+    accounts = [
+        _account("IG-OLD", "instagram"),
+        _account("IG-SPAIN", "instagram"),
+        _account("IG-ITALY", "instagram"),
+    ]
+    sources = {str(i): _source(str(i)) for i in range(100, 106)}
+    fake = FakeSheets(sources, accounts, [])
+    with patch.object(Config, "MAX_GENERATE_JOBS", 3), patch("main.time.time", return_value=0):
+        main.run_generate(fake)
+    generated_accounts = {job["account_id"] for job in fake.appended_jobs}
+    assert generated_accounts == {"IG-OLD", "IG-SPAIN", "IG-ITALY"}, generated_accounts
+    print("OK test_generation_cap_is_fair_across_accounts")
+
+
 def test_one_failure_does_not_stop_others():
     accounts = [_account("FB-A"), _account("FB-B")]
     sources = {"100": _source("100")}
@@ -555,6 +570,7 @@ def test_video_preflight_result_is_cached_across_accounts():
 
 if __name__ == "__main__":
     test_generate_is_idempotent()
+    test_generation_cap_is_fair_across_accounts()
     test_one_failure_does_not_stop_others()
     test_second_run_does_not_repost_uploaded()
     test_generate_new_platforms()

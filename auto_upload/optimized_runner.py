@@ -443,6 +443,11 @@ def process_optimized():
     global _CURRENT_SHEETS
     sheets = main.open_sheets_with_retry()
     _CURRENT_SHEETS = sheets
+    # Production previously processed only existing queue rows. Accounts added
+    # later could be enabled and verified forever without receiving any jobs.
+    main.run_generate(sheets)
+    main.logger.info("Fair queue generation complete; resetting Sheets quota window")
+    time.sleep(65)
     main.read_upload_guide(sheets)
     accounts = {a["account_id"]: a for a in sheets.get_accounts()}
     sources = sheets.get_source_rows()

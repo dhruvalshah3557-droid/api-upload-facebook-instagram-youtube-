@@ -778,21 +778,45 @@ def run_generate(sheets=None):
     accounts = sheets.get_accounts()
     sources = sheets.get_source_rows()
     existing = sheets.get_existing_job_keys()
-    new_jobs = []
+    missing_by_account = {}
     already_present = 0
     for job in generate_jobs(sources, accounts):
         key = job_unique_key(job)
         if key in existing:
             already_present += 1
             continue
-        new_jobs.append(job)
         existing.add(key)
-        if len(new_jobs) >= Config.MAX_GENERATE_JOBS:
-            logger.info(
-                f"Generation cap reached ({Config.MAX_GENERATE_JOBS}); "
-                f"remaining jobs queued on later runs"
-            )
-            break
+        account_id = str(job.get("account_id", "") or "review")
+        missing_by_account.setdefault(account_id, []).append(job)
+
+    # Select missing work fairly. The former first-N loop repeatedly exhausted
+    # its cap on early Accounts rows, so newly added destinations such as Spain,
+    # Italy, Vietnam, Pakistan, Kuwait and Dubai never received queue entries.
+    # Rotate account windows each 10-minute production slot, then take one job
+    # per account per pass until the generation cap is full.
+    account_ids = list(missing_by_account)
+    if account_ids:
+        slot = int(time.time() // 600)
+        start = (slot * max(1, Config.MAX_GENERATE_JOBS)) % len(account_ids)
+        account_ids = account_ids[start:] + account_ids[:start]
+
+    new_jobs = []
+    while account_ids and len(new_jobs) < Config.MAX_GENERATE_JOBS:
+        next_pass = []
+        for account_id in account_ids:
+            bucket = missing_by_account[account_id]
+            if bucket and len(new_jobs) < Config.MAX_GENERATE_JOBS:
+                new_jobs.append(bucket.pop(0))
+            if bucket:
+                next_pass.append(account_id)
+        account_ids = next_pass
+
+    remaining = sum(len(bucket) for bucket in missing_by_account.values())
+    if remaining:
+        logger.info(
+            "Generation cap reached (%s); %s missing job(s) remain for later fair rotations",
+            Config.MAX_GENERATE_JOBS, remaining,
+        )
     sheets.append_jobs(new_jobs)
     logger.info(
         f"Queue generation: {len(new_jobs)} new job(s) appended, "

@@ -65,7 +65,7 @@ Columns: `job_id, sku, account_id, media_selection, platform, format, language, 
 
 - `media_selection` values: `carousel`, `product_video`, `model_video:<n>`.
 - `status` lifecycle: empty/pending → `uploaded` | `failed` (after `MAX_JOB_ATTEMPTS`) | `skipped` | `needs_review`.
-- `python main.py --generate` fills the queue idempotently from clean Source Import rows (carousel + product Reel + one job per model video, per enabled account). `python main.py --cycle` (used by CI) generates missing rows then processes pending jobs; `MAX_GENERATE_JOBS` / `MAX_JOBS_PER_RUN` (default 1 each) cap generation and uploads per run.
+- `python main.py --generate` fills the queue idempotently from clean Source Import rows (carousel + product Reel + one job per model video, per enabled account). Missing jobs are grouped by account and selected in rotating 10-minute account windows, one job/account/pass, so later Accounts rows cannot starve behind older destinations. Production `optimized_runner.py` always runs fair generation, waits 65 seconds for the Sheets quota window, then processes pending jobs. `MAX_GENERATE_JOBS` / `MAX_JOBS_PER_RUN` cap generation and uploads per run.
 
 ## Publishing Log
 
