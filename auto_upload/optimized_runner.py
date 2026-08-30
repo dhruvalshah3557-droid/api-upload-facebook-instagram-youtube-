@@ -10,6 +10,7 @@ writes remain capped so the higher Google Sheets quota has comfortable headroom.
 """
 import hashlib
 import socket
+from datetime import datetime, timedelta, timezone
 
 import requests
 import time
@@ -29,6 +30,15 @@ FINGERPRINT_PREFIX = "MEDIA_FINGERPRINT"
 _CURRENT_SHEETS = None
 _DNS_CACHE = {}
 _VIDEO_VALIDATION_CACHE = {}
+
+# Business delivery floor requested for these market accounts. A target is
+# prioritized until it has at least three confirmed uploads in the rolling
+# 24-hour window. Five-hour spacing prevents all three being dumped together.
+MINIMUM_IG_POSTS_24H = 3
+MINIMUM_IG_GAP_HOURS = 5
+GUARANTEED_IG_ACCOUNTS = (
+    "IG-SPAIN", "IG-ITALY", "IG-VNM", "IG-PAK", "IG-KUWAIT", "IG-DUBAI",
+)
 
 _META_RETRY_MARKERS = (
     "unpublished posts must be posted to a page as the page itself",
@@ -77,21 +87,68 @@ def _fingerprint_marker(job, source):
     return f"{FINGERPRINT_PREFIX}:{hashlib.sha256(raw).hexdigest()}"
 
 
-def _reserved_fingerprints(sheets):
-    """Fingerprints already uploaded or locked during an uncertain publish."""
+def _parse_queue_time(value):
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def _queue_state(sheets, now=None):
+    """Return duplicate locks plus rolling upload activity in one queue read."""
     records = sheets.queue_ws.get_all_records(head=sheets.queue_header_row)
     reserved = set()
+    now = now or datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=24)
+    activity = {
+        account_id: {"count": 0, "last": None}
+        for account_id in GUARANTEED_IG_ACCOUNTS
+    }
     pattern = f"{FINGERPRINT_PREFIX}:"
     for rec in records:
         status = str(rec.get("status", "")).strip().lower()
-        if status not in (Config.JOB_STATUS_UPLOADED, "hold"):
+        if status in (Config.JOB_STATUS_UPLOADED, "hold"):
+            notes = str(rec.get("notes", "") or "")
+            for part in notes.split("|"):
+                part = part.strip()
+                if part.startswith(pattern):
+                    reserved.add(part.split()[0])
+
+        account_id = str(rec.get("account_id", "") or "").strip()
+        if status != Config.JOB_STATUS_UPLOADED or account_id not in activity:
             continue
-        notes = str(rec.get("notes", "") or "")
-        for part in notes.split("|"):
-            part = part.strip()
-            if part.startswith(pattern):
-                reserved.add(part.split()[0])
-    return reserved
+        uploaded_at = _parse_queue_time(rec.get("last_attempt_at"))
+        if not uploaded_at or uploaded_at < cutoff or uploaded_at > now:
+            continue
+        activity[account_id]["count"] += 1
+        if activity[account_id]["last"] is None or uploaded_at > activity[account_id]["last"]:
+            activity[account_id]["last"] = uploaded_at
+    return reserved, activity
+
+
+def _reserved_fingerprints(sheets):
+    """Compatibility wrapper for callers needing duplicate locks only."""
+    return _queue_state(sheets)[0]
+
+
+def _minimum_delivery_priority(account_id, activity, now=None):
+    """0 when a guaranteed account is below its floor and due for another post."""
+    if account_id not in GUARANTEED_IG_ACCOUNTS:
+        return 1
+    now = now or datetime.now(timezone.utc)
+    state = (activity or {}).get(account_id, {})
+    if int(state.get("count", 0) or 0) >= MINIMUM_IG_POSTS_24H:
+        return 1
+    last = state.get("last")
+    if last and now - last < timedelta(hours=MINIMUM_IG_GAP_HOURS):
+        return 1
+    return 0
 
 
 def _dns_resolves(url):
@@ -239,7 +296,10 @@ def _revive_stale_meta_failures(sheets, accounts):
     return revived
 
 
-def _healthy_candidates(jobs, accounts, sources, sheets, limit, reserved_fingerprints=None):
+def _healthy_candidates(
+    jobs, accounts, sources, sheets, limit, reserved_fingerprints=None,
+    recent_upload_activity=None,
+):
     """Pick one healthy job per enabled account without cross-platform starvation.
 
     The old implementation globally sorted ~50k pending jobs and then inspected only
@@ -279,7 +339,11 @@ def _healthy_candidates(jobs, accounts, sources, sheets, limit, reserved_fingerp
             continue
 
         enabled_order = _enabled_account_order(accounts, platform)
-        enabled_order.sort(key=lambda aid: _rotation_rank(aid, platform, accounts, slots))
+        enabled_order.sort(key=lambda aid: (
+            _minimum_delivery_priority(aid, recent_upload_activity)
+            if platform == "instagram" else 1,
+            _rotation_rank(aid, platform, accounts, slots),
+        ))
         platform_selected = 0
 
         for account_id in enabled_order:
@@ -458,10 +522,17 @@ def process_optimized():
         main.logger.info("No pending jobs")
         return
 
-    reserved_fingerprints = _reserved_fingerprints(sheets)
+    reserved_fingerprints, recent_upload_activity = _queue_state(sheets)
     main.logger.info("Loaded %s persistent media fingerprint(s)", len(reserved_fingerprints))
+    for account_id in GUARANTEED_IG_ACCOUNTS:
+        state = recent_upload_activity.get(account_id, {})
+        main.logger.info(
+            "24h delivery floor %s: %s/%s uploaded",
+            account_id, state.get("count", 0), MINIMUM_IG_POSTS_24H,
+        )
     selected = _healthy_candidates(
-        jobs, accounts, sources, sheets, Config.MAX_JOBS_PER_RUN, reserved_fingerprints
+        jobs, accounts, sources, sheets, Config.MAX_JOBS_PER_RUN,
+        reserved_fingerprints, recent_upload_activity,
     )
     main.logger.info(
         "Optimized queue: %s pending -> %s healthy job(s) selected",

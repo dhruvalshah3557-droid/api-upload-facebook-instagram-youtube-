@@ -14,6 +14,7 @@ Run: python3 test_pipeline.py
 import os
 import sys
 import types
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -568,6 +569,38 @@ def test_video_preflight_result_is_cached_across_accounts():
     print("OK test_video_preflight_result_is_cached_across_accounts")
 
 
+def test_guaranteed_instagram_accounts_prioritize_24h_deficit():
+    import optimized_runner
+
+    now = datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc)
+    due = {"IG-SPAIN": {"count": 2, "last": now - timedelta(hours=6)}}
+    recent = {"IG-SPAIN": {"count": 2, "last": now - timedelta(hours=2)}}
+    complete = {"IG-SPAIN": {"count": 3, "last": now - timedelta(hours=6)}}
+    assert optimized_runner._minimum_delivery_priority("IG-SPAIN", due, now) == 0
+    assert optimized_runner._minimum_delivery_priority("IG-SPAIN", recent, now) == 1
+    assert optimized_runner._minimum_delivery_priority("IG-SPAIN", complete, now) == 1
+    assert optimized_runner._minimum_delivery_priority("IG-CD", {}, now) == 1
+    print("OK test_guaranteed_instagram_accounts_prioritize_24h_deficit")
+
+
+def test_queue_state_counts_only_successes_in_rolling_24h():
+    import optimized_runner
+
+    now = datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc)
+    records = [
+        {"account_id": "IG-DUBAI", "status": "uploaded", "last_attempt_at": "2026-08-30 08:00:00"},
+        {"account_id": "IG-DUBAI", "status": "uploaded", "last_attempt_at": "2026-08-29 13:00:00"},
+        {"account_id": "IG-DUBAI", "status": "failed", "last_attempt_at": "2026-08-30 10:00:00"},
+        {"account_id": "IG-DUBAI", "status": "uploaded", "last_attempt_at": "2026-08-29 11:59:59"},
+    ]
+    queue_ws = types.SimpleNamespace(get_all_records=lambda head: records)
+    sheets = types.SimpleNamespace(queue_ws=queue_ws, queue_header_row=1)
+    _, activity = optimized_runner._queue_state(sheets, now)
+    assert activity["IG-DUBAI"]["count"] == 2, activity
+    assert activity["IG-DUBAI"]["last"] == datetime(2026, 8, 30, 8, 0, tzinfo=timezone.utc)
+    print("OK test_queue_state_counts_only_successes_in_rolling_24h")
+
+
 if __name__ == "__main__":
     test_generate_is_idempotent()
     test_generation_cap_is_fair_across_accounts()
@@ -580,4 +613,6 @@ if __name__ == "__main__":
     test_filter_valid_media_drops_dead_links()
     test_optimized_preflight_skips_corrupt_video_and_uses_next_job()
     test_video_preflight_result_is_cached_across_accounts()
+    test_guaranteed_instagram_accounts_prioritize_24h_deficit()
+    test_queue_state_counts_only_successes_in_rolling_24h()
     print("All pipeline tests passed.")
