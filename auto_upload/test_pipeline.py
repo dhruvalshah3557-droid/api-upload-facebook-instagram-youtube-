@@ -602,6 +602,22 @@ def test_queue_state_counts_only_successes_in_rolling_24h():
     print("OK test_queue_state_counts_only_successes_in_rolling_24h")
 
 
+def test_account_local_posting_slots_are_timezone_aware_and_idempotent():
+    import optimized_runner
+
+    account = {"timezone": "Asia/Bangkok"}
+    now = datetime(2026, 8, 30, 1, 5, tzinfo=timezone.utc)  # 08:05 Bangkok
+    assert optimized_runner._local_slot_due("IG-CD", account, {}, now)
+
+    completed = {
+        "IG-CD": {"success_times": [datetime(2026, 8, 30, 1, 2, tzinfo=timezone.utc)]}
+    }
+    assert not optimized_runner._local_slot_due("IG-CD", account, completed, now)
+    outside_window = datetime(2026, 8, 30, 2, 0, tzinfo=timezone.utc)  # 09:00 Bangkok
+    assert not optimized_runner._local_slot_due("IG-CD", account, {}, outside_window)
+    print("OK test_account_local_posting_slots_are_timezone_aware_and_idempotent")
+
+
 if __name__ == "__main__":
     test_generate_is_idempotent()
     test_generation_cap_is_fair_across_accounts()
@@ -616,4 +632,5 @@ if __name__ == "__main__":
     test_video_preflight_result_is_cached_across_accounts()
     test_all_primary_accounts_prioritize_24h_deficit()
     test_queue_state_counts_only_successes_in_rolling_24h()
+    test_account_local_posting_slots_are_timezone_aware_and_idempotent()
     print("All pipeline tests passed.")
