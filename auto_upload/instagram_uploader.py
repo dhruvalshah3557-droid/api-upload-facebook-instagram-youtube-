@@ -154,7 +154,10 @@ class InstagramUploader:
 
     def _create_resumable_reel(self, media_url, caption, product_id=""):
         """Mix audio into a silent Reel and upload the resulting bytes to Meta."""
-        name, content, content_type = prepare_video(media_url, fill_9x16=False)
+        selection_key = f"instagram|{self.ig_user_id}|{media_url}"
+        name, content, content_type = prepare_video(
+            media_url, fill_9x16=False, selection_key=selection_key
+        )
         params = {
             "media_type": "REELS",
             "upload_type": "resumable",
@@ -218,16 +221,25 @@ class InstagramUploader:
                 state = self._remote_audio_state(media_url)
                 logger.info(f"[{self.page_name}] Reel audio state: {state}")
                 if state in ("missing", "silent"):
-                    try:
-                        params["audio_configuration"] = self._trending_audio_configuration(media_url)
-                    except Exception as exc:
-                        logger.warning(
-                            f"[{self.page_name}] Instagram audio catalog unavailable "
-                            f"({exc}); mixing audio into the video instead"
+                    use_catalog = os.getenv("IG_USE_AUDIO_CATALOG", "false").lower() in (
+                        "1", "true", "yes", "on"
+                    )
+                    if use_catalog:
+                        try:
+                            catalog_key = f"instagram|{self.ig_user_id}|{media_url}"
+                            params["audio_configuration"] = self._trending_audio_configuration(catalog_key)
+                        except Exception as exc:
+                            logger.warning(
+                                f"[{self.page_name}] Instagram audio catalog unavailable "
+                                f"({exc}); mixing verified music into the video instead"
+                            )
+                            return self._create_resumable_reel(media_url, caption, product_id)
+                    else:
+                        logger.info(
+                            f"[{self.page_name}] Mixing verified licensed/CC0 music "
+                            "into silent Reel"
                         )
-                        return self._create_resumable_reel(
-                            media_url, caption, product_id
-                        )
+                        return self._create_resumable_reel(media_url, caption, product_id)
                 elif state == "unknown":
                     raise Exception("Could not verify Reel audio; refusing a potentially silent upload")
         else:
