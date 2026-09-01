@@ -30,6 +30,13 @@ MARKETS = {
     "kuwait": ("KUWAIT", "en-GB", "Asia/Kuwait"),
     "pakistan": ("PAK", "en-GB", "Asia/Karachi"),
     "bangkok": ("BKK", "th-TH", "Asia/Bangkok"),
+    "sweden": ("SWEDEN", "sv-SE", "Europe/Stockholm"),
+    "germany": ("GERMANY", "de-DE", "Europe/Berlin"),
+    "poland": ("POLAND", "pl-PL", "Europe/Warsaw"),
+    "denmark": ("DENMARK", "da-DK", "Europe/Copenhagen"),
+    "france": ("FRANCE", "fr-FR", "Europe/Paris"),
+    "turkey": ("TURKEY", "tr-TR", "Europe/Istanbul"),
+    "china": ("CHINA", "zh-CN", "Asia/Shanghai"),
 }
 
 
@@ -114,6 +121,41 @@ def row_for(headers, account_id, platform, name, platform_id, username, linked_i
     return [values.get(header, "") for header in headers]
 
 
+def _identity_key(value):
+    key = re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+    return key.replace("colordiam", "colourdiam")
+
+
+def _matching_blank_instagram(existing, page_name, ig_username):
+    blank = [
+        account for account in existing
+        if account.get("platform") == "instagram"
+        and not str(account.get("platform_account_id", "") or "").strip()
+    ]
+    code, _, _ = market_settings(f"{page_name} {ig_username}")
+    if code != "AUTO":
+        direct = [
+            account for account in blank
+            if account.get("account_id") == f"IG-{code}"
+        ]
+        if len(direct) == 1:
+            return direct[0]
+
+    wanted = {
+        _identity_key(page_name),
+        _identity_key(ig_username),
+    } - {""}
+    matches = []
+    for account in blank:
+        identities = {
+            _identity_key(account.get("account_name", "")),
+            _identity_key(account.get("username_or_channel", "")),
+        } - {""}
+        if wanted & identities:
+            matches.append(account)
+    return matches[0] if len(matches) == 1 else None
+
+
 def sync_accounts(pages, sheets):
     existing = sheets.get_accounts()
     existing_keys = {
@@ -122,8 +164,22 @@ def sync_accounts(pages, sheets):
     }
     used_ids = {a.get("account_id") for a in existing}
     headers = sheets.accounts_ws.row_values(sheets.accounts_header_row)
+    header_positions = {
+        str(header).strip().lower(): index + 1
+        for index, header in enumerate(headers)
+    }
     new_rows = []
+    account_updates = []
     discovered = []
+
+    def queue_cell(row, header, value):
+        col = header_positions.get(header)
+        if not col:
+            return
+        account_updates.append({
+            "range": f"{sheets._col_letter(col)}{row}",
+            "values": [[value]],
+        })
 
     for page in pages:
         page_id = str(page.get("id", ""))
@@ -136,16 +192,45 @@ def sync_accounts(pages, sheets):
             aid = unique_account_id("FB", page_name, page_id, used_ids)
             new_rows.append(row_for(headers, aid, "Facebook", page_name, page_id,
                                     ig_username, ig_id))
-            discovered.append({"account_id": aid, "platform": "Facebook", "name": page_name})
+            discovered.append({
+                "account_id": aid, "platform": "Facebook",
+                "name": page_name, "action": "added",
+            })
             existing_keys.add(("facebook", page_id))
 
         if ig_id and ("instagram", ig_id) not in existing_keys:
-            aid = unique_account_id("IG", page_name, ig_id, used_ids)
-            new_rows.append(row_for(headers, aid, "Instagram", page_name, ig_id,
-                                    ig_username, page_id))
-            discovered.append({"account_id": aid, "platform": "Instagram", "name": page_name})
+            placeholder = _matching_blank_instagram(existing, page_name, ig_username)
+            if placeholder:
+                queue_cell(placeholder["row"], "platform_account_id", ig_id)
+                queue_cell(placeholder["row"], "username_or_channel", ig_username)
+                queue_cell(
+                    placeholder["row"],
+                    "notes",
+                    f"Verified via live Meta API; linked to Facebook Page {page_id}.",
+                )
+                placeholder["platform_account_id"] = ig_id
+                placeholder["username_or_channel"] = ig_username
+                discovered.append({
+                    "account_id": placeholder["account_id"],
+                    "platform": "Instagram",
+                    "name": page_name,
+                    "action": "updated_platform_id",
+                })
+            else:
+                aid = unique_account_id("IG", page_name, ig_id, used_ids)
+                new_rows.append(row_for(headers, aid, "Instagram", page_name, ig_id,
+                                        ig_username, page_id))
+                discovered.append({
+                    "account_id": aid, "platform": "Instagram",
+                    "name": page_name, "action": "added",
+                })
             existing_keys.add(("instagram", ig_id))
 
+    if account_updates:
+        sheets.accounts_ws.batch_update(
+            account_updates,
+            value_input_option="USER_ENTERED",
+        )
     if new_rows:
         sheets.accounts_ws.append_rows(new_rows, value_input_option="RAW")
     return discovered
@@ -163,7 +248,7 @@ def main():
         report["new_accounts"] = sync_accounts(pages, SheetsReader())
         print(
             f"Meta preflight OK: {len(pages)} page(s); "
-            f"{len(report['new_accounts'])} new account row(s) added disabled for review"
+            f"{len(report['new_accounts'])} account change(s) discovered"
         )
     except Exception as exc:
         report["error"] = str(exc)
