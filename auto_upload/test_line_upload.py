@@ -66,6 +66,22 @@ class LineUploaderTests(unittest.TestCase):
         retry_key = post.call_args.kwargs["headers"]["X-Line-Retry-Key"]
         self.assertEqual(str(uuid.UUID(retry_key)), retry_key)
 
+    def test_empty_http_200_body_is_success(self):
+        uploader = LineUploader("token", "Colour Diam LINE")
+        with patch("line_uploader.requests.post") as post:
+            post.return_value = MagicMock(
+                status_code=200,
+                json=lambda: {},
+                text="",
+                headers={"x-line-request-id": "line-request-123"},
+            )
+            result = uploader.upload(
+                "https://example.com/center.jpg",
+                caption="Accepted broadcast",
+                is_video=False,
+            )
+        self.assertEqual(result["id"], "line-request-123")
+
     def test_carousel_rejects_non_https(self):
         uploader = LineUploader("token")
         with self.assertRaises(Exception) as ctx:
