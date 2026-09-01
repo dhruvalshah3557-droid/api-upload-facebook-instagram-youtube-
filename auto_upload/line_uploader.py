@@ -51,20 +51,33 @@ class LineUploader:
     def _broadcast(self, messages):
         if not messages:
             raise Exception("No messages to broadcast")
+        headers = self._headers()
         resp = requests.post(
             LINE_BOT_API,
-            headers=self._headers(),
+            headers=headers,
             json={"messages": messages},
             timeout=60,
         )
         if resp.status_code != 200:
             body = resp.text[:2000]
             raise Exception(f"LINE API error {resp.status_code}: {body}")
-        result = resp.json()
-        sent = result.get("sentMessages", [])
+        try:
+            result = resp.json() or {}
+        except ValueError:
+            result = {}
+
+        # LINE broadcast commonly returns an empty JSON object on HTTP 200.
+        # That is a confirmed accepted broadcast, not a failure. Preserve a
+        # traceable ID using LINE's response header or our valid retry UUID.
+        sent = result.get("sentMessages") or []
         if not sent:
-            raise Exception(f"LINE broadcast returned no sentMessages: {result}")
-        logger.info(f"[{self.account_name}] LINE broadcast sent {len(sent)} message(s)")
+            request_id = (
+                str(getattr(resp, "headers", {}).get("x-line-request-id", "") or "").strip()
+                or headers["X-Line-Retry-Key"]
+            )
+            sent = [{"id": request_id}]
+            result["sentMessages"] = sent
+        logger.info(f"[{self.account_name}] LINE broadcast accepted {len(sent)} message(s)")
         return result
 
     def _text_message(self, caption):
