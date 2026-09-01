@@ -260,15 +260,17 @@ def _enabled_account_order(accounts, platform):
 def _platform_limits(limit):
     """Reserve most capacity for Meta while keeping YouTube continuously active."""
     if limit <= 1:
-        return {"facebook": 1, "instagram": 0, "youtube": 0}
+        return {"facebook": 1, "instagram": 0, "youtube": 0, "line": 0}
     if limit <= 3:
-        return {"facebook": 1, "instagram": 1, "youtube": limit - 2}
+        return {"facebook": 1, "instagram": 1, "youtube": limit - 2, "line": 0}
     if limit >= 20:
-        return {"facebook": 11, "instagram": 8, "youtube": 1}
-    fb = max(2, limit // 2)
-    ig = max(1, limit - fb - 1)
-    yt = max(0, limit - fb - ig)
-    return {"facebook": fb, "instagram": ig, "youtube": yt}
+        return {"facebook": 10, "instagram": 8, "youtube": 1, "line": 1}
+    line = 1 if limit >= 5 else 0
+    remaining = limit - line
+    fb = max(2, remaining // 2)
+    ig = max(1, remaining - fb - 1)
+    yt = max(0, remaining - fb - ig)
+    return {"facebook": fb, "instagram": ig, "youtube": yt, "line": line}
 
 
 def _rotation_rank(account_id, platform, accounts, slots):
@@ -361,11 +363,12 @@ def _healthy_candidates(
         ))
 
     main.logger.info(
-        "Account rotation slot: FB=%s IG=%s YT=%s",
-        slots.get("facebook", 0), slots.get("instagram", 0), slots.get("youtube", 0),
+        "Account rotation slot: FB=%s IG=%s YT=%s LINE=%s",
+        slots.get("facebook", 0), slots.get("instagram", 0),
+        slots.get("youtube", 0), slots.get("line", 0),
     )
 
-    for platform in ("facebook", "instagram", "youtube"):
+    for platform in ("facebook", "instagram", "youtube", "line"):
         wanted = slots.get(platform, 0)
         if wanted <= 0:
             continue

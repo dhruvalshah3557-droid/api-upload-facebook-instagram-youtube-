@@ -100,6 +100,8 @@ jobs:
           YOUTUBE_OAUTH_REFRESH_TOKEN: ${{ secrets.YOUTUBE_OAUTH_REFRESH_TOKEN }}
           YOUTUBE_OAUTH_REFRESH_TOKEN_JIYA: ${{ secrets.YOUTUBE_OAUTH_REFRESH_TOKEN_JIYA }}
           PINTEREST_ACCESS_TOKEN: ${{ secrets.PINTEREST_ACCESS_TOKEN }}
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          META_TOKEN_LINE_CD: ${{ secrets.META_TOKEN_LINE_CD || secrets.LINE_CHANNEL_ACCESS_TOKEN }}
         run: |
           set -o pipefail
           python optimized_runner.py

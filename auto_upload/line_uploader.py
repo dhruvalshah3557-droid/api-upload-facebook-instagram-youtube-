@@ -7,21 +7,32 @@ import requests
 logger = logging.getLogger(__name__)
 
 LINE_BOT_API = "https://api.line.me/v2/bot/message/broadcast"
+LINE_TEXT_LIMIT = 5000
 
 _VIDEO_EXTS = (".mp4", ".mov", ".avi", ".mkv", ".webm")
+_IMAGE_EXTS = (".jpg", ".jpeg", ".png")
 
 
 def _is_video_url(url):
-    return any(ext in url.lower() for ext in _VIDEO_EXTS)
+    return any(ext in str(url).lower() for ext in _VIDEO_EXTS)
+
+
+def _is_https(url):
+    return str(url or "").strip().lower().startswith("https://")
+
+
+def _is_image_url(url):
+    lowered = str(url or "").split("?", 1)[0].lower()
+    return any(lowered.endswith(ext) for ext in _IMAGE_EXTS)
 
 
 class LineUploader:
     """Publish content to LINE Official Account followers via the Messaging API.
 
     LINE has no native timeline/carousel post; content is delivered as a
-    broadcast message to all followers. A "carousel" is sent as a batch of up
-    to five image messages per broadcast request. Media URLs must be publicly
-    reachable HTTPS URLs (LINE fetches them itself).
+    broadcast message to all followers. A "carousel" is sent as a caption text
+    plus up to five image messages per broadcast request. Media URLs must be
+    publicly reachable HTTPS URLs (LINE fetches them itself).
     """
 
     _MAX_MESSAGES = 5
@@ -56,6 +67,12 @@ class LineUploader:
         logger.info(f"[{self.account_name}] LINE broadcast sent {len(sent)} message(s)")
         return result
 
+    def _text_message(self, caption):
+        text = str(caption or "").strip()[:LINE_TEXT_LIMIT]
+        if not text:
+            return None
+        return {"type": "text", "text": text}
+
     def _image_message(self, media_url):
         return {
             "type": "image",
@@ -64,28 +81,52 @@ class LineUploader:
         }
 
     def _video_message(self, media_url, thumbnail_url=""):
+        preview = thumbnail_url if _is_https(thumbnail_url) and _is_image_url(thumbnail_url) else ""
+        if not preview:
+            raise Exception("LINE video requires a public HTTPS JPEG/PNG preview image")
         return {
             "type": "video",
             "originalContentUrl": media_url,
-            "previewImageUrl": thumbnail_url or media_url,
+            "previewImageUrl": preview,
         }
 
+    def _https_urls(self, urls):
+        out = []
+        for url in urls:
+            value = str(url or "").strip()
+            if _is_https(value):
+                out.append(value)
+        return out
+
     def upload(self, media_url, caption="", is_video=None, thumbnail_url=""):
-        """Send a single image or video message to all followers."""
+        """Send caption text plus a single image or video to all followers."""
+        if not _is_https(media_url):
+            raise Exception("LINE media URL must be a public HTTPS URL")
         if is_video is None:
             is_video = _is_video_url(media_url)
-        message = (
+        messages = []
+        text = self._text_message(caption)
+        if text:
+            messages.append(text)
+        messages.append(
             self._video_message(media_url, thumbnail_url)
             if is_video
             else self._image_message(media_url)
         )
-        result = self._broadcast([message])
+        result = self._broadcast(messages)
         message_id = result["sentMessages"][0].get("id", "")
         return {"id": message_id, "url": "https://line.me/"}
 
     def upload_carousel(self, image_urls, caption="", product_id=""):
-        """Send up to 5 images as image messages in one broadcast (batched)."""
-        messages = [self._image_message(u) for u in image_urls]
+        """Send caption text plus HTTPS images, batched at 5 messages."""
+        messages = []
+        text = self._text_message(caption)
+        if text:
+            messages.append(text)
+        images = self._https_urls(image_urls)
+        if not images:
+            raise Exception("No public HTTPS image URLs for LINE carousel")
+        messages.extend(self._image_message(u) for u in images)
         ids = []
         for start in range(0, len(messages), self._MAX_MESSAGES):
             result = self._broadcast(messages[start:start + self._MAX_MESSAGES])

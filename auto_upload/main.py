@@ -441,8 +441,13 @@ def publish_job(job, source, account):
             images = _carousel_images(media)
             post = uploader.upload_carousel(images or media, caption)
         else:
-            is_video = format_type == "video"
+            is_video = format_type == "video" or any(
+                ext in str(media[0]).lower() for ext in (".mp4", ".mov", ".avi", ".mkv", ".webm")
+            )
             thumbnail = source.get("main_image", "") if is_video else ""
+            if is_video and not thumbnail:
+                images = list(source.get("images") or []) + list(source.get("side_images") or [])
+                thumbnail = next((u for u in images if u), "")
             post = uploader.upload(media[0], caption, is_video=is_video, thumbnail_url=thumbnail)
         post_id = post.get("id", "")
         url = post.get("url", "https://line.me/")
