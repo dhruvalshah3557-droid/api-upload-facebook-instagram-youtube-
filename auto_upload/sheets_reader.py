@@ -98,10 +98,11 @@ class SheetsReader:
         "zh": "Chinese Description", "ru": "Russian Description",
         "ja": "Japanese Description", "ko": "Korean Description",
         "he": "israli description", "es": "spanish description",
-        "ar": "arabic description", "fr": "french description",
-        "de": "german description", "da": "danish description",
-        "pl": "polish description", "tr": "turkish description",
-        "sv": "sweden description",
+        "ar": "arabic description", "vi": "Vietnamese Description",
+        "id": "Indonesian description", "it": "italian description",
+        "fr": "french description", "de": "german description",
+        "da": "danish description", "pl": "polish description",
+        "tr": "turkish description", "sv": "sweden description",
     }
     LANG_TAG_COLS = {
         "my": "Burmese Hashtag", "th": "Thai Hashtag",
@@ -109,10 +110,11 @@ class SheetsReader:
         "zh": "Chinese Hashtag", "ru": "Russian Hashtag",
         "ja": "Japanese Hashtag", "ko": "Korean Hashtag",
         "he": "israli hashtag", "es": "spanish hashtag",
-        "ar": "arabic hashtag", "fr": "french hashtag",
-        "de": "german hashtag", "da": "danish hashtag",
-        "pl": "polish hahstag", "tr": "turkish hashtag",
-        "sv": "sweden hashtag",
+        "ar": "arabic hashtag", "vi": "Vietnamese Hashtag",
+        "id": "Indonesian hashtag", "it": "italian hashtag",
+        "fr": "french hashtag", "de": "german hashtag",
+        "da": "danish hashtag", "pl": "polish hahstag",
+        "tr": "turkish hashtag", "sv": "sweden hashtag",
     }
 
     QUEUE_COLS = [
