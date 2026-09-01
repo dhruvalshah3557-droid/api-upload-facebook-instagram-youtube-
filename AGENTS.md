@@ -48,7 +48,7 @@ Flow: Source Import → Accounts → Publishing Queue → Publishing Log.
 - `V/W/X` + `Y` = model images (`model image link 1/2/3`, `multiple model photo link`).
 - `Z/AA/AB` + `AC` = model videos (`model video link 1/2/3`, `multiple model video link`; AC deduped against Z:AB).
 - `AI` = `INSTAGRAM CAPTION`, `AJ` = `FACEBOOK CAPTION`, `BD` = `YouTube Shorts Caption`, `AR` = `HASHTAGS`.
-- Per-language: `<Lang> Description` / `<Lang> Hashtag` columns (Burmese, Thai, Filipino, Chinese, Russian, Japanese, Korean, plus israli/spanish/arabic).
+- Per-language: `<Lang> Description` / `<Lang> Hashtag` columns for Burmese, Thai, Filipino, Chinese, Russian, Japanese, Korean, Hebrew (`israli` spelling in the live headers), Arabic, Spanish, Indonesian, Italian, French, German, Danish, Polish (`polish hahstag` spelling), Turkish and Swedish. Vietnamese is supported by the reader when `Vietnamese Description` / `Vietnamese Hashtag` columns are added; until then Vietnam uses the English platform-caption fallback.
 - `G` = `LAB` (value `NON CERTIFIED` blocks auto-publish — review only), `Status` = generated-content status (`Error: ...` / `429` rows are skipped as incomplete).
 
 ## Accounts sheet
