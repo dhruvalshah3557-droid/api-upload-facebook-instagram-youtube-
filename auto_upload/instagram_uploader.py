@@ -77,7 +77,7 @@ class InstagramUploader:
             ig_username = cls._identity_key(ig.get("username", ""))
             identities = (page_label, ig_username)
             if not wanted or any(
-                identity and (wanted == identity or wanted in identity or identity in wanted)
+                identity and (wanted == identity or wanted in identity)
                 for identity in identities
             ):
                 matches.append(ig_id)
