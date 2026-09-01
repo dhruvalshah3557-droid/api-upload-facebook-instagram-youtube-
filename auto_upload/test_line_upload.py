@@ -3,6 +3,7 @@ import os
 import sys
 import types
 import unittest
+import uuid
 from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -62,6 +63,8 @@ class LineUploaderTests(unittest.TestCase):
         self.assertEqual(messages[0], {"type": "text", "text": "Hello LINE"})
         self.assertEqual(messages[1]["type"], "image")
         self.assertEqual(messages[1]["originalContentUrl"], "https://example.com/center.jpg")
+        retry_key = post.call_args.kwargs["headers"]["X-Line-Retry-Key"]
+        self.assertEqual(str(uuid.UUID(retry_key)), retry_key)
 
     def test_carousel_rejects_non_https(self):
         uploader = LineUploader("token")
