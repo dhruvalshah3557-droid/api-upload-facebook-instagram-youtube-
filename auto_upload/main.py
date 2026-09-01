@@ -219,15 +219,12 @@ def _lang_code(primary_language):
 def resolve_media(job, source):
     """Resolve ordered media URLs for one queue job.
 
-    Instagram carousels are mixed-media and ordered as:
+    Carousels are image-only and ordered as:
       1) main product image
-      2) product MP4/video
-      3) certificate image (when a public image URL is supplied)
-      4) remaining product images
-    Instagram accepts up to 10 carousel children, so the list is capped at 10.
-
-    Other platforms retain the existing image-only carousel behavior; their
-    product/model videos continue as separate video jobs.
+      2) certificate image on Instagram (when a public image URL is supplied)
+      3) remaining product images
+    Instagram accepts up to 10 carousel children, so its list is capped at 10.
+    Product/model videos always remain separate video/Reel jobs.
     """
     selection = job.get("media_selection", "")
     if selection == "carousel":
