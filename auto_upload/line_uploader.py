@@ -44,7 +44,7 @@ class LineUploader:
     def _headers(self):
         return {
             "Authorization": f"Bearer {self.channel_token}",
-            "X-Line-Retry-Key": uuid.uuid4().hex,
+            "X-Line-Retry-Key": str(uuid.uuid4()),
             "Content-Type": "application/json",
         }
 
