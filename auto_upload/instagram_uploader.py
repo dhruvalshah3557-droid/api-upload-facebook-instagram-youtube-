@@ -28,6 +28,14 @@ class IGAccountNotLinkedError(Exception):
 class InstagramUploader:
     _IG_ID_CACHE = {}
 
+    @staticmethod
+    def _identity_key(value):
+        # Meta page names commonly contain spaces while Instagram usernames do
+        # not. Normalising both forms lets "Colour Diam Sweden" match
+        # "@colourdiamsweden" without relying on a fragile literal substring.
+        key = re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+        return key.replace("colordiam", "colourdiam")
+
     def __init__(self, ig_user_id, access_token, page_name=""):
         self.ig_user_id = self._resolve_ig_user_id(ig_user_id, access_token, page_name)
         self.access_token = access_token
@@ -59,15 +67,19 @@ class InstagramUploader:
             pages = []
 
         matches = []
-        wanted = str(page_name or "").strip().lower()
+        wanted = cls._identity_key(page_name)
         for page in pages:
             ig = page.get("instagram_business_account") or {}
             ig_id = str(ig.get("id", "") or "").strip()
             if not ig_id:
                 continue
-            page_label = str(page.get("name", "") or "").strip().lower()
-            ig_username = str(ig.get("username", "") or "").strip().lower()
-            if not wanted or wanted in page_label or wanted in ig_username:
+            page_label = cls._identity_key(page.get("name", ""))
+            ig_username = cls._identity_key(ig.get("username", ""))
+            identities = (page_label, ig_username)
+            if not wanted or any(
+                identity and (wanted == identity or wanted in identity or identity in wanted)
+                for identity in identities
+            ):
                 matches.append(ig_id)
 
         if len(matches) == 1:
