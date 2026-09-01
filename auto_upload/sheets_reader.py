@@ -322,12 +322,21 @@ class SheetsReader:
                 continue
             images = [v for v in (rec.get(c, "") for c in self.IMAGE_COLS) if str(v).strip()]
             images = [str(v).strip() for v in images]
-            main_image = next((u for u in images if self._is_center(u)), "")
+            main_image = next(
+                (u for u in images if self._is_center(u)),
+                images[0] if images else "",
+            )
             side_images = self._split_lines(rec.get("multiple side image link", ""))
             if not side_images:
-                side_images = [u for u in images if not self._is_center(u)]
+                side_images = [
+                    u for u in images
+                    if u != main_image and not self._is_center(u)
+                ]
             else:
-                side_images = [u for u in side_images if not self._is_center(u)]
+                side_images = [
+                    u for u in side_images
+                    if u != main_image and not self._is_center(u)
+                ]
             model_images = []
             for c in ["model image link 1", "model image link 2", "model image link 3", "multiple model photo link"]:
                 for u in self._split_lines(rec.get(c, "")):
