@@ -235,13 +235,12 @@ def resolve_media(job, source):
         side_images = list(source.get("side_images", []))
 
         if job.get("platform", "").lower() == "instagram":
+            # Keep the carousel image-only. Product/model videos are generated as
+            # separate Reel jobs, so embedding the product video here creates a
+            # duplicate post and makes one bad video fail an otherwise valid carousel.
             media = []
             if main_image:
                 media.append(main_image)
-
-            product_video = source.get("video_url", "")
-            if product_video and _is_video_url(product_video):
-                media.append(product_video)
 
             certificate_media = source.get("certificate_media_url", "")
             if certificate_media:
