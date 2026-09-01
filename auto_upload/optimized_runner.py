@@ -374,9 +374,18 @@ def _healthy_candidates(
             continue
 
         enabled_order = _enabled_account_order(accounts, platform)
+        # A local posting slot is preferred, but it must not block an account
+        # that is below its rolling delivery floor. The old hard slot filter
+        # left zero-delivery markets (for example Vietnam) pending indefinitely
+        # whenever a workflow ran outside the narrow 45-minute slot window.
         enabled_order = [
             aid for aid in enabled_order
-            if _local_slot_due(aid, accounts.get(aid), recent_upload_activity)
+            if (
+                _local_slot_due(aid, accounts.get(aid), recent_upload_activity)
+                or _minimum_delivery_priority(
+                    aid, recent_upload_activity
+                )[0] == 0
+            )
         ]
         enabled_order.sort(key=lambda aid: (
             _minimum_delivery_priority(aid, recent_upload_activity),
