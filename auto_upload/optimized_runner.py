@@ -53,10 +53,9 @@ _META_RETRY_MARKERS = (
 def resolve_media_fixed(job, source):
     selection = job.get("media_selection", "")
     if selection == "carousel" and job.get("platform", "").lower() == "instagram":
+        # Product/model videos have their own Reel jobs. Keep carousels image-only
+        # so a broken video cannot block the product's image post or publish twice.
         media = []
-        product_video = source.get("video_url", "")
-        if product_video and main._is_video_url(product_video):
-            media.append(product_video)
         main_image = source.get("main_image", "")
         if main_image:
             media.append(main_image)
@@ -257,6 +256,47 @@ def _enabled_account_order(accounts, platform):
     ]
 
 
+def _account_publish_ready(account):
+    """Return False for an active destination that cannot publish yet.
+
+    Blank Instagram IDs remain enabled and are probed every production run. If
+    Meta can resolve the linked professional account, use it immediately;
+    otherwise skip it without consuming one of the limited Instagram slots.
+    """
+    if account.get("platform") != "instagram" or account.get("platform_account_id"):
+        return True
+
+    token = Config.get_token(account.get("credential_property_key", ""))
+    if not token:
+        main.logger.warning(
+            "Active Instagram account %s has no token/ID yet; leaving enabled and skipping this run",
+            account.get("account_id", ""),
+        )
+        return False
+
+    try:
+        resolved = main.InstagramUploader._resolve_ig_user_id(
+            "",
+            token,
+            account.get("account_name", "") or account.get("username_or_channel", ""),
+        )
+    except main.IGAccountNotLinkedError as exc:
+        main.logger.warning(
+            "Active Instagram account %s is not linked in Meta yet; leaving enabled and skipping this run: %s",
+            account.get("account_id", ""),
+            exc,
+        )
+        return False
+
+    account["platform_account_id"] = resolved
+    main.logger.info(
+        "Resolved active Instagram account %s to platform ID %s",
+        account.get("account_id", ""),
+        resolved,
+    )
+    return True
+
+
 def _platform_limits(limit):
     """Reserve most capacity for Meta while keeping YouTube continuously active."""
     if limit <= 1:
@@ -399,6 +439,8 @@ def _healthy_candidates(
 
             account = accounts.get(account_id)
             if not account or not account.get("enabled"):
+                continue
+            if not _account_publish_ready(account):
                 continue
 
             account_jobs = jobs_by_account.get(account_id, [])
