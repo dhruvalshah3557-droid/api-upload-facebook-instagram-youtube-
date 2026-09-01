@@ -42,6 +42,7 @@ _install("googleapiclient.discovery", {"build": lambda *a, **k: None})
 _install("googleapiclient.http", {"MediaIoBaseUpload": lambda *a, **k: None})
 
 from line_uploader import LineUploader
+from sheets_reader import SheetsReader
 import optimized_runner
 
 
@@ -94,6 +95,15 @@ class LineUploaderTests(unittest.TestCase):
         messages = post.call_args.kwargs["json"]["messages"]
         self.assertEqual(messages[1]["type"], "video")
         self.assertEqual(messages[1]["previewImageUrl"], "https://example.com/thumb.jpg")
+
+
+class EnableLineHelperTests(unittest.TestCase):
+    def test_col_letter_matches_sheets_a1(self):
+        self.assertEqual(SheetsReader._col_letter(1), "A")
+        self.assertEqual(SheetsReader._col_letter(9), "I")
+        self.assertEqual(SheetsReader._col_letter(20), "T")
+        self.assertEqual(SheetsReader._col_letter(26), "Z")
+        self.assertEqual(SheetsReader._col_letter(27), "AA")
 
 
 class LineProductionSlotTests(unittest.TestCase):

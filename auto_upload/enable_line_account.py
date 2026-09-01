@@ -46,14 +46,6 @@ NEW_ROW = {
 }
 
 
-def _col_letter(col_idx):
-    letter = ""
-    while col_idx > 0:
-        col_idx -= 1
-        letter = chr(ord("A") + col_idx % 26) + letter
-    return letter
-
-
 def main():
     reader = SheetsReader()
     ws = reader.accounts_ws
@@ -80,7 +72,7 @@ def main():
         if not col_idx:
             continue
         data.append({
-            "range": f"{_col_letter(col_idx)}{target_row}",
+            "range": f"{SheetsReader._col_letter(col_idx)}{target_row}",
             "values": [[value]],
         })
     if data:
