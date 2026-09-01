@@ -30,6 +30,42 @@ class FullRepairTests(unittest.TestCase):
         ])
         self.assertNotIn(source["video_url"], media)
 
+    def test_regional_instagram_does_not_match_generic_colour_diam_page(self):
+        uploader = optimized_runner.main.InstagramUploader
+        uploader._IG_ID_CACHE.clear()
+
+        def response(data):
+            return types.SimpleNamespace(
+                json=lambda: {"data": data},
+                raise_for_status=lambda: None,
+            )
+
+        generic = [{
+            "id": "PAGE-CD",
+            "name": "Colour Diam",
+            "instagram_business_account": {
+                "id": "IG-CD",
+                "username": "colourdiamonds",
+            },
+        }]
+        with patch("instagram_uploader.requests.get", return_value=response(generic)):
+            with self.assertRaises(optimized_runner.main.IGAccountNotLinkedError):
+                uploader._resolve_ig_user_id("", "token", "Colour Diam Sweden")
+
+        linked = [{
+            "id": "PAGE-SWEDEN",
+            "name": "Regional Page",
+            "instagram_business_account": {
+                "id": "IG-SWEDEN-ID",
+                "username": "colourdiamsweden",
+            },
+        }]
+        with patch("instagram_uploader.requests.get", return_value=response(linked)):
+            self.assertEqual(
+                uploader._resolve_ig_user_id("", "token", "Colour Diam Sweden"),
+                "IG-SWEDEN-ID",
+            )
+
     def test_blank_active_instagram_does_not_consume_valid_account_slot(self):
         jobs = [
             {
