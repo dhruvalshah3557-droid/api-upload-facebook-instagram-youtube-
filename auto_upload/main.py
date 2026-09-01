@@ -783,6 +783,14 @@ def run_generate(sheets=None):
     accounts = sheets.get_accounts()
     sources = sheets.get_source_rows()
     existing = sheets.get_existing_job_keys()
+    # Accounts with no queue history must not wait behind destinations that
+    # already have thousands of jobs. Snapshot counts before adding missing
+    # keys so empty/new queues (including LINE) are filled first.
+    existing_counts = {}
+    for key in existing:
+        account_id = str(key[1] or "review")
+        existing_counts[account_id] = existing_counts.get(account_id, 0) + 1
+
     missing_by_account = {}
     already_present = 0
     for job in generate_jobs(sources, accounts):
@@ -804,6 +812,14 @@ def run_generate(sheets=None):
         slot = int(time.time() // 600)
         start = (slot * max(1, Config.MAX_GENERATE_JOBS)) % len(account_ids)
         account_ids = account_ids[start:] + account_ids[:start]
+        rotation_rank = {account_id: i for i, account_id in enumerate(account_ids)}
+        account_ids.sort(
+            key=lambda account_id: (
+                existing_counts.get(account_id, 0) > 0,
+                existing_counts.get(account_id, 0),
+                rotation_rank[account_id],
+            )
+        )
 
     new_jobs = []
     while account_ids and len(new_jobs) < Config.MAX_GENERATE_JOBS:
