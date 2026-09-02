@@ -1,9 +1,12 @@
 """Pipeline watchdog for the auto_upload repository.
 
 Monitors recent Auto Upload workflow runs and the public Publishing Queue
-state, escalates persistent or permanent failures to a GitHub issue labeled
-`auto-fix`, and posts a short health report. Runs every 30 minutes from GitHub
-Actions using only the public gviz endpoint and the Actions/Issues APIs.
+state, escalates persistent failures to a GitHub issue labeled `auto-fix`, and
+posts a short health report. Credential/permission failures (invalidated or
+expired tokens, etc.) are detected by signature and routed to a single
+`manual-review` issue instead, since no code change can fix them. Runs every 30
+minutes from GitHub Actions using only the public gviz endpoint and the
+Actions/Issues APIs.
 
 No secrets are required: workflow-run data comes from the Actions API and
 queue state comes from the publicly readable Google Sheet via gviz.
@@ -23,7 +26,36 @@ QUEUE_SHEET = "Publishing Queue"
 WORKFLOW_FILE = ".github/workflows/auto-upload-production.yml"
 LEDGER_TITLE = "Watchdog Ledger"
 AUTO_FIX_LABEL = "auto-fix"
+MANUAL_REVIEW_LABEL = "manual-review"
 CONSECUTIVE_FAILURE_THRESHOLD = 3
+
+# Credential / permission / configuration failures can never be fixed by the
+# Issue Fixer (no code change can refresh an invalidated access token). The
+# GitHub wrapper line is a poor signature, so the Watchdog scans the full run
+# log for these signals and routes matches to a single `manual-review` issue
+# instead of spamming fresh `auto-fix` issues on every 30-minute tick.
+CREDENTIAL_SIGNAL_PATTERNS = (
+    re.compile(r"code[=:\s]?190\b", re.IGNORECASE),
+    re.compile(r"subcode[=:\s]?460\b", re.IGNORECASE),
+    re.compile(r"error (code )?190\b", re.IGNORECASE),
+    re.compile(r"\(#190\)", re.IGNORECASE),
+    re.compile(r"session has been invalidated", re.IGNORECASE),
+    re.compile(r"user changed (their )?password", re.IGNORECASE),
+    re.compile(r"access token has expired", re.IGNORECASE),
+    re.compile(r"access token (is |was )?invalid", re.IGNORECASE),
+    re.compile(r"error validating access token", re.IGNORECASE),
+    re.compile(r"invalid(?:ated)? access token", re.IGNORECASE),
+    re.compile(r"oauthexception", re.IGNORECASE),
+    re.compile(r"(oauth|bearer) token (expired|invalid|revoked)", re.IGNORECASE),
+    re.compile(r"token (has |is )?(expired|invalid|revoked)", re.IGNORECASE),
+    re.compile(r"invalid.?grant", re.IGNORECASE),
+    re.compile(r"invalid credentials", re.IGNORECASE),
+    re.compile(r"authentication failed", re.IGNORECASE),
+    re.compile(r"re-?authenticate", re.IGNORECASE),
+    re.compile(r"log (back )?in to (facebook|instagram)", re.IGNORECASE),
+    re.compile(r"checkpoint", re.IGNORECASE),
+    re.compile(r"\b401 (unauthorized|invalid)\b", re.IGNORECASE),
+)
 MIN_HEADER_MATCHES = 3
 QUEUE_HEADERS = {
     "job_id", "sku", "account_id", "media_selection", "platform", "format",
@@ -105,6 +137,24 @@ def extract_error_signature(log_text):
         if "error" in low or "failed" in low:
             return re.sub(r"\s+", " ", line.strip())[:220]
     return "unknown failure (no error text in log tail)"
+
+
+def is_credential_failure(signature):
+    """True when the failure looks like a credential/permission problem that
+    code cannot fix, so the Watchdog must route it to manual review."""
+    return any(pattern.search(signature) for pattern in CREDENTIAL_SIGNAL_PATTERNS)
+
+
+def credential_line(log_text):
+    """Return a compact line from the log that carries a credential signal, so
+    manual-review issues are titled/described by the real root cause rather than
+    the generic GitHub wrapper line. Returns '' when no signal is found."""
+    if not log_text:
+        return ""
+    for line in log_text.splitlines():
+        if any(pattern.search(line) for pattern in CREDENTIAL_SIGNAL_PATTERNS):
+            return re.sub(r"\s+", " ", line.strip())[:220]
+    return ""
 
 
 def gviz_table(sheet_name):
@@ -199,12 +249,92 @@ def update_ledger(token, issue, handled_ids):
     })
 
 
-def find_auto_fix_issue(token, signature):
-    title = "[auto-fix] %s" % signature[:80]
+def find_issue_by_title(token, title):
     for issue in list_open_issues(token):
         if issue.get("title") == title:
             return issue
     return None
+
+
+def find_auto_fix_issue(token, signature):
+    title = "[auto-fix] %s" % signature[:80]
+    return find_issue_by_title(token, title)
+
+
+def find_manual_review_issue(token, key):
+    title = "[manual-review] %s" % key[:80]
+    return find_issue_by_title(token, title)
+
+
+def parse_run_ids(body):
+    return {line.strip() for line in (body or "").splitlines()
+            if line.strip().isdigit()}
+
+
+def manual_review_body(key, run_ids):
+    body = (
+        "The Watchdog detected repeated Auto Upload failures that look like a "
+        "credential, permission, or configuration problem rather than a code "
+        "bug. No code change can fix an invalidated access token or secret, so "
+        "this issue is routed for manual review and is NOT sent to the Issue "
+        "Fixer agent.\n"
+        "\n"
+        "To resolve: refresh the affected credential/secret (e.g. the Facebook "
+        "long-lived access token) and re-run Auto Upload Production. Once the "
+        "pipeline is green again, close this issue.\n"
+        "\n"
+        "Root cause signal:\n"
+        "```\n"
+        "%s\n"
+        "```\n"
+        "\n"
+        "Affected runs:\n"
+        "%s"
+    ) % (key, "\n".join(sorted(run_ids, key=int)))
+    return body
+
+
+def escalate_manual_review(token, key, failed_runs):
+    """Handle a credential-type failure: track it on one `manual-review` issue
+    (created on first sight, body updated in place afterwards) so the Issue
+    Fixer is never asked to auto-fix an un-fixable error and the issue tracker
+    is not spammed with a fresh issue per 30-minute tick."""
+    run_ids = {str(r["id"]) for r in failed_runs}
+    issue = find_manual_review_issue(token, key)
+    if issue:
+        existing = parse_run_ids(issue.get("body"))
+        added = sorted(run_ids - existing, key=int)
+        if added:
+            new_body = manual_review_body(key, existing | run_ids)
+            gh_api(token, "PATCH", "/issues/%s" % issue["number"],
+                   {"body": new_body})
+            return "updated manual-review issue #%s with run(s) %s" % (
+                issue["number"], ", ".join(added))
+        return "manual-review issue #%s already up to date" % issue["number"]
+
+    legacy = find_auto_fix_issue(token, key)
+    if legacy:
+        number = legacy["number"]
+        gh_api(token, "PATCH", "/issues/%s" % number, {
+            "title": "[manual-review] %s" % key[:80],
+            "body": manual_review_body(
+                key, parse_run_ids(legacy.get("body")) | run_ids),
+        })
+        gh_api(token, "DELETE", "/issues/%s/labels/%s" % (
+            number, urllib.parse.quote(AUTO_FIX_LABEL)))
+        gh_api(token, "POST", "/issues/%s/labels" % number,
+               {"labels": [MANUAL_REVIEW_LABEL]})
+        return "converted auto-fix issue #%s to manual review" % number
+
+    title = "[manual-review] %s" % key[:80]
+    status, data = gh_api(token, "POST", "/issues", {
+        "title": title,
+        "body": manual_review_body(key, run_ids),
+        "labels": [MANUAL_REVIEW_LABEL],
+    })
+    if status in (200, 201):
+        return "created manual-review issue #%s" % data["number"]
+    return "could not create issue (HTTP %s)" % status
 
 
 def escalate_failure(token, signature, failed_runs):
@@ -277,7 +407,6 @@ def main():
 
     if len(consec) >= CONSECUTIVE_FAILURE_THRESHOLD:
         newest = consec[0]
-        signature = extract_error_signature(get_run_log(token, newest["id"]))
         ledger = get_or_create_ledger(token)
         ledger_ids = set()
         if ledger:
@@ -287,8 +416,19 @@ def main():
                     ledger_ids.add(line)
         unseen = [r for r in consec if str(r["id"]) not in ledger_ids]
         if unseen:
-            result = escalate_failure(token, signature, consec)
-            lines.append("- Escalation: %s" % result)
+            log_text = get_run_log(token, newest["id"])
+            signature = extract_error_signature(log_text)
+            credential = is_credential_failure(log_text) or is_credential_failure(
+                signature)
+            if credential:
+                key = credential_line(log_text) or signature
+                result = escalate_manual_review(token, key, consec)
+                lines.append(
+                    "- Escalation (credential/permission, manual review): %s"
+                    % result)
+            else:
+                result = escalate_failure(token, signature, consec)
+                lines.append("- Escalation: %s" % result)
             lines.append("- Signature: `%s`" % signature)
             if ledger:
                 ledger_ids.update(str(r["id"]) for r in consec)
