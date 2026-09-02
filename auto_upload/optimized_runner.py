@@ -5,8 +5,10 @@ Fixes queue starvation, account starvation, stale Meta auth failures, duplicate
 publishing, and Instagram carousel ordering. Account selection rotates on every
 10-minute production slot so every enabled page receives publishing turns.
 
-Quota budget: production is tuned for up to 20 publish attempts/run. Maintenance
-writes remain capped so the higher Google Sheets quota has comfortable headroom.
+Quota budget: production is tuned for up to 50 publish attempts/run so every
+publish-ready Facebook, Instagram and YouTube account can receive a turn.
+LINE is excluded while its monthly Messaging API quota is exhausted.
+Maintenance writes remain capped so Google Sheets quota has comfortable headroom.
 """
 import hashlib
 import socket
@@ -19,9 +21,18 @@ from urllib.parse import urlparse
 
 import main
 from config import Config
+from delivery_policy import (
+    LINE_QUOTA_EXHAUSTED,
+    MINIMUM_POSTS_24H,
+    PRIMARY_PLATFORMS,
+    due_deficit_accounts,
+    minimum_delivery_priority,
+    parse_queue_time,
+    ready_platform_counts,
+    rolling_activity,
+    slot_eligible,
+)
 from job_generator import _is_clean_source
-
-PRIMARY_PLATFORMS = ("instagram", "facebook", "youtube")
 PREFLIGHT_SCAN_LIMIT = 1000
 PER_ACCOUNT_SCAN_LIMIT = 300
 HOUSEKEEPING_LIMIT = 8
@@ -32,10 +43,6 @@ _CURRENT_SHEETS = None
 _DNS_CACHE = {}
 _VIDEO_VALIDATION_CACHE = {}
 
-# Every enabled primary account receives this rolling delivery floor. Four-hour
-# spacing prevents all three posts being dumped together.
-MINIMUM_POSTS_24H = 5
-MINIMUM_GAP_HOURS = 4
 LOCAL_POSTING_SLOTS = ((8, 0), (11, 50), (15, 0), (18, 0), (21, 0))
 SLOT_WINDOW_MINUTES = 45
 
@@ -85,17 +92,11 @@ def _fingerprint_marker(job, source):
     return f"{FINGERPRINT_PREFIX}:{hashlib.sha256(raw).hexdigest()}"
 
 
-def _parse_queue_time(value):
-    raw = str(value or "").strip()
-    if not raw:
-        return None
-    try:
-        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed.astimezone(timezone.utc)
-    except ValueError:
-        return None
+_parse_queue_time = parse_queue_time
+_slot_eligible = slot_eligible
+_ready_platform_counts = ready_platform_counts
+_minimum_delivery_priority = minimum_delivery_priority
+_due_deficit_accounts = due_deficit_accounts
 
 
 def _queue_state(sheets, now=None, accounts=None):
@@ -103,57 +104,22 @@ def _queue_state(sheets, now=None, accounts=None):
     records = sheets.queue_ws.get_all_records(head=sheets.queue_header_row)
     reserved = set()
     now = now or datetime.now(timezone.utc)
-    cutoff = now - timedelta(hours=24)
-    protected = (
-        {
-            account_id for account_id, account in (accounts or {}).items()
-            if account.get("enabled") and account.get("platform") in PRIMARY_PLATFORMS
-        }
-        if accounts is not None else set()
-    )
-    activity = {
-        account_id: {"count": 0, "last": None, "success_times": []}
-        for account_id in protected
-    }
+    activity = rolling_activity(records, accounts or {}, now)
     pattern = f"{FINGERPRINT_PREFIX}:"
     for rec in records:
-        status = str(rec.get("status", "")).strip().lower()
+        status = str(rec.get("status", "") or "").strip().lower()
         if status in (Config.JOB_STATUS_UPLOADED, "hold"):
             notes = str(rec.get("notes", "") or "")
             for part in notes.split("|"):
                 part = part.strip()
                 if part.startswith(pattern):
                     reserved.add(part.split()[0])
-
-        account_id = str(rec.get("account_id", "") or "").strip()
-        if status != Config.JOB_STATUS_UPLOADED or account_id not in activity:
-            continue
-        uploaded_at = _parse_queue_time(rec.get("last_attempt_at"))
-        if not uploaded_at or uploaded_at < cutoff or uploaded_at > now:
-            continue
-        activity[account_id]["count"] += 1
-        activity[account_id]["success_times"].append(uploaded_at)
-        if activity[account_id]["last"] is None or uploaded_at > activity[account_id]["last"]:
-            activity[account_id]["last"] = uploaded_at
     return reserved, activity
 
 
 def _reserved_fingerprints(sheets):
     """Compatibility wrapper for callers needing duplicate locks only."""
     return _queue_state(sheets)[0]
-
-
-def _minimum_delivery_priority(account_id, activity, now=None):
-    """Prioritize lower delivery counts once the account's safety gap has elapsed."""
-    now = now or datetime.now(timezone.utc)
-    state = (activity or {}).get(account_id, {})
-    count = int(state.get("count", 0) or 0)
-    if count >= MINIMUM_POSTS_24H:
-        return (1, count)
-    last = state.get("last")
-    if last and now - last < timedelta(hours=MINIMUM_GAP_HOURS):
-        return (1, count)
-    return (0, count)
 
 
 def _local_slot_due(account_id, account, activity, now=None):
@@ -297,20 +263,68 @@ def _account_publish_ready(account):
     return True
 
 
-def _platform_limits(limit):
-    """Reserve most capacity for Meta while keeping YouTube continuously active."""
-    if limit <= 1:
-        return {"facebook": 1, "instagram": 0, "youtube": 0, "line": 0}
-    if limit <= 3:
-        return {"facebook": 1, "instagram": 1, "youtube": limit - 2, "line": 0}
-    if limit >= 20:
-        return {"facebook": 10, "instagram": 8, "youtube": 1, "line": 1}
-    line = 1 if limit >= 5 else 0
-    remaining = limit - line
-    fb = max(2, remaining // 2)
-    ig = max(1, remaining - fb - 1)
-    yt = max(0, remaining - fb - ig)
-    return {"facebook": fb, "instagram": ig, "youtube": yt, "line": line}
+def _platform_limits(limit, accounts=None):
+    """Give every publish-ready primary account a slot when capacity allows.
+
+    LINE is excluded while LINE_QUOTA_EXHAUSTED is set so Facebook, Instagram
+    and YouTube keep the full production budget.
+    """
+    line = 0
+    if not LINE_QUOTA_EXHAUSTED and limit >= 5:
+        line = 1
+    remaining = max(0, int(limit) - line)
+    if remaining <= 0:
+        return {"facebook": 0, "instagram": 0, "youtube": 0, "line": line}
+
+    ready = _ready_platform_counts(accounts) if accounts is not None else None
+    if ready is not None:
+        total_ready = sum(ready.values())
+        if total_ready <= 0:
+            return {"facebook": remaining, "instagram": 0, "youtube": 0, "line": line}
+        if total_ready <= remaining:
+            slots = dict(ready)
+            slots["line"] = line
+            return slots
+        slots = {"facebook": 0, "instagram": 0, "youtube": 0, "line": line}
+        assigned = 0
+        for platform in ("facebook", "instagram", "youtube"):
+            if ready[platform] <= 0:
+                continue
+            share = max(1, remaining * ready[platform] // total_ready)
+            slots[platform] = min(ready[platform], share)
+            assigned += slots[platform]
+        overflow = [p for p in ("facebook", "instagram", "youtube") if slots[p] < ready[p]]
+        while assigned > remaining:
+            reduced = False
+            for platform in ("facebook", "instagram", "youtube"):
+                if assigned <= remaining:
+                    break
+                if slots[platform] > 1:
+                    slots[platform] -= 1
+                    assigned -= 1
+                    reduced = True
+            if not reduced:
+                break
+        idx = 0
+        while assigned < remaining and overflow:
+            platform = overflow[idx % len(overflow)]
+            if slots[platform] < ready[platform]:
+                slots[platform] += 1
+                assigned += 1
+            idx += 1
+            if idx > remaining * 4:
+                break
+        return slots
+
+    if remaining <= 1:
+        return {"facebook": 1, "instagram": 0, "youtube": 0, "line": line}
+    if remaining <= 3:
+        return {"facebook": 1, "instagram": 1, "youtube": max(0, remaining - 2), "line": line}
+    youtube = 2 if remaining >= 50 else 1
+    meta = remaining - youtube
+    facebook = max(1, meta // 2)
+    instagram = meta - facebook
+    return {"facebook": facebook, "instagram": instagram, "youtube": youtube, "line": line}
 
 
 def _rotation_rank(account_id, platform, accounts, slots):
@@ -385,7 +399,7 @@ def _healthy_candidates(
     """
     selected = []
     housekeeping = 0
-    slots = _platform_limits(limit)
+    slots = _platform_limits(limit, accounts)
     seen_fingerprints = set()
     reserved_fingerprints = set(reserved_fingerprints or ())
 
@@ -409,6 +423,8 @@ def _healthy_candidates(
     )
 
     for platform in ("facebook", "instagram", "youtube", "line"):
+        if platform == "line" and LINE_QUOTA_EXHAUSTED:
+            continue
         wanted = slots.get(platform, 0)
         if wanted <= 0:
             continue
@@ -617,6 +633,12 @@ def process_optimized():
         main.logger.info(
             "DELIVERY_COVERAGE account=%s count_24h=%s target=%s",
             account_id, state.get("count", 0), MINIMUM_POSTS_24H,
+        )
+    due = _due_deficit_accounts(accounts, recent_upload_activity)
+    if due:
+        main.logger.info(
+            "DELIVERY_DEFICIT due=%s",
+            ", ".join("%s:%s" % (item["account_id"], item["deficit"]) for item in due),
         )
     selected = _healthy_candidates(
         jobs, accounts, sources, sheets, Config.MAX_JOBS_PER_RUN,

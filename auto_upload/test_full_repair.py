@@ -7,6 +7,42 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+
+def _install(name, attrs=None):
+    mod = types.ModuleType(name)
+    for k, v in (attrs or {}).items():
+        setattr(mod, k, v)
+    sys.modules[name] = mod
+    parent = sys.modules.get(".".join(name.split(".")[:-1]))
+    if parent is not None:
+        setattr(parent, name.split(".")[-1], mod)
+    return mod
+
+
+if "dotenv" not in sys.modules:
+    gspread = _install("gspread", {})
+    gspread.exceptions = types.SimpleNamespace(APIError=Exception)
+    _install("oauth2client")
+    _install("oauth2client.service_account", {"ServiceAccountCredentials": lambda *a, **k: None})
+    _install("dotenv", {"load_dotenv": lambda *a, **k: None})
+    _install("requests", {
+        "get": lambda *a, **k: None,
+        "post": lambda *a, **k: None,
+        "RequestException": Exception,
+        "Timeout": type("Timeout", (Exception,), {}),
+        "ConnectionError": type("ConnectionError", (Exception,), {}),
+    })
+    _install("google_auth_oauthlib")
+    _install("google_auth_oauthlib.flow", {"InstalledAppFlow": lambda *a, **k: None})
+    _install("google.auth")
+    _install("google.auth.transport")
+    _install("google.auth.transport.requests", {"Request": lambda *a, **k: None})
+    _install("google.oauth2")
+    _install("google.oauth2.credentials", {"Credentials": lambda *a, **k: None})
+    _install("googleapiclient")
+    _install("googleapiclient.discovery", {"build": lambda *a, **k: None})
+    _install("googleapiclient.http", {"MediaIoBaseUpload": lambda *a, **k: None})
+
 import optimized_runner
 
 

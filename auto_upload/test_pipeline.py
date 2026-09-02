@@ -595,7 +595,13 @@ def test_queue_state_counts_only_successes_in_rolling_24h():
     ]
     queue_ws = types.SimpleNamespace(get_all_records=lambda head: records)
     sheets = types.SimpleNamespace(queue_ws=queue_ws, queue_header_row=1)
-    accounts = {"IG-DUBAI": {"enabled": True, "platform": "instagram"}}
+    accounts = {
+        "IG-DUBAI": {
+            "enabled": True,
+            "platform": "instagram",
+            "platform_account_id": "17841438237093119",
+        }
+    }
     _, activity = optimized_runner._queue_state(sheets, now, accounts)
     assert activity["IG-DUBAI"]["count"] == 2, activity
     assert activity["IG-DUBAI"]["last"] == datetime(2026, 8, 30, 8, 0, tzinfo=timezone.utc)

@@ -4,26 +4,38 @@ Monitors recent Auto Upload workflow runs and the public Publishing Queue
 state, escalates persistent failures to a GitHub issue labeled `auto-fix`, and
 posts a short health report. Credential/permission failures (invalidated or
 expired tokens, etc.) are detected by signature and routed to a single
-`manual-review` issue instead, since no code change can fix them. Runs every 30
-minutes from GitHub Actions using only the public gviz endpoint and the
-Actions/Issues APIs.
+`manual-review` issue instead, since no code change can fix them. Every 30
+minutes it also calculates the rolling 24-hour delivery deficit for each
+publish-ready Facebook, Instagram and YouTube account and dispatches Auto
+Upload Production when a deficit account is due after the four-hour spacing
+period.
 
-No secrets are required: workflow-run data comes from the Actions API and
-queue state comes from the publicly readable Google Sheet via gviz.
+No extra secrets are required: workflow-run data comes from the Actions API and
+sheet state comes from the publicly readable Google Sheet via gviz.
 """
 import io
 import json
 import os
 import re
+import sys
 import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from delivery_policy import (  # noqa: E402
+    MINIMUM_POSTS_24H,
+    due_deficit_accounts,
+    rolling_activity,
+)
+
 WORKBOOK_ID = "1jjC4oaWsyqLzG6vT5EwJkVAgJCXGpz_7fWr6wb7OU3o"
 GVIZ_URL = "https://docs.google.com/spreadsheets/d/%s/gviz/tq" % WORKBOOK_ID
 QUEUE_SHEET = "Publishing Queue"
+ACCOUNTS_SHEET = "Accounts"
 WORKFLOW_FILE = ".github/workflows/auto-upload-production.yml"
+IN_FLIGHT_STATUSES = {"queued", "in_progress", "waiting", "pending", "requested"}
 LEDGER_TITLE = "Watchdog Ledger"
 AUTO_FIX_LABEL = "auto-fix"
 MANUAL_REVIEW_LABEL = "manual-review"
@@ -65,6 +77,10 @@ QUEUE_HEADERS = {
     "caption_final",
 }
 STATUS_HEADER = "status"
+ACCOUNT_HEADERS = {
+    "account_id", "platform", "account_name", "platform_account_id",
+    "enabled", "timezone", "credential_property_key",
+}
 WORKFLOW_NAME = "Auto Upload Production"
 
 API_ROOT = "https://api.github.com/repos"
@@ -170,37 +186,131 @@ def gviz_table(sheet_name):
     return json.loads(text[start:end + 1]).get("table", {})
 
 
-def queue_status_counts():
-    try:
-        table = gviz_table(QUEUE_SHEET)
-    except Exception as exc:
-        return {"error": "gviz fetch failed: %s" % exc}
+def _cell_value(cell):
+    if not isinstance(cell, dict):
+        return cell
+    value = cell.get("v")
+    if value not in (None, ""):
+        return value
+    return cell.get("f")
+
+
+def gviz_matrix(sheet_name):
+    table = gviz_table(sheet_name)
     cols = [str(c.get("label", "") or "") for c in table.get("cols", [])]
     matrix = [cols]
     for row in table.get("rows", []):
-        cells = row.get("c")
-        if not cells:
-            continue
-        matrix.append([
-            cell.get("v") if isinstance(cell, dict) else None
-            for cell in cells
-        ])
-    header_idx = None
+        cells = row.get("c") or []
+        matrix.append([_cell_value(cell) for cell in cells])
+    return matrix
+
+
+def _header_index(matrix, required, min_matches=MIN_HEADER_MATCHES):
     for idx, row in enumerate(matrix[:6]):
         norm = {str(v).strip().lower() for v in row if str(v)}
-        if len(norm & QUEUE_HEADERS) >= MIN_HEADER_MATCHES:
-            header_idx = idx
-            break
+        if len(norm & required) >= min_matches:
+            return idx
+    return None
+
+
+def records_from_matrix(matrix, required, min_matches=MIN_HEADER_MATCHES):
+    header_idx = _header_index(matrix, required, min_matches)
     if header_idx is None:
-        return {"error": "could not locate Publishing Queue header row"}
+        return None, "could not locate header row"
     headers = [str(h or "").strip().lower() for h in matrix[header_idx]]
-    if STATUS_HEADER not in headers:
-        return {"error": "status column not found in Publishing Queue"}
-    sidx = headers.index(STATUS_HEADER)
-    counts = {}
+    records = []
     for row in matrix[header_idx + 1:]:
-        if sidx < len(row) and row[sidx]:
-            value = str(row[sidx])
+        rec = {}
+        for idx, header in enumerate(headers):
+            if not header:
+                continue
+            rec[header] = row[idx] if idx < len(row) else None
+        if any(str(v or "").strip() for v in rec.values()):
+            records.append(rec)
+    return records, None
+
+
+def load_accounts():
+    try:
+        matrix = gviz_matrix(ACCOUNTS_SHEET)
+    except Exception as exc:
+        return [], "gviz fetch failed: %s" % exc
+    records, error = records_from_matrix(matrix, ACCOUNT_HEADERS)
+    if error:
+        return [], error
+    accounts = []
+    for rec in records:
+        account_id = str(rec.get("account_id", "") or "").strip()
+        if not account_id:
+            continue
+        enabled = str(rec.get("enabled", "") or "").strip().lower() in (
+            "yes", "true", "1", "y",
+        )
+        accounts.append({
+            "account_id": account_id,
+            "platform": str(rec.get("platform", "") or "").strip().lower(),
+            "account_name": str(rec.get("account_name", "") or "").strip(),
+            "platform_account_id": str(rec.get("platform_account_id", "") or "").strip(),
+            "timezone": str(rec.get("timezone", "") or "").strip(),
+            "enabled": enabled,
+        })
+    return accounts, None
+
+
+def load_queue_rows():
+    try:
+        matrix = gviz_matrix(QUEUE_SHEET)
+    except Exception as exc:
+        return [], "gviz fetch failed: %s" % exc
+    records, error = records_from_matrix(matrix, QUEUE_HEADERS)
+    if error:
+        return [], error
+    return records, None
+
+
+def delivery_deficits(accounts, queue_rows, now=None):
+    activity = rolling_activity(queue_rows, accounts, now)
+    due = due_deficit_accounts(accounts, activity, now)
+    return activity, due
+
+
+def production_in_flight(runs):
+    for run in runs or []:
+        if str(run.get("status", "") or "").strip().lower() in IN_FLIGHT_STATUSES:
+            return True
+    return False
+
+
+def should_dispatch_production(due, runs):
+    return bool(due) and not production_in_flight(runs)
+
+
+def dispatch_production(token, ref=None):
+    ref = ref or os.environ.get("GITHUB_REF_NAME") or "master"
+    encoded = urllib.parse.quote(WORKFLOW_FILE, safe="")
+    status, _data = gh_api(
+        token,
+        "POST",
+        "/actions/workflows/%s/dispatches" % encoded,
+        {"ref": ref},
+    )
+    if status in (200, 204):
+        return "dispatched Auto Upload Production"
+    return "could not dispatch Auto Upload Production (HTTP %s)" % status
+
+
+def queue_status_counts(queue_rows=None, error=None):
+    if error:
+        return {"error": error}
+    if queue_rows is None:
+        queue_rows, error = load_queue_rows()
+        if error:
+            return {"error": error}
+    counts = {}
+    for rec in queue_rows or []:
+        value = rec.get(STATUS_HEADER)
+        if value:
+            value = str(value)
             counts[value] = counts.get(value, 0) + 1
     return counts
 
@@ -443,7 +553,9 @@ def main():
     else:
         lines.append("- No recent failures; pipeline healthy.")
 
-    counts = queue_status_counts()
+    accounts, accounts_error = load_accounts()
+    queue_rows, queue_error = load_queue_rows()
+    counts = queue_status_counts(queue_rows, queue_error)
     lines.append("")
     lines.append("### Publishing Queue status counts")
     if "error" in counts:
@@ -453,6 +565,50 @@ def main():
     else:
         for status_name in sorted(counts):
             lines.append("- %s: %d" % (status_name, counts[status_name]))
+
+    lines.append("")
+    lines.append("### 24h delivery floor (%s posts / %sh gap)" % (
+        MINIMUM_POSTS_24H, 4,
+    ))
+    if accounts_error:
+        lines.append("- Accounts: %s" % accounts_error)
+    elif queue_error:
+        lines.append("- Queue: %s" % queue_error)
+    else:
+        activity, due = delivery_deficits(accounts, queue_rows)
+        below = [
+            (account_id, state)
+            for account_id, state in sorted(activity.items())
+            if int(state.get("count", 0) or 0) < MINIMUM_POSTS_24H
+        ]
+        if not activity:
+            lines.append("- No publish-ready Facebook/Instagram/YouTube accounts.")
+        elif not below:
+            lines.append("- All publish-ready accounts meet the 24h floor.")
+        else:
+            for account_id, state in below:
+                lines.append(
+                    "- %s: %s/%s (deficit %s)" % (
+                        account_id,
+                        int(state.get("count", 0) or 0),
+                        MINIMUM_POSTS_24H,
+                        MINIMUM_POSTS_24H - int(state.get("count", 0) or 0),
+                    )
+                )
+        if due:
+            due_ids = ", ".join(
+                "%s:%s" % (item["account_id"], item["deficit"]) for item in due
+            )
+            lines.append("- Due after 4h spacing: %s" % due_ids)
+            if should_dispatch_production(due, runs):
+                result = dispatch_production(token)
+                lines.append("- Catch-up dispatch: %s" % result)
+            elif production_in_flight(runs):
+                lines.append("- Catch-up dispatch: skipped (production already in flight)")
+            else:
+                lines.append("- Catch-up dispatch: skipped")
+        else:
+            lines.append("- Catch-up dispatch: not needed")
 
     report = "\n".join(lines)
     print(report)

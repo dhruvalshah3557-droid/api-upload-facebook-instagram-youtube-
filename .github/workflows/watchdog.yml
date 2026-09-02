@@ -1,8 +1,11 @@
 name: Watchdog
 
 # Self-healing agent: monitors Auto Upload runs and the publishing queue,
-# escalates persistent failures to `auto-fix` issues for the Issue Fixer agent.
-# Runs 24/7 on a 30-minute schedule; no secrets required.
+# escalates persistent failures to `auto-fix` issues for the Issue Fixer agent,
+# and dispatches Auto Upload Production when a publish-ready Facebook,
+# Instagram or YouTube account is below five successful posts in 24 hours
+# and the four-hour spacing period has elapsed. Runs 24/7 on a 30-minute
+# schedule.
 
 on:
   workflow_run:
@@ -14,7 +17,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  actions: read
+  actions: write
   contents: read
   issues: write
 

@@ -126,16 +126,16 @@ class EnableLineHelperTests(unittest.TestCase):
 
 
 class LineProductionSlotTests(unittest.TestCase):
-    def test_platform_limits_reserve_line_at_production_cap(self):
-        slots = optimized_runner._platform_limits(20)
-        self.assertEqual(slots["line"], 1)
-        self.assertEqual(sum(slots.values()), 20)
+    def test_platform_limits_exclude_line_while_quota_exhausted(self):
+        slots = optimized_runner._platform_limits(50)
+        self.assertEqual(slots["line"], 0)
+        self.assertEqual(sum(slots.values()), 50)
 
     def test_platform_limits_skip_line_when_budget_is_tiny(self):
         slots = optimized_runner._platform_limits(1)
         self.assertEqual(slots["line"], 0)
 
-    def test_healthy_candidates_can_select_line(self):
+    def test_healthy_candidates_skip_line_while_quota_exhausted(self):
         job = {
             "job_id": "100-LINE-CD-carousel",
             "account_id": "LINE-CD",
@@ -156,9 +156,9 @@ class LineProductionSlotTests(unittest.TestCase):
              patch("optimized_runner._local_slot_due", return_value=True), \
              patch("optimized_runner._video_validation_reason", return_value=""):
             selected = optimized_runner._healthy_candidates(
-                [job], accounts, sources, sheets, limit=20,
+                [job], accounts, sources, sheets, limit=50,
             )
-        self.assertEqual([j["job_id"] for j in selected], ["100-LINE-CD-carousel"])
+        self.assertEqual(selected, [])
 
 
 if __name__ == "__main__":
