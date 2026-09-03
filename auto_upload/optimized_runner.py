@@ -411,9 +411,12 @@ def _healthy_candidates(
         jobs_by_account.setdefault(account_id, []).append(job)
 
     for account_jobs in jobs_by_account.values():
+        # Prefer fresh zero-attempt work. An account with a large historical
+        # backlog (notably YouTube) must not spend its bounded scan entirely on
+        # stale duplicate or invalid rows while current healthy media waits.
         account_jobs.sort(key=lambda j: (
             int(j.get("attempts", 0) or 0),
-            int(j.get("row", 0) or 0),
+            -int(j.get("row", 0) or 0),
         ))
 
     main.logger.info(
