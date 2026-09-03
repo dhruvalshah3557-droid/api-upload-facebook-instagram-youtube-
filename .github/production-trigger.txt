@@ -10,3 +10,4 @@ Activate rolling 24-hour three-post delivery floor for Spain, Italy, Vietnam, Pa
 2026-09-01T14:22:00Z - supersede pre-fix production run with strict matcher head
 2026-09-01T14:36:00Z - verify healthy LINE SKU 461 delivery after media repair
 2026-09-02T00:00:00Z - import newly added Source Import rows and generate missing jobs
+2026-09-03T09:00:00Z - deploy YouTube backlog starvation fix and run production
