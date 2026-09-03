@@ -224,5 +224,43 @@ class DeliveryPolicyTests(unittest.TestCase):
         self.assertNotIn("LINE-CD", [job["account_id"] for job in selected])
 
 
+    def test_healthy_candidates_do_not_starve_new_youtube_jobs(self):
+        account_id = "YT-CD"
+        accounts = {account_id: _primary(account_id, "youtube")}
+        jobs = []
+        sources = {}
+        for row in range(1, optimized_runner.PER_ACCOUNT_SCAN_LIMIT + 2):
+            sku = "good" if row == optimized_runner.PER_ACCOUNT_SCAN_LIMIT + 1 else "bad-%s" % row
+            sources[sku] = {"sku": sku}
+            jobs.append({
+                "job_id": "%s-%s-product_video" % (sku, account_id),
+                "account_id": account_id,
+                "platform": "youtube",
+                "sku": sku,
+                "row": row,
+                "attempts": 0,
+                "notes": "",
+            })
+
+        sheets = type("Sheets", (), {"update_job": staticmethod(lambda *a, **k: None)})()
+        activity = {account_id: {"count": 0, "last": None, "success_times": []}}
+
+        def clean_source(source):
+            return (source["sku"] == "good", "invalid test source")
+
+        with patch("optimized_runner._is_clean_source", side_effect=clean_source), \
+             patch("optimized_runner.resolve_media_fixed", return_value=["https://example.com/a.mp4"]), \
+             patch("optimized_runner._dns_resolves", return_value=True), \
+             patch("optimized_runner.main._classify_media_url", return_value="valid"), \
+             patch("optimized_runner._local_slot_due", return_value=False), \
+             patch("optimized_runner._video_validation_reason", return_value=""):
+            selected = optimized_runner._healthy_candidates(
+                jobs, accounts, sources, sheets, limit=50,
+                recent_upload_activity=activity,
+            )
+
+        self.assertEqual([job["sku"] for job in selected], ["good"])
+
+
 if __name__ == "__main__":
     unittest.main()
