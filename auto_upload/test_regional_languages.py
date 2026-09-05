@@ -59,6 +59,24 @@ class RegionalLanguageTests(unittest.TestCase):
         caption = main.build_caption({"platform": "instagram"}, source, account)
         self.assertEqual(caption, "English Instagram caption\n\n#diamond")
 
+    def test_vietnam_source_import_headers_are_supported(self):
+        row = {
+            "vietnam description": "Mô tả tiếng Việt",
+            "vietnam hashtag": "#KimCuong",
+        }
+        caption = SheetsReader._pick(
+            row,
+            SheetsReader.LANG_CAPTION_COLS["vi"],
+            *SheetsReader.LANG_CAPTION_ALIASES["vi"],
+        )
+        hashtag = SheetsReader._pick(
+            row,
+            SheetsReader.LANG_TAG_COLS["vi"],
+            *SheetsReader.LANG_TAG_ALIASES["vi"],
+        )
+        self.assertEqual(caption, "Mô tả tiếng Việt")
+        self.assertEqual(hashtag, "#KimCuong")
+
 
 if __name__ == "__main__":
     unittest.main()
