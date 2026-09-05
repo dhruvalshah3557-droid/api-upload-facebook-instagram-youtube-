@@ -116,6 +116,14 @@ class SheetsReader:
         "da": "danish hashtag", "pl": "polish hahstag",
         "tr": "turkish hashtag", "sv": "sweden hashtag",
     }
+    # Keep legacy/configured names above, while accepting the headers currently
+    # used by Source Import. Header matching is exact after normalization.
+    LANG_CAPTION_ALIASES = {
+        "vi": ("vietnam description",),
+    }
+    LANG_TAG_ALIASES = {
+        "vi": ("vietnam hashtag",),
+    }
 
     QUEUE_COLS = [
         "job_id", "sku", "account_id", "media_selection", "platform", "format",
@@ -357,8 +365,14 @@ class SheetsReader:
                 "CERTIFICATE IMAGE LINK", "Certificate Image Link", "certificate image link",
                 "CERTIFICATE MEDIA LINK", "Certificate Media Link", "certificate media link",
             )
-            lang_captions = {code: self._pick(rec, col) for code, col in self.LANG_CAPTION_COLS.items()}
-            lang_hashtags = {code: self._pick(rec, col) for code, col in self.LANG_TAG_COLS.items()}
+            lang_captions = {
+                code: self._pick(rec, col, *self.LANG_CAPTION_ALIASES.get(code, ()))
+                for code, col in self.LANG_CAPTION_COLS.items()
+            }
+            lang_hashtags = {
+                code: self._pick(rec, col, *self.LANG_TAG_ALIASES.get(code, ()))
+                for code, col in self.LANG_TAG_COLS.items()
+            }
             integrity_errors = []
             sku_token = sku.lower()
             if main_image and sku_token not in main_image.lower():
