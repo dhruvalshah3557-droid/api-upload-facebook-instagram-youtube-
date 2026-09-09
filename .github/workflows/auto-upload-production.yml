@@ -96,6 +96,8 @@ jobs:
           IG_AUDIO_SEARCH_QUERIES: ${{ vars.IG_AUDIO_SEARCH_QUERIES }}
           IG_AUDIO_VOLUME: "80"
           IG_VIDEO_VOLUME: "60"
+          IG_RATE_LIMIT_COOLDOWN_SECONDS: "900"
+          IG_CAROUSEL_ITEM_DELAY_SECONDS: "8"
           FB_ACCESS_TOKEN: ${{ secrets.FACEBOOKTOKEN }}
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
@@ -117,8 +119,12 @@ jobs:
           # but every selected job failed. This makes upload outages visible.
           if grep -Eq "Processing [1-9][0-9]* pending job\(s\)" /tmp/auto_upload.log; then
             if ! grep -Eq "uploaded ->" /tmp/auto_upload.log; then
-              echo "ERROR: Upload jobs were processed, but none published successfully."
-              exit 1
+              if grep -Eq "META_RATE_LIMIT|Instagram rate limited; keeping pending" /tmp/auto_upload.log; then
+                echo "WARNING: Instagram jobs were safely deferred by the Meta cooldown."
+              else
+                echo "ERROR: Upload jobs were processed, but none published successfully."
+                exit 1
+              fi
             fi
           fi
 
