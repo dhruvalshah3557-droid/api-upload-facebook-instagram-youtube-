@@ -9,8 +9,8 @@ from datetime import datetime, timedelta, timezone
 import re
 
 PRIMARY_PLATFORMS = ("instagram", "facebook", "youtube")
-MINIMUM_POSTS_24H = 5
-MINIMUM_GAP_HOURS = 4
+MINIMUM_POSTS_24H = 7
+MINIMUM_GAP_HOURS = 3
 LINE_QUOTA_EXHAUSTED = True
 _GVIZ_DATE_RE = re.compile(
     r"Date\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)"
@@ -123,7 +123,7 @@ def minimum_delivery_priority(account_id, activity, now=None):
 
 
 def due_deficit_accounts(accounts, activity, now=None):
-    """Publish-ready primary accounts below the 24h floor whose 4h gap has elapsed."""
+    """Publish-ready primary accounts below the 24h floor whose gap has elapsed."""
     now = now or datetime.now(timezone.utc)
     due = []
     for account_id, account in _accounts_items(accounts):
