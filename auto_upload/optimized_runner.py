@@ -11,6 +11,7 @@ LINE is excluded while its monthly Messaging API quota is exhausted.
 Maintenance writes remain capped so Google Sheets quota has comfortable headroom.
 """
 import hashlib
+import os
 import socket
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -45,6 +46,26 @@ _VIDEO_VALIDATION_CACHE = {}
 
 LOCAL_POSTING_SLOTS = ((2, 0), (5, 0), (8, 0), (11, 0), (14, 0), (17, 0), (20, 0))
 SLOT_WINDOW_MINUTES = 45
+
+INSTAGRAM_RATE_LIMIT_MARKER = "meta_rate_limit"
+
+
+def _instagram_rate_limit_active(jobs, now=None):
+    """Persist Meta app cooldown across separate GitHub Actions processes."""
+    now = now or datetime.now(timezone.utc)
+    cooldown = max(60, int(os.getenv("IG_RATE_LIMIT_COOLDOWN_SECONDS", "900")))
+    cutoff = now - timedelta(seconds=cooldown)
+    for job in jobs:
+        if str(job.get("platform", "") or "").lower() != "instagram":
+            continue
+        error = str(job.get("error_message", "") or "").lower()
+        if INSTAGRAM_RATE_LIMIT_MARKER not in error:
+            continue
+        attempted_at = _parse_queue_time(job.get("last_attempt_at"))
+        if attempted_at and attempted_at >= cutoff:
+            return True, int((attempted_at + timedelta(seconds=cooldown) - now).total_seconds())
+    return False, 0
+
 
 _META_RETRY_MARKERS = (
     "unpublished posts must be posted to a page as the page itself",
@@ -399,6 +420,7 @@ def _healthy_candidates(
     """
     selected = []
     housekeeping = 0
+    instagram_cooldown, instagram_wait = _instagram_rate_limit_active(jobs)
     slots = _platform_limits(limit, accounts)
     seen_fingerprints = set()
     reserved_fingerprints = set(reserved_fingerprints or ())
@@ -426,6 +448,12 @@ def _healthy_candidates(
     )
 
     for platform in ("facebook", "instagram", "youtube", "line"):
+        if platform == "instagram" and instagram_cooldown:
+            main.logger.warning(
+                "Instagram selection deferred for %ss: Meta application cooldown active",
+                max(1, instagram_wait),
+            )
+            continue
         if platform == "line" and LINE_QUOTA_EXHAUSTED:
             continue
         wanted = slots.get(platform, 0)
