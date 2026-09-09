@@ -32,7 +32,7 @@ class WatchdogDeliveryTests(unittest.TestCase):
         self.assertEqual(records[0]["account_id"], "FB-CD")
         self.assertEqual(records[1]["enabled"], "No")
 
-    def test_delivery_deficits_mark_due_accounts_after_four_hours(self):
+    def test_delivery_deficits_mark_due_accounts_after_three_hours(self):
         now = datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc)
         accounts = [
             _account("IG-SPAIN", "instagram"),
@@ -59,6 +59,16 @@ class WatchdogDeliveryTests(unittest.TestCase):
             {
                 "account_id": "YT-CD",
                 "status": "uploaded",
+                "last_attempt_at": "2026-08-30 10:00:00",
+            },
+            {
+                "account_id": "YT-CD",
+                "status": "uploaded",
+                "last_attempt_at": "2026-08-30 09:00:00",
+            },
+            {
+                "account_id": "YT-CD",
+                "status": "uploaded",
                 "last_attempt_at": "2026-08-30 03:00:00",
             },
             {
@@ -80,10 +90,10 @@ class WatchdogDeliveryTests(unittest.TestCase):
         activity, due = watchdog.delivery_deficits(accounts, queue_rows, now)
         self.assertEqual(activity["IG-SPAIN"]["count"], 1)
         self.assertEqual(activity["IG-ITALY"]["count"], 1)
-        self.assertEqual(activity["YT-CD"]["count"], 5)
+        self.assertEqual(activity["YT-CD"]["count"], 7)
         self.assertNotIn("IG-SWEDEN", activity)
         self.assertEqual([item["account_id"] for item in due], ["IG-SPAIN"])
-        self.assertEqual(due[0]["deficit"], 4)
+        self.assertEqual(due[0]["deficit"], 6)
 
     def test_should_dispatch_when_due_and_not_in_flight(self):
         due = [{"account_id": "IG-SPAIN", "deficit": 4}]
