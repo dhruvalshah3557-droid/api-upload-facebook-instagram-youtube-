@@ -12,7 +12,11 @@ sys.path.insert(0, str(Path(__file__).parent))
 from caption_generator import generate_caption, generate_hashtags
 from config import Config
 from facebook_uploader import FacebookUploader
-from instagram_uploader import IGAccountNotLinkedError, InstagramUploader
+from instagram_uploader import (
+    IGAccountNotLinkedError,
+    InstagramRateLimitError,
+    InstagramUploader,
+)
 from job_generator import generate_jobs
 from line_uploader import LineUploader
 from linkedin_uploader import LinkedInUploader
@@ -703,6 +707,20 @@ def process_pending(sheets=None):
                 log_buffer.append(sheets.log_entry(job, "uncertain", message))
                 logger.error(
                     f"Job {job_id}: delivery uncertain; held to prevent duplicate: {message}"
+                )
+            except InstagramRateLimitError as e:
+                message = str(e)
+                sheets.update_job(job, {
+                    "status": "pending",
+                    "attempts": int(job.get("attempts", 0) or 0),
+                    "last_attempt_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "error_message": message[:2000],
+                    "notes": "Meta application limit; cooldown active, retry preserved",
+                })
+                log_buffer.append(sheets.log_entry(job, "deferred", message, "4/2207051"))
+                logger.warning(
+                    f"Job {job_id}: Instagram rate limited; keeping pending "
+                    f"(no attempt consumed): {message}"
                 )
             except IGAccountNotLinkedError as e:
                 sheets.update_job(job, {
