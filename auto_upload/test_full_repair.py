@@ -4,6 +4,7 @@ import sys
 import types
 import unittest
 from unittest.mock import patch
+from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -161,6 +162,26 @@ class FullRepairTests(unittest.TestCase):
             [job["account_id"] for job in selected],
             ["IG-VALID"],
         )
+
+
+    def test_deep_backlog_scan_keeps_fresh_jobs_and_reaches_oldest(self):
+        jobs = [{"job_id": str(i)} for i in range(1000)]
+        sampled = optimized_runner._account_scan_jobs(jobs, limit=300)
+        self.assertEqual(len(sampled), 300)
+        self.assertEqual([j["job_id"] for j in sampled[:100]], [str(i) for i in range(100)])
+        self.assertEqual(sampled[-1]["job_id"], "999")
+        self.assertGreater(len({j["job_id"] for j in sampled}), 290)
+
+    def test_recent_instagram_rate_limit_pauses_instagram_only(self):
+        now = datetime(2026, 9, 9, 12, 0, tzinfo=timezone.utc)
+        jobs = [{
+            "platform": "instagram",
+            "error_message": "META_RATE_LIMIT code=4 subcode=2207051",
+            "last_attempt_at": "2026-09-09T11:55:00",
+        }]
+        active, wait = optimized_runner._instagram_rate_limit_active(jobs, now)
+        self.assertTrue(active)
+        self.assertGreater(wait, 0)
 
 
 if __name__ == "__main__":
