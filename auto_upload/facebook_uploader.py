@@ -76,8 +76,8 @@ class FacebookUploader:
             f"[{self.page_name}] Posting Facebook video/Reel in normalized 9:16 format"
             + (" with product tag" if product_id else "")
         )
-        # All Facebook video uploads are normalized to a 1080x1920 vertical canvas.
-        # media_prep preserves the full source frame (no destructive crop) and also
+        # All Facebook video uploads are normalized to a full-screen 1080x1920
+        # vertical canvas with a centred crop (no blur or black borders), and also
         # guarantees silent/muted videos receive licensed/trending audio when
         # configured, otherwise an original instrumental fallback.
         prepared = prepare_video(
