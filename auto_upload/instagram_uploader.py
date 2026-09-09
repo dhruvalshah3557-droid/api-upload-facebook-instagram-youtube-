@@ -50,9 +50,29 @@ class IGAccountNotLinkedError(Exception):
     """Configured Facebook page is not linked to an Instagram Business account."""
 
 
+class InstagramRateLimitError(Exception):
+    """Meta temporarily blocked Instagram publishing because app capacity was exceeded."""
+
+
 class InstagramUploader:
     _IG_ID_CACHE = {}
     _LAST_AUDIO_BY_ACCOUNT = {}
+    _RATE_LIMIT_UNTIL = 0.0
+
+    @classmethod
+    def _ensure_not_rate_limited(cls):
+        remaining = int(cls._RATE_LIMIT_UNTIL - time.monotonic())
+        if remaining > 0:
+            raise InstagramRateLimitError(
+                f"META_RATE_LIMIT active; retry after {remaining}s "
+                "(code=4 subcode=2207051)"
+            )
+
+    @classmethod
+    def _record_rate_limit(cls):
+        cooldown = max(60, int(os.getenv("IG_RATE_LIMIT_COOLDOWN_SECONDS", "900")))
+        cls._RATE_LIMIT_UNTIL = max(cls._RATE_LIMIT_UNTIL, time.monotonic() + cooldown)
+        return cooldown
 
     @staticmethod
     def _identity_key(value):
@@ -301,9 +321,16 @@ class InstagramUploader:
         url = f"{FB_GRAPH_URL}/{self.ig_user_id}/media"
         kind = "reel" if is_video and not carousel_item else "video" if is_video else "image"
         logger.info(f"[{self.page_name}] Creating IG {kind} container")
+        self._ensure_not_rate_limited()
         resp = requests.post(url, data=params, timeout=60)
         result = self._json_or_error(resp)
         if "id" not in result:
+            error = result.get("error", {})
+            if error.get("code") == 4 or error.get("error_subcode") == 2207051:
+                cooldown = self._record_rate_limit()
+                raise InstagramRateLimitError(
+                    f"META_RATE_LIMIT code=4 subcode=2207051; retry after {cooldown}s"
+                )
             logger.error(f"[{self.page_name}] Container failed: {result}")
             raise Exception(result.get("error", {}).get("message", str(result)))
         logger.info(f"[{self.page_name}] Container created: {result['id']}")
@@ -322,9 +349,16 @@ class InstagramUploader:
             params["product_tags"] = f"[{{\"product_id\":\"{product_id}\"}}]"
         url = f"{FB_GRAPH_URL}/{self.ig_user_id}/media"
         logger.info(f"[{self.page_name}] Creating IG carousel container")
+        self._ensure_not_rate_limited()
         resp = requests.post(url, data=params, timeout=60)
         result = self._json_or_error(resp)
         if "id" not in result:
+            error = result.get("error", {})
+            if error.get("code") == 4 or error.get("error_subcode") == 2207051:
+                cooldown = self._record_rate_limit()
+                raise InstagramRateLimitError(
+                    f"META_RATE_LIMIT code=4 subcode=2207051; retry after {cooldown}s"
+                )
             logger.error(f"[{self.page_name}] Carousel container failed: {result}")
             raise Exception(result.get("error", {}).get("message", str(result)))
         logger.info(f"[{self.page_name}] Carousel container created: {result['id']}")
@@ -339,13 +373,26 @@ class InstagramUploader:
                 f"[{self.page_name}] Publishing container {container_id} "
                 f"(attempt {attempt + 1}/{retries + 1})"
             )
+            self._ensure_not_rate_limited()
             resp = requests.post(url, data=params, timeout=60)
             result = self._json_or_error(resp)
             if "id" in result:
                 logger.info(f"[{self.page_name}] IG post published: {result['id']}")
                 return result
-            message = result.get("error", {}).get("message", str(result))
-            code = result.get("error", {}).get("code")
+            error = result.get("error", {})
+            message = error.get("message", str(result))
+            code = error.get("code")
+            subcode = error.get("error_subcode")
+            if code == 4 or subcode == 2207051:
+                cooldown = self._record_rate_limit()
+                logger.warning(
+                    f"[{self.page_name}] Meta application limit reached; "
+                    f"pausing Instagram for {cooldown}s"
+                )
+                raise InstagramRateLimitError(
+                    f"META_RATE_LIMIT code={code} subcode={subcode}; "
+                    f"retry after {cooldown}s: {message}"
+                )
             lowered = message.lower()
             transient = (
                 code in (9007,)
@@ -380,7 +427,9 @@ class InstagramUploader:
                 carousel_item=True,
             )
             child_ids.append(child_id)
-            time.sleep(5)
+            # Carousel creation is API-expensive (one request per child). Space
+            # requests to avoid bursting Meta application limits.
+            time.sleep(max(5, int(os.getenv("IG_CAROUSEL_ITEM_DELAY_SECONDS", "8"))))
 
         container_id = self._create_carousel_container(child_ids, caption, product_id)
         time.sleep(15)
