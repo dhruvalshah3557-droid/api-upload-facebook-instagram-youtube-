@@ -7,7 +7,7 @@ expired tokens, etc.) are detected by signature and routed to a single
 `manual-review` issue instead, since no code change can fix them. Every 30
 minutes it also calculates the rolling 24-hour delivery deficit for each
 publish-ready Facebook, Instagram and YouTube account and dispatches Auto
-Upload Production when a deficit account is due after the four-hour spacing
+Upload Production when a deficit account is due after the three-hour spacing
 period.
 
 No extra secrets are required: workflow-run data comes from the Actions API and
@@ -25,6 +25,7 @@ import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from delivery_policy import (  # noqa: E402
+    MINIMUM_GAP_HOURS,
     MINIMUM_POSTS_24H,
     due_deficit_accounts,
     rolling_activity,
@@ -568,7 +569,7 @@ def main():
 
     lines.append("")
     lines.append("### 24h delivery floor (%s posts / %sh gap)" % (
-        MINIMUM_POSTS_24H, 4,
+        MINIMUM_POSTS_24H, MINIMUM_GAP_HOURS,
     ))
     if accounts_error:
         lines.append("- Accounts: %s" % accounts_error)
@@ -599,7 +600,7 @@ def main():
             due_ids = ", ".join(
                 "%s:%s" % (item["account_id"], item["deficit"]) for item in due
             )
-            lines.append("- Due after 4h spacing: %s" % due_ids)
+            lines.append("- Due after %sh spacing: %s" % (MINIMUM_GAP_HOURS, due_ids))
             if should_dispatch_production(due, runs):
                 result = dispatch_production(token)
                 lines.append("- Catch-up dispatch: %s" % result)
