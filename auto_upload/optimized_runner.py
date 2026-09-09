@@ -405,6 +405,29 @@ def _revive_stale_meta_failures(sheets, accounts):
     return revived
 
 
+
+def _account_scan_jobs(account_jobs, limit=PER_ACCOUNT_SCAN_LIMIT):
+    """Return a bounded scan that covers both fresh and deep backlog jobs."""
+    jobs = list(account_jobs or ())
+    limit = max(1, int(limit))
+    if len(jobs) <= limit:
+        return jobs
+
+    fresh_count = min(len(jobs), max(1, limit // 3))
+    selected = list(jobs[:fresh_count])
+    remaining = limit - len(selected)
+    tail = jobs[fresh_count:]
+    if remaining <= 0 or not tail:
+        return selected
+    if remaining == 1:
+        selected.append(tail[-1])
+        return selected
+
+    last = len(tail) - 1
+    indexes = [round(i * last / (remaining - 1)) for i in range(remaining)]
+    selected.extend(tail[index] for index in indexes)
+    return selected
+
 def _healthy_candidates(
     jobs, accounts, sources, sheets, limit, reserved_fingerprints=None,
     recent_upload_activity=None,
@@ -495,11 +518,8 @@ def _healthy_candidates(
                 continue
 
             chosen = None
-            scanned = 0
-            for job in account_jobs:
-                if scanned >= PER_ACCOUNT_SCAN_LIMIT:
-                    break
-                scanned += 1
+            scan_jobs = _account_scan_jobs(account_jobs)
+            for job in scan_jobs:
 
                 if _is_locked(job):
                     continue
@@ -574,12 +594,12 @@ def _healthy_candidates(
                     account_id,
                     platform,
                     _rotation_rank(account_id, platform, accounts, slots),
-                    scanned,
+                    len(scan_jobs),
                 )
             else:
                 main.logger.warning(
-                    "No healthy candidate for enabled account %s (%s) in first %s account jobs",
-                    account_id, platform, min(len(account_jobs), PER_ACCOUNT_SCAN_LIMIT),
+                    "No healthy candidate for enabled account %s (%s) in bounded sample of %s/%s account jobs",
+                    account_id, platform, len(scan_jobs), len(account_jobs),
                 )
 
     return selected
