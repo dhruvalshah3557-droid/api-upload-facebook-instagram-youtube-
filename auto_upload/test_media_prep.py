@@ -56,6 +56,17 @@ class MusicRotationTests(unittest.TestCase):
         ):
             self.assertEqual(media_prep._configured_music_urls(), [])
 
+    def test_facebook_reel_fill_uses_crop_without_blur_or_padding(self):
+        completed = mock.Mock(returncode=0)
+        with mock.patch("media_prep.shutil.which", return_value="/usr/bin/ffmpeg"), \
+             mock.patch("media_prep.subprocess.run", return_value=completed) as run:
+            self.assertTrue(media_prep._to_9x16_fill("input.mp4", "output.mp4"))
+        command = " ".join(run.call_args.args[0])
+        self.assertIn("force_original_aspect_ratio=increase", command)
+        self.assertIn("crop=1080:1920", command)
+        self.assertNotIn("pad=", command)
+        self.assertNotIn("blur", command)
+
 
 if __name__ == "__main__":
     unittest.main()
