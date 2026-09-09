@@ -16,6 +16,31 @@ FB_GRAPH_URL = "https://graph.facebook.com/v26.0"
 
 _VIDEO_EXTS = (".mp4", ".mov", ".avi", ".mkv", ".webm")
 
+_REGIONAL_AUDIO_QUERIES = (
+    (("vietnam",), ("Vietnam trending", "Vietnamese pop", "Vietnam luxury instrumental")),
+    (("japan",), ("Japan trending", "Japanese pop", "Japanese luxury instrumental")),
+    (("korea",), ("Korea trending", "K-pop", "Korean luxury instrumental")),
+    (("russia",), ("Russia trending", "Russian pop", "Russian luxury instrumental")),
+    (("philippines", "colour diam ph"), ("Philippines trending", "OPM", "Filipino pop")),
+    (("myanmar",), ("Myanmar trending", "Burmese pop", "Myanmar instrumental")),
+    (("bangkok",), ("Thailand trending", "Thai pop", "Thai luxury instrumental")),
+    (("indonesia",), ("Indonesia trending", "Indonesian pop", "Indonesia instrumental")),
+    (("dubai",), ("Dubai trending", "Arabic luxury", "Arabic instrumental")),
+    (("kuwait",), ("Kuwait trending", "Khaleeji", "Arabic luxury")),
+    (("pakistan",), ("Pakistan trending", "Pakistani pop", "South Asian instrumental")),
+    (("israel",), ("Israel trending", "Hebrew pop", "Hebrew instrumental")),
+    (("spain",), ("Spain trending", "Spanish pop", "Latin luxury")),
+    (("italy",), ("Italy trending", "Italian pop", "Italian luxury instrumental")),
+    (("sweden",), ("Sweden trending", "Swedish pop", "Scandinavian instrumental")),
+    (("germany",), ("Germany trending", "German pop", "European luxury instrumental")),
+    (("poland",), ("Poland trending", "Polish pop", "Polish instrumental")),
+    (("denmark",), ("Denmark trending", "Danish pop", "Scandinavian instrumental")),
+    (("france",), ("France trending", "French pop", "French luxury instrumental")),
+    (("turkey",), ("Turkey trending", "Turkish pop", "Turkish instrumental")),
+    (("china",), ("China trending", "Chinese pop", "Chinese instrumental")),
+)
+_DEFAULT_AUDIO_QUERIES = ("trending luxury", "elegant instrumental", "cinematic fashion")
+
 
 def _is_video_url(url):
     return any(ext in str(url or "").lower() for ext in _VIDEO_EXTS)
@@ -27,6 +52,7 @@ class IGAccountNotLinkedError(Exception):
 
 class InstagramUploader:
     _IG_ID_CACHE = {}
+    _LAST_AUDIO_BY_ACCOUNT = {}
 
     @staticmethod
     def _identity_key(value):
@@ -133,11 +159,17 @@ class InstagramUploader:
             "user_id": self.ig_user_id,
             "access_token": self.access_token,
         }
+        page_label = str(self.page_name or "").strip().lower()
+        regional_queries = next(
+            (queries for labels, queries in _REGIONAL_AUDIO_QUERIES if any(label in page_label for label in labels)),
+            _DEFAULT_AUDIO_QUERIES,
+        )
         queries_raw = os.getenv("IG_AUDIO_SEARCH_QUERIES", "").strip()
-        queries = [q.strip() for q in re.split(r"[\n,]+", queries_raw) if q.strip()]
+        configured_queries = [q.strip() for q in re.split(r"[\n,]+", queries_raw) if q.strip()]
+        queries = list(dict.fromkeys(list(regional_queries) + configured_queries))
         if not queries:
             search_query = os.getenv("IG_AUDIO_SEARCH_QUERY", "").strip()
-            queries = [search_query] if search_query else []
+            queries = [search_query] if search_query else list(regional_queries)
         search_query = queries[int.from_bytes(digest[:4], "big") % len(queries)] if queries else ""
         if search_query:
             params["search_query"] = search_query
@@ -149,10 +181,16 @@ class InstagramUploader:
             raise Exception(f"Could not select Instagram music: {message}")
         # The old implementation always used tracks[0], making every Reel use
         # the same song. Rotate deterministically across all returned results.
-        track = tracks[int.from_bytes(digest[4:12], "big") % len(tracks)]
+        track_index = int.from_bytes(digest[4:12], "big") % len(tracks)
+        track = tracks[track_index]
         audio_id = str(track.get("audio_id") or track.get("id") or "").strip()
         if not audio_id:
             raise Exception("Instagram audio search returned a track without an audio ID")
+        last_audio_id = self._LAST_AUDIO_BY_ACCOUNT.get(self.ig_user_id)
+        if audio_id == last_audio_id and len(tracks) > 1:
+            track = tracks[(track_index + 1) % len(tracks)]
+            audio_id = str(track.get("audio_id") or track.get("id") or "").strip()
+        self._LAST_AUDIO_BY_ACCOUNT[self.ig_user_id] = audio_id
         logger.info(
             f"[{self.page_name}] Selected Instagram audio: "
             f"{track.get('title', audio_id)}"
