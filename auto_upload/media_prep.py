@@ -219,18 +219,19 @@ def _mix_music(video_path, music_path, out_path, media_key, volume=0.72):
 
 
 def _to_9x16_fill(video_path, out_path):
-    """Fit the entire source inside 1080x1920 without blur or cropping.
+    """Fill a 1080x1920 Reel frame without blur or letterbox borders.
 
-    The original frame is preserved completely and centered on a clean black
-    9:16 canvas when its aspect ratio does not already match vertical video.
+    Jewellery source media is centre-framed, so a centred crop gives Facebook
+    a true full-screen 9:16 video instead of the former small image surrounded
+    by black padding.
     """
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         logger.error("ffmpeg not found; skipping 9:16 conversion")
         return False
     filter_complex = (
-        f"[0:v]scale={REELS_WIDTH}:{REELS_HEIGHT}:force_original_aspect_ratio=decrease,"
-        f"pad={REELS_WIDTH}:{REELS_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black[v]"
+        f"[0:v]scale={REELS_WIDTH}:{REELS_HEIGHT}:force_original_aspect_ratio=increase,"
+        f"crop={REELS_WIDTH}:{REELS_HEIGHT}:(iw-ow)/2:(ih-oh)/2[v]"
     )
     cmd = [
         ffmpeg, "-y", "-i", video_path,
@@ -242,7 +243,7 @@ def _to_9x16_fill(video_path, out_path):
     ]
     try:
         subprocess.run(cmd, check=True, capture_output=True)
-        logger.info(f"Fitted full video into 9:16 frame ({REELS_WIDTH}x{REELS_HEIGHT}) without crop or blur")
+        logger.info(f"Filled 9:16 frame ({REELS_WIDTH}x{REELS_HEIGHT}) with centred crop and no blur")
         return True
     except subprocess.CalledProcessError as e:
         detail = (e.stderr or b"").decode(errors="ignore")[:500]
