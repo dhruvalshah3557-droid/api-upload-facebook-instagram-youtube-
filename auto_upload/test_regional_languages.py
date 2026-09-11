@@ -77,6 +77,56 @@ class RegionalLanguageTests(unittest.TestCase):
         self.assertEqual(caption, "Mô tả tiếng Việt")
         self.assertEqual(hashtag, "#KimCuong")
 
+    def test_vietnam_hashtags_are_normalized_for_clickable_tags(self):
+        source = {
+            "lang_captions": {"vi": "Mô tả tiếng Việt"},
+            "lang_hashtags": {
+                "vi": "KimCuongThienNhien, #ColourDiam, TrangSucCaoCap"
+            },
+            "hashtags": "#diamond",
+            "product_link": "",
+        }
+        account = {
+            "primary_language": "vi-VN",
+            "fallback_language": "en-GB",
+            "account_name": "Colour Diam Vietnam",
+        }
+        caption = main.build_caption({"platform": "instagram"}, source, account)
+        self.assertEqual(
+            caption,
+            "Mô tả tiếng Việt\n\n"
+            "#KimCuongThienNhien #ColourDiam #TrangSucCaoCap",
+        )
+
+    def test_existing_space_separated_hashtags_stay_valid(self):
+        self.assertEqual(
+            main._normalize_hashtags("#ColourDiam #KimCuong #GIA"),
+            "#ColourDiam #KimCuong #GIA",
+        )
+
+    def test_regional_account_never_falls_back_to_english_hashtags(self):
+        source = {
+            "lang_captions": {"vi": "Mô tả tiếng Việt"},
+            "lang_hashtags": {},
+            "hashtags": "#diamond #jewelry",
+            "product_link": "",
+        }
+        account = {
+            "primary_language": "vi-VN",
+            "fallback_language": "en-GB",
+            "account_name": "Colour Diam Vietnam",
+        }
+        caption = main.build_caption({"platform": "facebook"}, source, account)
+        self.assertEqual(
+            caption,
+            "Mô tả tiếng Việt\n\n#KimCương #TrangSức #TrangSứcCaoCấp",
+        )
+        self.assertNotIn("#diamond", caption)
+
+    def test_each_configured_region_has_native_fallback_hashtags(self):
+        regional_codes = set(SheetsReader.LANG_TAG_COLS) - {"en"}
+        self.assertTrue(regional_codes <= set(main._REGIONAL_FALLBACK_HASHTAGS))
+
 
 if __name__ == "__main__":
     unittest.main()
