@@ -24,6 +24,13 @@ class _Response:
         }
 
 
+class _ContainerResponse:
+    status_code = 200
+
+    def json(self):
+        return {"id": "container-1"}
+
+
 class InstagramMusicRotationTests(unittest.TestCase):
     def setUp(self):
         InstagramUploader._LAST_AUDIO_BY_ACCOUNT.clear()
@@ -70,6 +77,40 @@ class InstagramMusicRotationTests(unittest.TestCase):
             first = json.loads(uploader._trending_audio_configuration("job-1"))["audio_id"]
             second = json.loads(uploader._trending_audio_configuration("job-2"))["audio_id"]
         self.assertNotEqual(first, second)
+
+    def test_reel_uses_product_image_as_cover(self):
+        uploader = InstagramUploader.__new__(InstagramUploader)
+        uploader.ig_user_id = "123"
+        uploader.access_token = "token"
+        uploader.page_name = "Colour Diam Vietnam"
+        uploader._ensure_not_rate_limited = lambda: None
+        cover = "https://media.example/8732/center.jpg"
+        with mock.patch.dict("os.environ", {"IG_AUTO_TRENDING_AUDIO": "false"}, clear=True), \
+             mock.patch("instagram_uploader.requests.post", return_value=_ContainerResponse()) as post:
+            container = uploader._create_media_container(
+                "https://media.example/8732/video.mp4",
+                "caption",
+                is_video=True,
+                cover_url=cover,
+            )
+        self.assertEqual(container, "container-1")
+        params = post.call_args.kwargs["data"]
+        self.assertEqual(params["media_type"], "REELS")
+        self.assertEqual(params["cover_url"], cover)
+        self.assertNotIn("thumb_offset", params)
+
+    def test_reel_without_image_avoids_black_first_frame(self):
+        uploader = InstagramUploader.__new__(InstagramUploader)
+        uploader.ig_user_id = "123"
+        uploader.access_token = "token"
+        uploader.page_name = "Colour Diam"
+        uploader._ensure_not_rate_limited = lambda: None
+        with mock.patch.dict("os.environ", {"IG_AUTO_TRENDING_AUDIO": "false"}, clear=True), \
+             mock.patch("instagram_uploader.requests.post", return_value=_ContainerResponse()) as post:
+            uploader._create_media_container(
+                "https://media.example/video.mp4", "caption", is_video=True
+            )
+        self.assertEqual(post.call_args.kwargs["data"]["thumb_offset"], 1000)
 
 
 if __name__ == "__main__":
