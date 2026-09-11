@@ -275,12 +275,24 @@ def resolve_media(job, source):
     return []
 
 
-def _append_product_link(caption, source):
+_PRODUCT_LINK_LABELS = {
+    "ar": "عرض المنتج", "vi": "Xem sản phẩm", "zh": "查看产品",
+    "sv": "Visa produkt", "de": "Produkt ansehen", "pl": "Zobacz produkt",
+    "da": "Se produkt", "fr": "Voir le produit", "tr": "Ürünü görüntüle",
+    "it": "Visualizza prodotto", "es": "Ver producto", "ja": "商品を見る",
+    "ko": "제품 보기", "ru": "Посмотреть товар", "he": "לצפייה במוצר",
+    "id": "Lihat produk", "my": "ကုန်ပစ္စည်းကိုကြည့်ရန်", "th": "ดูสินค้า",
+    "tl": "Tingnan ang produkto", "fil": "Tingnan ang produkto",
+}
+
+
+def _append_product_link(caption, source, lang="en"):
     caption = str(caption or "").strip()
     product_link = str(source.get("product_link", "") or "").strip()
     if not product_link or product_link in caption:
         return caption
-    link_line = f"View product: {product_link}"
+    label = _PRODUCT_LINK_LABELS.get(lang, "View product")
+    link_line = f"{label}: {product_link}"
     return f"{caption}\n\n{link_line}" if caption else link_line
 
 
@@ -342,9 +354,9 @@ _REGIONAL_FALLBACK_HASHTAGS = {
 def build_caption(job, source, account):
     """Build a localized caption and always append the product page URL.
 
-    Order: primary-language translation + matching hashtags -> fallback-language
-    translation + matching hashtags -> platform caption + hashtags -> generated
-    caption. The direct product page is then appended to every platform post.
+    Regional accounts require their primary-language translation and use a
+    guaranteed native hashtag set. English accounts retain the normal platform
+    fallback behavior. The direct product page label is localized too.
     """
     platform = job.get("platform", "")
     lang = _lang_code(account.get("primary_language", ""))
@@ -355,17 +367,26 @@ def build_caption(job, source, account):
     hashtags = _normalize_hashtags(source.get("hashtags", ""))
 
     caption_text = ""
-    for code in (lang, fallback):
-        if code and lang_captions.get(code):
-            if code != "en":
-                tags = _normalize_hashtags(lang_hashtags.get(code))
-                tags = tags or _REGIONAL_FALLBACK_HASHTAGS.get(code, "")
-            else:
-                tags = _normalize_hashtags(lang_hashtags.get(code)) or hashtags
-            caption_text = (
-                f"{lang_captions[code]}\n\n{tags}" if tags else lang_captions[code]
+    if lang != "en":
+        localized_caption = str(lang_captions.get(lang, "") or "").strip()
+        if not localized_caption:
+            raise ValueError(
+                f"Missing required {lang} regional caption; refusing English fallback"
             )
-            break
+        tags = _REGIONAL_FALLBACK_HASHTAGS.get(lang, "")
+        if not tags:
+            raise ValueError(
+                f"Missing required {lang} regional hashtags; refusing English fallback"
+            )
+        caption_text = f"{localized_caption}\n\n{tags}"
+    else:
+        for code in (lang, fallback):
+            if code and lang_captions.get(code):
+                tags = _normalize_hashtags(lang_hashtags.get(code)) or hashtags
+                caption_text = (
+                    f"{lang_captions[code]}\n\n{tags}" if tags else lang_captions[code]
+                )
+                break
 
     if not caption_text:
         if platform in ("facebook", "wechat", "pinterest"):
@@ -396,7 +417,7 @@ def build_caption(job, source, account):
         auto_hashtags = generate_hashtags(product_info, account.get("account_name", ""))
         caption_text = f"{auto_caption}\n\n{auto_hashtags}"
 
-    return _append_product_link(caption_text, source)
+    return _append_product_link(caption_text, source, lang)
 
 
 def _carousel_images(media):
