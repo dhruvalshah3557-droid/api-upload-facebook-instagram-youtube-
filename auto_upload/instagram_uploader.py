@@ -46,6 +46,14 @@ def _is_video_url(url):
     return any(ext in str(url or "").lower() for ext in _VIDEO_EXTS)
 
 
+def _is_cover_image_url(url):
+    clean = str(url or "").strip()
+    path = clean.split("?", 1)[0].lower()
+    return clean.startswith(("https://", "http://")) and path.endswith(
+        (".jpg", ".jpeg", ".png", ".webp")
+    )
+
+
 class IGAccountNotLinkedError(Exception):
     """Configured Facebook page is not linked to an Instagram Business account."""
 
@@ -222,7 +230,7 @@ class InstagramUploader:
             "should_loop_audio": True,
         })
 
-    def _create_resumable_reel(self, media_url, caption, product_id=""):
+    def _create_resumable_reel(self, media_url, caption, product_id="", cover_url=""):
         """Mix audio into a silent Reel and upload the resulting bytes to Meta."""
         selection_key = f"instagram|{self.ig_user_id}|{media_url}"
         name, content, content_type = prepare_video(
@@ -234,6 +242,11 @@ class InstagramUploader:
             "caption": caption,
             "access_token": self.access_token,
         }
+        if _is_cover_image_url(cover_url):
+            params["cover_url"] = str(cover_url).strip()
+        else:
+            # Avoid selecting frame zero, which is black on many source videos.
+            params["thumb_offset"] = 1000
         if product_id:
             params["product_tags"] = f'[{{"product_id":"{product_id}"}}]'
         response = requests.post(
@@ -271,7 +284,10 @@ class InstagramUploader:
         )
         return container_id
 
-    def _create_media_container(self, media_url, caption, is_video=False, product_id="", carousel_item=False):
+    def _create_media_container(
+        self, media_url, caption, is_video=False, product_id="",
+        carousel_item=False, cover_url="",
+    ):
         media_url = str(media_url or "").strip()
         if not media_url:
             raise Exception("Instagram media URL is empty")
@@ -287,6 +303,11 @@ class InstagramUploader:
             # video_url with a multipart local file; Meta requires video_url.
             params["media_type"] = "VIDEO" if carousel_item else "REELS"
             params["video_url"] = media_url
+            if not carousel_item:
+                if _is_cover_image_url(cover_url):
+                    params["cover_url"] = str(cover_url).strip()
+                else:
+                    params["thumb_offset"] = 1000
             if not carousel_item and os.getenv("IG_AUTO_TRENDING_AUDIO", "true").lower() in ("1", "true", "yes", "on"):
                 state = self._remote_audio_state(media_url)
                 logger.info(f"[{self.page_name}] Reel audio state: {state}")
@@ -303,13 +324,17 @@ class InstagramUploader:
                                 f"[{self.page_name}] Instagram audio catalog unavailable "
                                 f"({exc}); mixing verified music into the video instead"
                             )
-                            return self._create_resumable_reel(media_url, caption, product_id)
+                            return self._create_resumable_reel(
+                                media_url, caption, product_id, cover_url
+                            )
                     else:
                         logger.info(
                             f"[{self.page_name}] Mixing verified licensed/CC0 music "
                             "into silent Reel"
                         )
-                        return self._create_resumable_reel(media_url, caption, product_id)
+                        return self._create_resumable_reel(
+                            media_url, caption, product_id, cover_url
+                        )
                 elif state == "unknown":
                     raise Exception("Could not verify Reel audio; refusing a potentially silent upload")
         else:
@@ -435,9 +460,11 @@ class InstagramUploader:
         time.sleep(15)
         return self._publish_container(container_id)
 
-    def upload(self, media_url, caption, product_id=""):
+    def upload(self, media_url, caption, product_id="", cover_url=""):
         is_video = _is_video_url(media_url)
-        container_id = self._create_media_container(media_url, caption, is_video, product_id)
+        container_id = self._create_media_container(
+            media_url, caption, is_video, product_id, cover_url=cover_url
+        )
         wait = 30 if is_video else 5
         logger.info(f"[{self.page_name}] Waiting {wait}s for media processing...")
         time.sleep(wait)
