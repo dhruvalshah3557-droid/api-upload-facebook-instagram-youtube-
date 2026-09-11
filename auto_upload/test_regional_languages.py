@@ -36,7 +36,7 @@ class RegionalLanguageTests(unittest.TestCase):
             self.assertEqual(SheetsReader.LANG_CAPTION_COLS[code], caption_col)
             self.assertEqual(SheetsReader.LANG_TAG_COLS[code], hashtag_col)
 
-    def test_local_caption_wins_and_english_is_only_fallback(self):
+    def test_local_caption_wins_and_regional_english_fallback_is_blocked(self):
         source = {
             "lang_captions": {"it": "Descrizione italiana"},
             "lang_hashtags": {"it": "#gioielli"},
@@ -53,11 +53,14 @@ class RegionalLanguageTests(unittest.TestCase):
             "account_name": "Colour Diam Italy",
         }
         caption = main.build_caption({"platform": "instagram"}, source, account)
-        self.assertEqual(caption, "Descrizione italiana\n\n#gioielli")
+        self.assertEqual(
+            caption,
+            "Descrizione italiana\n\n#Diamanti #Gioielli #AltaGioielleria",
+        )
 
         account["primary_language"] = "vi-VN"
-        caption = main.build_caption({"platform": "instagram"}, source, account)
-        self.assertEqual(caption, "English Instagram caption\n\n#diamond")
+        with self.assertRaisesRegex(ValueError, "refusing English fallback"):
+            main.build_caption({"platform": "instagram"}, source, account)
 
     def test_vietnam_source_import_headers_are_supported(self):
         row = {
@@ -77,7 +80,7 @@ class RegionalLanguageTests(unittest.TestCase):
         self.assertEqual(caption, "Mô tả tiếng Việt")
         self.assertEqual(hashtag, "#KimCuong")
 
-    def test_vietnam_hashtags_are_normalized_for_clickable_tags(self):
+    def test_vietnam_uses_guaranteed_native_hashtags(self):
         source = {
             "lang_captions": {"vi": "Mô tả tiếng Việt"},
             "lang_hashtags": {
@@ -95,7 +98,7 @@ class RegionalLanguageTests(unittest.TestCase):
         self.assertEqual(
             caption,
             "Mô tả tiếng Việt\n\n"
-            "#KimCuongThienNhien #ColourDiam #TrangSucCaoCap",
+            "#KimCương #TrangSức #TrangSứcCaoCấp",
         )
 
     def test_existing_space_separated_hashtags_stay_valid(self):
@@ -126,6 +129,26 @@ class RegionalLanguageTests(unittest.TestCase):
     def test_each_configured_region_has_native_fallback_hashtags(self):
         regional_codes = set(SheetsReader.LANG_TAG_COLS) - {"en"}
         self.assertTrue(regional_codes <= set(main._REGIONAL_FALLBACK_HASHTAGS))
+
+    def test_product_link_label_is_localized(self):
+        source = {
+            "lang_captions": {"th": "คำบรรยายภาษาไทย"},
+            "lang_hashtags": {"th": "#NaturalDiamond"},
+            "hashtags": "#diamond",
+            "product_link": "https://colourdiam.com/product/1",
+        }
+        account = {
+            "primary_language": "th-TH",
+            "fallback_language": "en-GB",
+            "account_name": "Colour Diam Bangkok",
+        }
+        caption = main.build_caption({"platform": "facebook"}, source, account)
+        self.assertIn("ดูสินค้า: https://colourdiam.com/product/1", caption)
+        self.assertNotIn("View product", caption)
+
+    def test_all_regional_languages_have_local_product_link_labels(self):
+        regional_codes = set(SheetsReader.LANG_CAPTION_COLS) - {"en"}
+        self.assertTrue(regional_codes <= set(main._PRODUCT_LINK_LABELS))
 
 
 if __name__ == "__main__":
