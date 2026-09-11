@@ -756,9 +756,9 @@ def process_pending(sheets=None):
                 logger.warning(f"Job {job_id}: skipped - SKU {job['sku']} missing")
                 continue
 
-            caption = build_caption(job, source, account)
             post_id, url = "", ""
             try:
+                caption = build_caption(job, source, account)
                 post_id, url = publish_job(job, source, account)
                 updates = {
                     "status": Config.JOB_STATUS_UPLOADED,
