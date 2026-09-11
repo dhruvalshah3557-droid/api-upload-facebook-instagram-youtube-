@@ -406,7 +406,9 @@ def publish_job(job, source, account):
         if format_type == "carousel":
             post = uploader.upload_carousel(media, caption, tag)
         else:
-            post = uploader.upload(media[0], caption, tag)
+            post = uploader.upload(
+                media[0], caption, tag, cover_url=source.get("main_image", "")
+            )
         post_id = post.get("id", "")
         url = uploader.permalink(post_id) or f"https://www.instagram.com/p/{post_id}"
         return post_id, url
