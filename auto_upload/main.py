@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import logging
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -283,6 +284,61 @@ def _append_product_link(caption, source):
     return f"{caption}\n\n{link_line}" if caption else link_line
 
 
+def _normalize_hashtags(value):
+    """Return valid, space-separated hashtags from inconsistent sheet input.
+
+    Regional source cells sometimes contain comma-separated words without '#',
+    while others contain an already formatted whitespace-separated hashtag list.
+    Normalize both forms before publishing so tags remain clickable.
+    """
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    explicit = re.findall(r"#[^\s,;،#]+", raw)
+    if len(explicit) > 1 and not re.search(r"[,;،\n]", raw):
+        parts = explicit
+    else:
+        parts = re.split(r"[,;،\n]+", raw)
+        if len(parts) == 1 and "#" not in raw:
+            parts = raw.split()
+    normalized = []
+    seen = set()
+    for part in parts:
+        token = re.sub(r"[^\w]", "", str(part).lstrip("#"), flags=re.UNICODE)
+        if not token:
+            continue
+        key = token.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(f"#{token}")
+    return " ".join(normalized)
+
+
+_REGIONAL_FALLBACK_HASHTAGS = {
+    "ar": "#ألماس #مجوهرات #مجوهرات_فاخرة",
+    "vi": "#KimCương #TrangSức #TrangSứcCaoCấp",
+    "zh": "#钻石 #珠宝 #高级珠宝",
+    "sv": "#Diamanter #Smycken #Lyxsmycken",
+    "de": "#Diamanten #Schmuck #Luxusschmuck",
+    "pl": "#Diamenty #Biżuteria #BiżuteriaLuksusowa",
+    "da": "#Diamanter #Smykker #Luksussmykker",
+    "fr": "#Diamants #Bijoux #HauteJoaillerie",
+    "tr": "#Elmas #Mücevher #LüksMücevher",
+    "it": "#Diamanti #Gioielli #AltaGioielleria",
+    "es": "#Diamantes #Joyas #AltaJoyería",
+    "ja": "#ダイヤモンド #ジュエリー #高級ジュエリー",
+    "ko": "#다이아몬드 #주얼리 #명품주얼리",
+    "ru": "#Бриллианты #Украшения #ЮвелирныеИзделия",
+    "he": "#יהלומים #תכשיטים #תכשיטי_יוקרה",
+    "id": "#Berlian #Perhiasan #PerhiasanMewah",
+    "my": "#စိန် #လက်ဝတ်ရတနာ #အဆင့်မြင့်လက်ဝတ်ရတနာ",
+    "th": "#เพชร #เครื่องประดับ #เครื่องประดับหรู",
+    "tl": "#Brilyante #Alahas #MarangyangAlahas",
+    "fil": "#Brilyante #Alahas #MarangyangAlahas",
+}
+
+
 def build_caption(job, source, account):
     """Build a localized caption and always append the product page URL.
 
@@ -296,12 +352,16 @@ def build_caption(job, source, account):
 
     lang_captions = source.get("lang_captions", {})
     lang_hashtags = source.get("lang_hashtags", {})
-    hashtags = source.get("hashtags", "")
+    hashtags = _normalize_hashtags(source.get("hashtags", ""))
 
     caption_text = ""
     for code in (lang, fallback):
         if code and lang_captions.get(code):
-            tags = lang_hashtags.get(code) or hashtags
+            if code != "en":
+                tags = _normalize_hashtags(lang_hashtags.get(code))
+                tags = tags or _REGIONAL_FALLBACK_HASHTAGS.get(code, "")
+            else:
+                tags = _normalize_hashtags(lang_hashtags.get(code)) or hashtags
             caption_text = (
                 f"{lang_captions[code]}\n\n{tags}" if tags else lang_captions[code]
             )
