@@ -92,11 +92,14 @@ jobs:
           # Prefer Meta's licensed catalog with market-specific searches.
           # The uploader rotates results and falls back to approved CC0 music.
           IG_USE_AUDIO_CATALOG: "true"
+          # One IG account per 10-minute run avoids app-wide request bursts;
+          # rotation still supplies up to 144 account turns per day.
+          IG_MAX_JOBS_PER_RUN: "1"
           IG_AUDIO_SEARCH_QUERY: ${{ vars.IG_AUDIO_SEARCH_QUERY }}
           IG_AUDIO_SEARCH_QUERIES: ${{ vars.IG_AUDIO_SEARCH_QUERIES }}
           IG_AUDIO_VOLUME: "80"
           IG_VIDEO_VOLUME: "60"
-          IG_RATE_LIMIT_COOLDOWN_SECONDS: "900"
+          IG_RATE_LIMIT_COOLDOWN_SECONDS: "3600"
           IG_CAROUSEL_ITEM_DELAY_SECONDS: "8"
           FB_ACCESS_TOKEN: ${{ secrets.FACEBOOKTOKEN }}
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
