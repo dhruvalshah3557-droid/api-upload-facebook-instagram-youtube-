@@ -21,3 +21,4 @@ Activate rolling 24-hour three-post delivery floor for Spain, Italy, Vietnam, Pa
 2026-09-11T16:00:00Z - deploy strict native regional captions hashtags and localized product CTA
 2026-09-11T16:03:00Z - run final strict regional-language publisher
 2026-09-12T07:35:00Z - deploy quota-safe rotating Instagram uploader
+2026-09-12T08:05:46Z - deep audit: quota-efficient Instagram jobs and safe resumable retry
