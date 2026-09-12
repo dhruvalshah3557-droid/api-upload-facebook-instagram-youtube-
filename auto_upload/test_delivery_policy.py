@@ -234,6 +234,31 @@ class DeliveryPolicyTests(unittest.TestCase):
         self.assertIn("YT-CD", selected_ids)
         self.assertNotIn("LINE-CD", selected_ids)
 
+    def test_instagram_prefers_lower_request_video_over_carousel(self):
+        account_id = "IG-CD"
+        accounts = {account_id: _primary(account_id, "instagram")}
+        sources = {"carousel": {"sku": "carousel"}, "video": {"sku": "video"}}
+        jobs = [
+            {"job_id": "carousel-IG-CD-carousel", "account_id": account_id,
+             "platform": "instagram", "format": "carousel", "sku": "carousel",
+             "row": 20, "attempts": 0, "notes": ""},
+            {"job_id": "video-IG-CD-product_video", "account_id": account_id,
+             "platform": "instagram", "format": "video", "sku": "video",
+             "row": 10, "attempts": 0, "notes": ""},
+        ]
+        sheets = type("Sheets", (), {"update_job": staticmethod(lambda *a, **k: None)})()
+        activity = {account_id: {"count": 0, "last": None, "success_times": []}}
+        with patch("optimized_runner.resolve_media_fixed", return_value=["https://example.com/a.mp4"]), \
+             patch("optimized_runner._dns_resolves", return_value=True), \
+             patch("optimized_runner.main._classify_media_url", return_value="video"), \
+             patch("optimized_runner._local_slot_due", return_value=False), \
+             patch("optimized_runner._video_validation_reason", return_value=""):
+            selected = optimized_runner._healthy_candidates(
+                jobs, accounts, sources, sheets, limit=50,
+                recent_upload_activity=activity,
+            )
+        self.assertEqual(selected[0]["job_id"], "video-IG-CD-product_video")
+
     def test_healthy_candidates_do_not_starve_new_youtube_jobs(self):
         account_id = "YT-CD"
         accounts = {account_id: _primary(account_id, "youtube")}
