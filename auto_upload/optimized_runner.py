@@ -285,10 +285,12 @@ def _account_publish_ready(account):
 
 
 def _platform_limits(limit, accounts=None):
-    """Give every publish-ready primary account a slot when capacity allows.
+    """Allocate platform slots without bursting the shared Instagram app quota.
 
     LINE is excluded while LINE_QUOTA_EXHAUSTED is set so Facebook, Instagram
-    and YouTube keep the full production budget.
+    and YouTube keep the full production budget. Instagram is intentionally
+    capped globally per workflow run; the 10-minute account rotation provides
+    enough daily turns without opening many Meta containers simultaneously.
     """
     line = 0
     if not LINE_QUOTA_EXHAUSTED and limit >= 5:
@@ -305,6 +307,8 @@ def _platform_limits(limit, accounts=None):
         if total_ready <= remaining:
             slots = dict(ready)
             slots["line"] = line
+            instagram_cap = max(0, int(os.getenv("IG_MAX_JOBS_PER_RUN", "1")))
+            slots["instagram"] = min(slots["instagram"], instagram_cap)
             return slots
         slots = {"facebook": 0, "instagram": 0, "youtube": 0, "line": line}
         assigned = 0
@@ -335,6 +339,8 @@ def _platform_limits(limit, accounts=None):
             idx += 1
             if idx > remaining * 4:
                 break
+        instagram_cap = max(0, int(os.getenv("IG_MAX_JOBS_PER_RUN", "1")))
+        slots["instagram"] = min(slots["instagram"], instagram_cap)
         return slots
 
     if remaining <= 1:
@@ -342,9 +348,11 @@ def _platform_limits(limit, accounts=None):
     if remaining <= 3:
         return {"facebook": 1, "instagram": 1, "youtube": max(0, remaining - 2), "line": line}
     youtube = 2 if remaining >= 50 else 1
-    meta = remaining - youtube
-    facebook = max(1, meta // 2)
-    instagram = meta - facebook
+    instagram = min(
+        max(0, remaining - youtube - 1),
+        max(0, int(os.getenv("IG_MAX_JOBS_PER_RUN", "1"))),
+    )
+    facebook = remaining - youtube - instagram
     return {"facebook": facebook, "instagram": instagram, "youtube": youtube, "line": line}
 
 
