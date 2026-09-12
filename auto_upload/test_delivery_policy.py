@@ -155,11 +155,21 @@ class DeliveryPolicyTests(unittest.TestCase):
         slots = optimized_runner._platform_limits(50, accounts)
         self.assertEqual(slots, {
             "facebook": 21,
-            "instagram": 17,
+            "instagram": 1,
             "youtube": 1,
             "line": 0,
         })
-        self.assertEqual(sum(slots.values()), 39)
+        self.assertEqual(sum(slots.values()), 23)
+
+    def test_instagram_per_run_cap_is_configurable(self):
+        accounts = {
+            "IG-A": _primary("IG-A", "instagram"),
+            "IG-B": _primary("IG-B", "instagram"),
+            "FB-A": _primary("FB-A", "facebook"),
+        }
+        with patch.dict(os.environ, {"IG_MAX_JOBS_PER_RUN": "2"}):
+            slots = optimized_runner._platform_limits(50, accounts)
+        self.assertEqual(slots["instagram"], 2)
 
     def test_platform_limits_fallback_excludes_line_at_production_cap(self):
         slots = optimized_runner._platform_limits(50)
@@ -169,7 +179,7 @@ class DeliveryPolicyTests(unittest.TestCase):
         self.assertGreaterEqual(slots["instagram"], 1)
         self.assertGreaterEqual(slots["youtube"], 1)
 
-    def test_healthy_candidates_select_every_ready_primary_account(self):
+    def test_healthy_candidates_apply_global_instagram_budget(self):
         jobs = []
         accounts = {}
         sources = {"100": {"sku": "100"}}
@@ -217,11 +227,12 @@ class DeliveryPolicyTests(unittest.TestCase):
                 jobs, accounts, sources, sheets, limit=50,
                 recent_upload_activity=activity,
             )
-        self.assertEqual(
-            sorted(job["account_id"] for job in selected),
-            sorted(ready_ids),
-        )
-        self.assertNotIn("LINE-CD", [job["account_id"] for job in selected])
+        selected_ids = [job["account_id"] for job in selected]
+        self.assertEqual(len([aid for aid in selected_ids if aid.startswith("IG-")]), 1)
+        self.assertIn("FB-A", selected_ids)
+        self.assertIn("FB-B", selected_ids)
+        self.assertIn("YT-CD", selected_ids)
+        self.assertNotIn("LINE-CD", selected_ids)
 
     def test_healthy_candidates_do_not_starve_new_youtube_jobs(self):
         account_id = "YT-CD"
