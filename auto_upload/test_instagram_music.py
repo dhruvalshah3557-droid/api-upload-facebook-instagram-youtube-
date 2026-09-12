@@ -9,7 +9,7 @@ try:
 except ImportError:
     sys.modules["requests"] = types.SimpleNamespace(get=lambda *args, **kwargs: None)
 
-from instagram_uploader import InstagramUploader
+from instagram_uploader import InstagramRateLimitError, InstagramUploader
 
 
 class _Response:
@@ -31,9 +31,22 @@ class _ContainerResponse:
         return {"id": "container-1"}
 
 
+class _RateLimitResponse:
+    status_code = 400
+    ok = False
+
+    def json(self):
+        return {"error": {
+            "code": 4,
+            "error_subcode": 2207051,
+            "message": "Application request limit reached",
+        }}
+
+
 class InstagramMusicRotationTests(unittest.TestCase):
     def setUp(self):
         InstagramUploader._LAST_AUDIO_BY_ACCOUNT.clear()
+        InstagramUploader._RATE_LIMIT_UNTIL = 0.0
 
     def test_catalog_results_rotate_instead_of_always_first(self):
         uploader = InstagramUploader.__new__(InstagramUploader)
@@ -111,6 +124,18 @@ class InstagramMusicRotationTests(unittest.TestCase):
                 "https://media.example/video.mp4", "caption", is_video=True
             )
         self.assertEqual(post.call_args.kwargs["data"]["thumb_offset"], 1000)
+
+    def test_resumable_reel_preserves_attempt_on_rate_limit(self):
+        uploader = InstagramUploader.__new__(InstagramUploader)
+        uploader.ig_user_id = "123"
+        uploader.access_token = "token"
+        uploader.page_name = "Colour Diam"
+        with mock.patch.dict("os.environ", {"IG_RATE_LIMIT_COOLDOWN_SECONDS": "3600"}), \
+             mock.patch("instagram_uploader.prepare_video", return_value=("reel.mp4", b"video", "video/mp4")), \
+             mock.patch("instagram_uploader.requests.post", return_value=_RateLimitResponse()):
+            with self.assertRaisesRegex(InstagramRateLimitError, "2207051"):
+                uploader._create_resumable_reel("https://example.com/reel.mp4", "caption")
+        self.assertGreater(InstagramUploader._RATE_LIMIT_UNTIL, 0)
 
 
 if __name__ == "__main__":
