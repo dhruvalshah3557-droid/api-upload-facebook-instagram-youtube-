@@ -257,6 +257,14 @@ class InstagramUploader:
         session = self._json_or_error(response)
         container_id = str(session.get("id", "") or "").strip()
         if not container_id:
+            error = session.get("error", {})
+            if error.get("code") == 4 or error.get("error_subcode") == 2207051:
+                cooldown = self._record_rate_limit()
+                raise InstagramRateLimitError(
+                    f"META_RATE_LIMIT code={error.get('code')} "
+                    f"subcode={error.get('error_subcode')}; retry after {cooldown}s: "
+                    f"{error.get('message', 'Application request limit reached')}"
+                )
             raise Exception(session.get("error", {}).get("message", str(session)))
         upload_url = session.get("uri") or (
             f"https://rupload.facebook.com/ig-api-upload/v26.0/{container_id}"
@@ -274,6 +282,14 @@ class InstagramUploader:
         )
         upload_result = self._json_or_error(upload)
         if not upload.ok or not upload_result.get("success"):
+            error = upload_result.get("error", {})
+            if error.get("code") == 4 or error.get("error_subcode") == 2207051:
+                cooldown = self._record_rate_limit()
+                raise InstagramRateLimitError(
+                    f"META_RATE_LIMIT code={error.get('code')} "
+                    f"subcode={error.get('error_subcode')}; retry after {cooldown}s: "
+                    f"{error.get('message', 'Application request limit reached')}"
+                )
             raise Exception(
                 upload_result.get("error", {}).get("message")
                 or upload_result.get("debug_info", {}).get("message")
