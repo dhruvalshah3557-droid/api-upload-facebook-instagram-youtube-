@@ -469,6 +469,15 @@ def _healthy_candidates(
         # stale duplicate or invalid rows while current healthy media waits.
         account_jobs.sort(key=lambda j: (
             int(j.get("attempts", 0) or 0),
+            # An Instagram carousel needs one container request per image plus
+            # a parent-container and publish request. Prefer a Reel/single
+            # media job when both are available so one account turn does not
+            # exhaust the shared Meta application budget. Carousels remain a
+            # fallback and continue to publish normally.
+            1 if (
+                str(j.get("platform", "")).lower() == "instagram"
+                and str(j.get("format", "")).lower() == "carousel"
+            ) else 0,
             -int(j.get("row", 0) or 0),
         ))
 
