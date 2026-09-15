@@ -155,11 +155,11 @@ class DeliveryPolicyTests(unittest.TestCase):
         slots = optimized_runner._platform_limits(50, accounts)
         self.assertEqual(slots, {
             "facebook": 21,
-            "instagram": 1,
+            "instagram": 5,
             "youtube": 1,
             "line": 0,
         })
-        self.assertEqual(sum(slots.values()), 23)
+        self.assertEqual(sum(slots.values()), 27)
 
     def test_instagram_per_run_cap_is_configurable(self):
         accounts = {
@@ -228,7 +228,7 @@ class DeliveryPolicyTests(unittest.TestCase):
                 recent_upload_activity=activity,
             )
         selected_ids = [job["account_id"] for job in selected]
-        self.assertEqual(len([aid for aid in selected_ids if aid.startswith("IG-")]), 1)
+        self.assertEqual(len([aid for aid in selected_ids if aid.startswith("IG-")]), 2)
         self.assertIn("FB-A", selected_ids)
         self.assertIn("FB-B", selected_ids)
         self.assertIn("YT-CD", selected_ids)
