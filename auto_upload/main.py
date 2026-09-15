@@ -488,7 +488,8 @@ def publish_job(job, source, account):
             post = uploader.upload_carousel(media, caption, tag)
         else:
             post = uploader.upload(
-                media[0], caption, tag, cover_url=source.get("main_image", "")
+                media[0], caption, tag, cover_url=source.get("main_image", ""),
+                force_video=(format_type == "video"),
             )
         post_id = post.get("id", "")
         url = uploader.permalink(post_id) or f"https://www.instagram.com/p/{post_id}"
