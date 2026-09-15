@@ -476,8 +476,11 @@ class InstagramUploader:
         time.sleep(15)
         return self._publish_container(container_id)
 
-    def upload(self, media_url, caption, product_id="", cover_url=""):
-        is_video = _is_video_url(media_url)
+    def upload(self, media_url, caption, product_id="", cover_url="", force_video=None):
+        # Signed/CDN URLs often omit a file extension. The queue format is the
+        # authoritative media type after preflight, so let the caller force a
+        # video job to remain a Reel instead of accidentally creating an image.
+        is_video = _is_video_url(media_url) if force_video is None else bool(force_video)
         container_id = self._create_media_container(
             media_url, caption, is_video, product_id, cover_url=cover_url
         )
