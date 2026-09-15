@@ -307,7 +307,7 @@ def _platform_limits(limit, accounts=None):
         if total_ready <= remaining:
             slots = dict(ready)
             slots["line"] = line
-            instagram_cap = max(0, int(os.getenv("IG_MAX_JOBS_PER_RUN", "1")))
+            instagram_cap = max(0, int(os.getenv("IG_MAX_JOBS_PER_RUN", "5")))
             slots["instagram"] = min(slots["instagram"], instagram_cap)
             return slots
         slots = {"facebook": 0, "instagram": 0, "youtube": 0, "line": line}
@@ -339,7 +339,7 @@ def _platform_limits(limit, accounts=None):
             idx += 1
             if idx > remaining * 4:
                 break
-        instagram_cap = max(0, int(os.getenv("IG_MAX_JOBS_PER_RUN", "1")))
+        instagram_cap = max(0, int(os.getenv("IG_MAX_JOBS_PER_RUN", "5")))
         slots["instagram"] = min(slots["instagram"], instagram_cap)
         return slots
 
@@ -350,7 +350,7 @@ def _platform_limits(limit, accounts=None):
     youtube = 2 if remaining >= 50 else 1
     instagram = min(
         max(0, remaining - youtube - 1),
-        max(0, int(os.getenv("IG_MAX_JOBS_PER_RUN", "1"))),
+        max(0, int(os.getenv("IG_MAX_JOBS_PER_RUN", "5"))),
     )
     facebook = remaining - youtube - instagram
     return {"facebook": facebook, "instagram": instagram, "youtube": youtube, "line": line}
