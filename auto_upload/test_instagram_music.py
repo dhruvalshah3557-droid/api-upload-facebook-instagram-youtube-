@@ -125,6 +125,17 @@ class InstagramMusicRotationTests(unittest.TestCase):
             )
         self.assertEqual(post.call_args.kwargs["data"]["thumb_offset"], 1000)
 
+    def test_force_video_handles_extensionless_model_video_url(self):
+        uploader = InstagramUploader.__new__(InstagramUploader)
+        uploader.ig_user_id = "123"
+        uploader.access_token = "token"
+        uploader.page_name = "Colour Diam"
+        with mock.patch.object(uploader, "_create_media_container", return_value="container") as create, \
+             mock.patch.object(uploader, "_publish_container", return_value={"id": "post"}), \
+             mock.patch("instagram_uploader.time.sleep"):
+            uploader.upload("https://cdn.example/media?id=45", "caption", force_video=True)
+        self.assertTrue(create.call_args.args[2])
+
     def test_resumable_reel_preserves_attempt_on_rate_limit(self):
         uploader = InstagramUploader.__new__(InstagramUploader)
         uploader.ig_user_id = "123"
