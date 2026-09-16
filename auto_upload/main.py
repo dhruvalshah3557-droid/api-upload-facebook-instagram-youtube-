@@ -445,8 +445,12 @@ def build_caption(job, source, account):
             "description": source.get("product_name", ""),
             "keywords": [source.get("product_name", "")],
         }
-        auto_caption = generate_caption(product_info, account.get("account_name", ""))
-        auto_hashtags = generate_hashtags(product_info, account.get("account_name", ""))
+        auto_caption = generate_caption(
+            product_info, account.get("account_name", ""), lang
+        )
+        auto_hashtags = generate_hashtags(
+            product_info, account.get("account_name", ""), lang
+        )
         caption_text = f"{auto_caption}\n\n{auto_hashtags}"
 
     _validate_caption_product_match(caption_text, source)
