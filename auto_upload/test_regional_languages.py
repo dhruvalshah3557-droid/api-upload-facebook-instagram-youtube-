@@ -146,6 +146,51 @@ class RegionalLanguageTests(unittest.TestCase):
         self.assertIn("ดูสินค้า: https://colourdiam.com/product/1", caption)
         self.assertNotIn("View product", caption)
 
+    def test_wrong_diamond_weight_caption_is_blocked(self):
+        source = {
+            "sku": "681",
+            "product_name": "0.11ct Fancy Deep Pink Marquise GIA Natural Diamond",
+            "product_link": "https://colourdiam.com/Product/Diamond/681/",
+            "instagram_caption": "A 0.05 ct Light Bluish Gray Round diamond.",
+            "hashtags": "#diamond",
+            "lang_captions": {},
+            "lang_hashtags": {},
+        }
+        account = {"primary_language": "en", "account_name": "Colour Diam"}
+
+        with self.assertRaisesRegex(ValueError, "Caption/product mismatch"):
+            main.build_caption({"platform": "instagram"}, source, account)
+
+    def test_matching_diamond_weight_caption_is_allowed(self):
+        source = {
+            "sku": "681",
+            "product_name": "0.11ct Fancy Deep Pink Marquise GIA Natural Diamond",
+            "product_link": "https://colourdiam.com/Product/Diamond/681/",
+            "facebook_caption": "A rare 0,11 ct Fancy Deep Pink diamond.",
+            "hashtags": "#diamond",
+            "lang_captions": {},
+            "lang_hashtags": {},
+        }
+        account = {"primary_language": "en", "account_name": "Colour Diam"}
+
+        caption = main.build_caption({"platform": "facebook"}, source, account)
+        self.assertIn("0,11 ct", caption)
+
+    def test_non_diamond_jewellery_copy_is_not_rejected(self):
+        source = {
+            "sku": "ring-1",
+            "product_name": "0.50ct Diamond Ring",
+            "product_link": "https://colourdiam.com/Product/Jewellery/ring-1/",
+            "instagram_caption": "A ring with two 0.25 ct diamonds.",
+            "hashtags": "#jewellery",
+            "lang_captions": {},
+            "lang_hashtags": {},
+        }
+        account = {"primary_language": "en", "account_name": "Colour Diam"}
+
+        caption = main.build_caption({"platform": "instagram"}, source, account)
+        self.assertIn("0.25 ct", caption)
+
     def test_all_regional_languages_have_local_product_link_labels(self):
         regional_codes = set(SheetsReader.LANG_CAPTION_COLS) - {"en"}
         self.assertTrue(regional_codes <= set(main._PRODUCT_LINK_LABELS))
