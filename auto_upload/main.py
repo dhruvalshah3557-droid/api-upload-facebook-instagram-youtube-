@@ -351,6 +351,38 @@ _REGIONAL_FALLBACK_HASHTAGS = {
 }
 
 
+_CARAT_WEIGHT_RE = re.compile(
+    r"(?<![\d.,])(\d+(?:[.,]\d+)?)\s*(?:ct|cts|carats?)\b",
+    re.IGNORECASE,
+)
+
+
+def _carat_weights(text):
+    """Return normalized carat weights mentioned in product copy."""
+    return [float(value.replace(",", ".")) for value in _CARAT_WEIGHT_RE.findall(str(text or ""))]
+
+
+def _validate_caption_product_match(caption_text, source):
+    """Block a loose-diamond caption that describes a different carat weight."""
+    product_link = str(source.get("product_link", "") or "").lower()
+    if "/product/diamond/" not in product_link:
+        return
+
+    expected = _carat_weights(source.get("product_name", ""))
+    mentioned = _carat_weights(caption_text)
+    if not expected or not mentioned:
+        return
+
+    expected_weight = expected[0]
+    if not any(abs(value - expected_weight) < 0.0001 for value in mentioned):
+        found = ", ".join(f"{value:g}" for value in mentioned)
+        raise ValueError(
+            "Caption/product mismatch: "
+            f"{source.get('sku', 'unknown SKU')} is {expected_weight:g} ct, "
+            f"but the caption mentions {found} ct"
+        )
+
+
 def build_caption(job, source, account):
     """Build a localized caption and always append the product page URL.
 
@@ -417,6 +449,7 @@ def build_caption(job, source, account):
         auto_hashtags = generate_hashtags(product_info, account.get("account_name", ""))
         caption_text = f"{auto_caption}\n\n{auto_hashtags}"
 
+    _validate_caption_product_match(caption_text, source)
     return _append_product_link(caption_text, source, lang)
 
 
