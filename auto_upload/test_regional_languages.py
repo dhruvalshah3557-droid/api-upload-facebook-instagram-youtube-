@@ -6,10 +6,22 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import main
+from caption_generator import generate_caption, generate_hashtags, get_lang
 from sheets_reader import SheetsReader
 
 
 class RegionalLanguageTests(unittest.TestCase):
+    def test_colour_diam_does_not_match_philippines_by_substring(self):
+        self.assertEqual(get_lang("Colour Diam"), "en")
+        self.assertEqual(get_lang("Colour Diam Philippines"), "tl")
+
+    def test_configured_account_language_overrides_page_name_guess(self):
+        product = {"title": "Pink Diamond", "description": "Rare natural stone"}
+        caption = generate_caption(product, "Colour Diam Philippines", "en-GB")
+        hashtags = generate_hashtags(product, "Colour Diam Philippines", "en-GB")
+        self.assertNotIn("Gumawa ng pahayag", caption)
+        self.assertIn("#FineJewelry", hashtags)
+
     def test_all_configured_regional_columns_are_mapped(self):
         expected = {
             "ar": ("arabic description", "arabic hashtag"),
