@@ -108,14 +108,17 @@ PAGE_LANG_MAP = {
 
 def get_lang(page_name):
     key = page_name.strip().lower()
-    for name, lang in PAGE_LANG_MAP.items():
-        if name in key or key in name:
+    if key in PAGE_LANG_MAP:
+        return PAGE_LANG_MAP[key]
+    for name in sorted(PAGE_LANG_MAP, key=len, reverse=True):
+        if name in key:
+            lang = PAGE_LANG_MAP[name]
             return lang
     return "en"
 
 
-def generate_caption(product_info, page_name=""):
-    lang = get_lang(page_name)
+def generate_caption(product_info, page_name="", language=""):
+    lang = str(language or "").split("-")[0].lower() or get_lang(page_name)
     title = product_info.get("title", "Diamond Jewelry")
     description = product_info.get("description", "Discover timeless elegance")
     templates = CAPTION_TEMPLATES.get(lang, CAPTION_TEMPLATES["en"])
@@ -123,8 +126,8 @@ def generate_caption(product_info, page_name=""):
     return template.format(title=title[:50], description=description[:100])
 
 
-def generate_hashtags(product_info, page_name=""):
-    lang = get_lang(page_name)
+def generate_hashtags(product_info, page_name="", language=""):
+    lang = str(language or "").split("-")[0].lower() or get_lang(page_name)
     base_tags = HASHTAG_TEMPLATES.get(lang, HASHTAG_TEMPLATES["en"])
     keywords = product_info.get("keywords", [])
     extra = []
