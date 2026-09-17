@@ -40,6 +40,7 @@ HOUSEKEEPING_LIMIT = 8
 REVIVE_LIMIT = 12
 LOCK_PREFIX = "IDEMPOTENCY_LOCK"
 FINGERPRINT_PREFIX = "MEDIA_FINGERPRINT"
+JOB_ID_PREFIX = "STABLE_JOB_ID"
 _CURRENT_SHEETS = None
 _DNS_CACHE = {}
 _VIDEO_VALIDATION_CACHE = {}
@@ -113,6 +114,14 @@ def _fingerprint_marker(job, source):
     return f"{FINGERPRINT_PREFIX}:{hashlib.sha256(raw).hexdigest()}"
 
 
+def _job_id_marker(job):
+    job_id = str(job.get("job_id", "") or "").strip()
+    if not job_id:
+        return ""
+    digest = hashlib.sha256(job_id.encode("utf-8")).hexdigest()
+    return f"{JOB_ID_PREFIX}:{digest}"
+
+
 _parse_queue_time = parse_queue_time
 _slot_eligible = slot_eligible
 _ready_platform_counts = ready_platform_counts
@@ -126,14 +135,17 @@ def _queue_state(sheets, now=None, accounts=None):
     reserved = set()
     now = now or datetime.now(timezone.utc)
     activity = rolling_activity(records, accounts or {}, now)
-    pattern = f"{FINGERPRINT_PREFIX}:"
+    patterns = (f"{FINGERPRINT_PREFIX}:", f"{JOB_ID_PREFIX}:")
     for rec in records:
         status = str(rec.get("status", "") or "").strip().lower()
         if status in (Config.JOB_STATUS_UPLOADED, "hold"):
+            job_marker = _job_id_marker(rec)
+            if job_marker:
+                reserved.add(job_marker)
             notes = str(rec.get("notes", "") or "")
             for part in notes.split("|"):
                 part = part.strip()
-                if part.startswith(pattern):
+                if part.startswith(patterns):
                     reserved.add(part.split()[0])
     return reserved, activity
 
@@ -543,6 +555,16 @@ def _healthy_candidates(
                 if str(job.get("platform", "") or "").lower() != platform:
                     continue
 
+                job_marker = _job_id_marker(job)
+                if job_marker and job_marker in reserved_fingerprints:
+                    if housekeeping < HOUSEKEEPING_LIMIT:
+                        sheets.update_job(job, {
+                            "status": Config.JOB_STATUS_SKIPPED,
+                            "notes": "Duplicate stable job ID already uploaded or protected by idempotency lock",
+                        })
+                        housekeeping += 1
+                    continue
+
                 source = sources.get(job.get("sku"))
                 if not source:
                     if housekeeping < HOUSEKEEPING_LIMIT:
@@ -609,6 +631,8 @@ def _healthy_candidates(
                 chosen = job
                 seen_fingerprints.add(fingerprint)
                 reserved_fingerprints.add(marker)
+                if job_marker:
+                    reserved_fingerprints.add(job_marker)
                 break
 
             if chosen:
@@ -650,7 +674,10 @@ def guarded_publish(job, source, account):
 
     old_notes = str(job.get("notes", "") or "")
     marker = _fingerprint_marker(job, source)
+    job_marker = _job_id_marker(job)
     lock_note = f"{LOCK_PREFIX}:{int(time.time())} | {marker}"
+    if job_marker:
+        lock_note = f"{lock_note} | {job_marker}"
     if old_notes:
         lock_note = f"{lock_note} | {old_notes}"
 
