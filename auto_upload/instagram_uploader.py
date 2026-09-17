@@ -234,7 +234,7 @@ class InstagramUploader:
         """Mix audio into a silent Reel and upload the resulting bytes to Meta."""
         selection_key = f"instagram|{self.ig_user_id}|{media_url}"
         name, content, content_type = prepare_video(
-            media_url, fill_9x16=False, selection_key=selection_key
+            media_url, fill_9x16=True, selection_key=selection_key
         )
         params = {
             "media_type": "REELS",
