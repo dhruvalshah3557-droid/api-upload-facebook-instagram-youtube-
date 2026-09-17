@@ -940,6 +940,7 @@ def run_generate(sheets=None):
     accounts = sheets.get_accounts()
     sources = sheets.get_source_rows()
     existing = sheets.get_existing_job_keys()
+    existing_job_ids = sheets.get_existing_job_ids()
     # Accounts with no queue history must not wait behind destinations that
     # already have thousands of jobs. Snapshot counts before adding missing
     # keys so empty/new queues (including LINE) are filled first.
@@ -952,10 +953,12 @@ def run_generate(sheets=None):
     already_present = 0
     for job in generate_jobs(sources, accounts):
         key = job_unique_key(job)
-        if key in existing:
+        job_id = str(job.get("job_id", "") or "").strip()
+        if job_id in existing_job_ids or key in existing:
             already_present += 1
             continue
         existing.add(key)
+        existing_job_ids.add(job_id)
         account_id = str(job.get("account_id", "") or "review")
         missing_by_account.setdefault(account_id, []).append(job)
 
