@@ -74,6 +74,25 @@ class RegionalLanguageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "refusing English fallback"):
             main.build_caption({"platform": "instagram"}, source, account)
 
+    def test_greece_generates_native_fallback_when_source_has_no_greek_column(self):
+        source = {
+            "lang_captions": {},
+            "lang_hashtags": {},
+            "hashtags": "#diamond",
+            "product_link": "https://colourdiam.com/product/1",
+            "product_name": "Fancy Yellow Diamond Ring",
+        }
+        account = {
+            "primary_language": "el-GR",
+            "fallback_language": "en-GB",
+            "account_name": "Colour Diam Greece",
+        }
+
+        caption = main.build_caption({"platform": "instagram"}, source, account)
+        self.assertIn("#Διαμάντια", caption)
+        self.assertIn("Δείτε το προϊόν:", caption)
+        self.assertNotIn("#diamond", caption)
+
     def test_vietnam_source_import_headers_are_supported(self):
         row = {
             "vietnam description": "Mô tả tiếng Việt",
