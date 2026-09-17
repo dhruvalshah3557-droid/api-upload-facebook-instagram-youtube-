@@ -196,7 +196,7 @@ def _dns_resolves(url):
     return ok
 
 
-def _video_validation_reason(url):
+def _video_validation_reason(url, force=False):
     """Return a stable corruption reason for a video, or an empty string.
 
     Content-Type checks cannot detect truncated MP4s or broken containers.  Probe
@@ -205,7 +205,7 @@ def _video_validation_reason(url):
     are treated as transient and left to the normal uploader retry path.
     """
     url = str(url or "").strip()
-    if not url or main.media_kind(url) != "video":
+    if not url or (not force and main.media_kind(url) != "video"):
         return ""
     if url in _VIDEO_VALIDATION_CACHE:
         return _VIDEO_VALIDATION_CACHE[url]
@@ -218,7 +218,7 @@ def _video_validation_reason(url):
     return reason
 
 
-def _media_preflight_reason(media):
+def _media_preflight_reason(media, force_video=False):
     """Return why a job's media is definitively unusable, if known."""
     usable = 0
     for url in media:
@@ -228,7 +228,7 @@ def _media_preflight_reason(media):
         if classification == "invalid":
             continue
         usable += 1
-        reason = _video_validation_reason(url)
+        reason = _video_validation_reason(url, force=force_video)
         if reason:
             return f"video failed validation ({url}): {reason}"
     if not usable:
@@ -574,7 +574,15 @@ def _healthy_candidates(
                         housekeeping += 1
                     continue
 
-                media_problem = _media_preflight_reason(media)
+                selection = str(job.get("media_selection", "") or "")
+                force_video = (
+                    str(job.get("format", "") or "").strip().lower() == "video"
+                    or selection == "product_video"
+                    or selection.startswith("model_video:")
+                )
+                media_problem = _media_preflight_reason(
+                    media, force_video=force_video
+                )
                 if media_problem:
                     if housekeeping < HOUSEKEEPING_LIMIT:
                         sheets.update_job(job, {
