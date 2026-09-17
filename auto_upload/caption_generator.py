@@ -60,6 +60,13 @@ CAPTION_TEMPLATES = {
         "{title} 새로 입고되었습니다! {description}",
         "{title}로 특별한 스타일을 연출하세요",
     ],
+    "el": [
+        "✨ {title} — διαχρονική κομψότητα και μοναδική λάμψη.",
+        "Ανακαλύψτε την ομορφιά του {title}. ✨",
+        "Αναδείξτε το στυλ σας με το {title}.",
+        "Νέα άφιξη: {title}. Ένα κόσμημα που ξεχωρίζει.",
+        "Κάντε κάθε στιγμή ξεχωριστή με το {title}.",
+    ],
 }
 
 HASHTAG_TEMPLATES = {
@@ -71,6 +78,7 @@ HASHTAG_TEMPLATES = {
     "ru": ["#ColourDiam", "#ювелирныеизделия", "#бриллианты", "#роскошь", "#подарок"],
     "ja": ["#ColourDiam", "#ジュエリー", "#ダイヤモンド", "#ラグジュアリー", "#ギフト"],
     "ko": ["#ColourDiam", "#주얼리", "#다이아몬드", "#럭셔리", "#선물"],
+    "el": ["#ColourDiam", "#Διαμάντια", "#Κοσμήματα", "#ΠολυτελήΚοσμήματα", "#Κομψότητα"],
 }
 
 PAGE_LANG_MAP = {
@@ -98,6 +106,7 @@ PAGE_LANG_MAP = {
     "israel": "he",
     "hebrew": "he",
     "colour diam spain": "es",
+    "colour diam greece": "el",
     "colour diam arabic": "ar",
     "trending jewel": "en",
     "colour diam limited": "en",
