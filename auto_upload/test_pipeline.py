@@ -173,6 +173,13 @@ class FakeSheets:
                       str(rec.get("media_selection", "")).strip()))
         return keys
 
+    def get_existing_job_ids(self):
+        return {
+            str(rec.get("job_id", "") or "").strip()
+            for rec in self.queue_rows
+            if str(rec.get("job_id", "") or "").strip()
+        }
+
     def append_jobs(self, jobs):
         self.append_jobs_calls += 1
         for job in jobs:
@@ -279,6 +286,23 @@ def test_generate_is_idempotent():
     keys = [main.job_unique_key(j) for j in fake.appended_jobs]
     assert len(keys) == len(set(keys)), "duplicate unique job keys produced"
     print("OK test_generate_is_idempotent")
+
+
+def test_generate_uses_stable_job_id_when_mutable_key_drifted():
+    accounts = [_account()]
+    sources = {"100": _source("100")}
+    existing = [{
+        "job_id": "100-FB-CD-carousel", "sku": "100", "account_id": "FB-CD",
+        "platform": "facebook", "format": "carousel",
+        "media_selection": "legacy-carousel-name", "status": "uploaded",
+    }]
+    fake = FakeSheets(sources, accounts, existing)
+    with patch.object(Config, "MAX_GENERATE_JOBS", 10):
+        main.run_generate(fake)
+    assert "100-FB-CD-carousel" not in {
+        job["job_id"] for job in fake.appended_jobs
+    }, fake.appended_jobs
+    print("OK test_generate_uses_stable_job_id_when_mutable_key_drifted")
 
 
 def test_generation_cap_is_fair_across_accounts():
@@ -525,7 +549,7 @@ def test_optimized_preflight_skips_corrupt_video_and_uses_next_job():
 
     bad = {
         "job_id": "bad", "account_id": "FB-CD", "platform": "facebook",
-        "sku": "1", "row": 3, "attempts": 0, "notes": "",
+        "sku": "1", "row": 5, "attempts": 0, "notes": "",
     }
     good = {
         "job_id": "good", "account_id": "FB-CD", "platform": "facebook",
@@ -608,6 +632,43 @@ def test_queue_state_counts_only_successes_in_rolling_24h():
     print("OK test_queue_state_counts_only_successes_in_rolling_24h")
 
 
+def test_stable_job_id_blocks_duplicate_when_media_changed():
+    import optimized_runner
+
+    job_id = "3442-FB-ISR-carousel"
+    records = [{"job_id": job_id, "status": "uploaded", "notes": ""}]
+    queue_ws = types.SimpleNamespace(get_all_records=lambda head: records)
+    queue_sheets = types.SimpleNamespace(queue_ws=queue_ws, queue_header_row=1)
+    reserved, _ = optimized_runner._queue_state(queue_sheets)
+
+    duplicate = {
+        "job_id": job_id, "account_id": "FB-ISR", "platform": "facebook",
+        "format": "carousel", "sku": "3442", "row": 12,
+        "attempts": 0, "notes": "",
+    }
+    updates = []
+    sheets = types.SimpleNamespace(
+        update_job=lambda job, values: updates.append((job, values))
+    )
+    accounts = {
+        "FB-ISR": {
+            "enabled": True, "platform": "facebook",
+            "platform_account_id": "123", "timezone": "UTC",
+        }
+    }
+    with patch("optimized_runner._local_slot_due", return_value=True), \
+         patch("optimized_runner._rotation_rank", return_value=0):
+        selected = optimized_runner._healthy_candidates(
+            [duplicate], accounts, {}, sheets, limit=1,
+            reserved_fingerprints=reserved,
+        )
+
+    assert selected == []
+    assert updates[0][1]["status"] == Config.JOB_STATUS_SKIPPED
+    assert "stable job ID" in updates[0][1]["notes"]
+    print("OK test_stable_job_id_blocks_duplicate_when_media_changed")
+
+
 def test_account_local_posting_slots_are_timezone_aware_and_idempotent():
     import optimized_runner
 
@@ -641,6 +702,7 @@ def test_source_import_duplicate_headers_do_not_abort_uploads():
 
 if __name__ == "__main__":
     test_generate_is_idempotent()
+    test_generate_uses_stable_job_id_when_mutable_key_drifted()
     test_generation_cap_is_fair_across_accounts()
     test_one_failure_does_not_stop_others()
     test_second_run_does_not_repost_uploaded()
@@ -653,6 +715,7 @@ if __name__ == "__main__":
     test_video_preflight_result_is_cached_across_accounts()
     test_all_primary_accounts_prioritize_24h_deficit()
     test_queue_state_counts_only_successes_in_rolling_24h()
+    test_stable_job_id_blocks_duplicate_when_media_changed()
     test_account_local_posting_slots_are_timezone_aware_and_idempotent()
     test_source_import_duplicate_headers_do_not_abort_uploads()
     print("All pipeline tests passed.")
