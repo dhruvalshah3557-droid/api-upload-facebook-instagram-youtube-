@@ -93,6 +93,20 @@ class RegionalLanguageTests(unittest.TestCase):
         self.assertIn("Δείτε το προϊόν:", caption)
         self.assertNotIn("#diamond", caption)
 
+    def test_turkish_headers_ignore_trailing_spaces_and_case(self):
+        row = {
+            "Turkish Description": "Türkçe ürün açıklaması",
+            "turkish hashtag ": "#DoğalElmas, #LüksMücevher",
+        }
+        caption = SheetsReader._pick(
+            row, SheetsReader.LANG_CAPTION_COLS["tr"]
+        )
+        hashtag = SheetsReader._pick(
+            row, SheetsReader.LANG_TAG_COLS["tr"]
+        )
+        self.assertEqual(caption, "Türkçe ürün açıklaması")
+        self.assertEqual(hashtag, "#DoğalElmas, #LüksMücevher")
+
     def test_vietnam_source_import_headers_are_supported(self):
         row = {
             "vietnam description": "Mô tả tiếng Việt",
