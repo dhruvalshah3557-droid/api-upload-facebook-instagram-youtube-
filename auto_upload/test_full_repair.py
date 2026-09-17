@@ -172,6 +172,19 @@ class FullRepairTests(unittest.TestCase):
         self.assertEqual(sampled[-1]["job_id"], "999")
         self.assertGreater(len({j["job_id"] for j in sampled}), 290)
 
+    def test_extensionless_video_is_forced_through_ffprobe_preflight(self):
+        url = "https://media.example/download?id=broken-video"
+        with patch("optimized_runner._dns_resolves", return_value=True), \
+             patch("optimized_runner.main._classify_media_url", return_value="unknown"), \
+             patch("optimized_runner._video_validation_reason",
+                   return_value="audio-only source") as validate:
+            reason = optimized_runner._media_preflight_reason(
+                [url], force_video=True
+            )
+
+        self.assertIn("audio-only source", reason)
+        validate.assert_called_once_with(url, force=True)
+
     def test_recent_instagram_rate_limit_pauses_instagram_only(self):
         now = datetime(2026, 9, 9, 12, 0, tzinfo=timezone.utc)
         jobs = [{
