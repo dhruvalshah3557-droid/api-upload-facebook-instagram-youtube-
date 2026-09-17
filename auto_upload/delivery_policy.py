@@ -10,7 +10,7 @@ import re
 
 PRIMARY_PLATFORMS = ("instagram", "facebook", "youtube")
 MINIMUM_POSTS_24H = 7
-MINIMUM_GAP_HOURS = 3
+MINIMUM_GAP_HOURS = 2
 LINE_QUOTA_EXHAUSTED = True
 _GVIZ_DATE_RE = re.compile(
     r"Date\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)"
