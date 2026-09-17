@@ -43,6 +43,14 @@ class _RateLimitResponse:
         }}
 
 
+class _UploadResponse:
+    status_code = 200
+    ok = True
+
+    def json(self):
+        return {"success": True}
+
+
 class InstagramMusicRotationTests(unittest.TestCase):
     def setUp(self):
         InstagramUploader._LAST_AUDIO_BY_ACCOUNT.clear()
@@ -147,6 +155,28 @@ class InstagramMusicRotationTests(unittest.TestCase):
             with self.assertRaisesRegex(InstagramRateLimitError, "2207051"):
                 uploader._create_resumable_reel("https://example.com/reel.mp4", "caption")
         self.assertGreater(InstagramUploader._RATE_LIMIT_UNTIL, 0)
+
+    def test_resumable_reel_is_normalized_to_full_screen_9x16(self):
+        uploader = InstagramUploader.__new__(InstagramUploader)
+        uploader.ig_user_id = "123"
+        uploader.access_token = "token"
+        uploader.page_name = "Colour Diam Dubai"
+        with mock.patch(
+            "instagram_uploader.prepare_video",
+            return_value=("reel.mp4", b"video", "video/mp4"),
+        ) as prepare, mock.patch(
+            "instagram_uploader.requests.post",
+            side_effect=[_ContainerResponse(), _UploadResponse()],
+        ):
+            uploader._create_resumable_reel(
+                "https://example.com/reel.mp4", "caption"
+            )
+
+        self.assertTrue(prepare.call_args.kwargs["fill_9x16"])
+        self.assertEqual(
+            prepare.call_args.kwargs["selection_key"],
+            "instagram|123|https://example.com/reel.mp4",
+        )
 
 
 if __name__ == "__main__":
