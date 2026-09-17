@@ -146,8 +146,18 @@ def _probe_job_media(job, media):
     if not Config.MEDIA_VALIDATION:
         return media
     strict = []
+    selection = str(job.get("media_selection", "") or "")
+    expects_video = (
+        str(job.get("format", "") or "").strip().lower() == "video"
+        or selection == "product_video"
+        or selection.startswith("model_video:")
+    )
     for url in media:
-        if media_kind(url) == "video":
+        # Product/model video jobs are videos by contract even when their CDN
+        # URL has no extension or reports application/octet-stream. Force an
+        # ffprobe before choosing the account turn so bad audio-only/truncated
+        # sources cannot consume a publish attempt.
+        if expects_video or media_kind(url) == "video":
             reason = validate_media_url(url, kind="video", ffprobe=True)
             if reason:
                 raise Exception(f"Media validation failed ({url}): {reason}")
@@ -283,6 +293,7 @@ _PRODUCT_LINK_LABELS = {
     "ko": "제품 보기", "ru": "Посмотреть товар", "he": "לצפייה במוצר",
     "id": "Lihat produk", "my": "ကုန်ပစ္စည်းကိုကြည့်ရန်", "th": "ดูสินค้า",
     "tl": "Tingnan ang produkto", "fil": "Tingnan ang produkto",
+    "el": "Δείτε το προϊόν",
 }
 
 
@@ -348,6 +359,7 @@ _REGIONAL_FALLBACK_HASHTAGS = {
     "th": "#เพชร #เครื่องประดับ #เครื่องประดับหรู",
     "tl": "#Brilyante #Alahas #MarangyangAlahas",
     "fil": "#Brilyante #Alahas #MarangyangAlahas",
+    "el": "#Διαμάντια #Κοσμήματα #ΠολυτελήΚοσμήματα",
 }
 
 
@@ -402,9 +414,19 @@ def build_caption(job, source, account):
     if lang != "en":
         localized_caption = str(lang_captions.get(lang, "") or "").strip()
         if not localized_caption:
-            raise ValueError(
-                f"Missing required {lang} regional caption; refusing English fallback"
-            )
+            if lang == "el":
+                product_info = {
+                    "title": source.get("product_name", "Κόσμημα με διαμάντια"),
+                    "description": source.get("product_name", ""),
+                    "keywords": [source.get("product_name", "")],
+                }
+                localized_caption = generate_caption(
+                    product_info, account.get("account_name", ""), lang
+                )
+            else:
+                raise ValueError(
+                    f"Missing required {lang} regional caption; refusing English fallback"
+                )
         tags = _REGIONAL_FALLBACK_HASHTAGS.get(lang, "")
         if not tags:
             raise ValueError(
