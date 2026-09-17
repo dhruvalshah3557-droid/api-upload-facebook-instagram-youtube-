@@ -496,6 +496,16 @@ class SheetsReader:
         return keys
 
     @_retry_gsheet
+    def get_existing_job_ids(self):
+        """Return stable queue IDs, independent of mutable media metadata."""
+        records = self.queue_ws.get_all_records(head=self.queue_header_row)
+        return {
+            str(rec.get("job_id", "") or "").strip()
+            for rec in records
+            if str(rec.get("job_id", "") or "").strip()
+        }
+
+    @_retry_gsheet
     @_throttle_write
     def append_jobs(self, jobs):
         if not jobs:
