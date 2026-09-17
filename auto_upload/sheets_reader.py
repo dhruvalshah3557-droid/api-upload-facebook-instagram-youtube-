@@ -218,8 +218,22 @@ class SheetsReader:
 
     @staticmethod
     def _pick(row, *names):
+        # gspread preserves header whitespace in get_all_records(). Regional
+        # columns are maintained by people and may contain trailing spaces or
+        # capitalization differences (for example "turkish hashtag "). Match
+        # exact keys first, then normalize both configured and live headers.
         for name in names:
             v = row.get(name)
+            if v is not None and str(v).strip():
+                return str(v).strip()
+
+        normalized = {
+            str(key).strip().casefold(): value
+            for key, value in (row or {}).items()
+            if str(key).strip()
+        }
+        for name in names:
+            v = normalized.get(str(name).strip().casefold())
             if v is not None and str(v).strip():
                 return str(v).strip()
         return ""
