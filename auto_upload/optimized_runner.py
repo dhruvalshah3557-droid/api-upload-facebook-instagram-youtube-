@@ -41,6 +41,7 @@ REVIVE_LIMIT = 12
 LOCK_PREFIX = "IDEMPOTENCY_LOCK"
 FINGERPRINT_PREFIX = "MEDIA_FINGERPRINT"
 JOB_ID_PREFIX = "STABLE_JOB_ID"
+PRODUCT_ACCOUNT_PREFIX = "PRODUCT_ACCOUNT"
 _CURRENT_SHEETS = None
 _DNS_CACHE = {}
 _VIDEO_VALIDATION_CACHE = {}
@@ -122,6 +123,19 @@ def _job_id_marker(job):
     return f"{JOB_ID_PREFIX}:{digest}"
 
 
+def _product_account_marker(job):
+    """Stable lock for one product per destination, regardless of post format."""
+    sku = str(job.get("sku", "") or "").strip().lower()
+    account_id = str(job.get("account_id", "") or "").strip().lower()
+    platform = str(job.get("platform", "") or "").strip().lower()
+    if not sku or not account_id:
+        return ""
+    digest = hashlib.sha256(
+        f"{account_id}|{platform}|{sku}".encode("utf-8")
+    ).hexdigest()
+    return f"{PRODUCT_ACCOUNT_PREFIX}:{digest}"
+
+
 _parse_queue_time = parse_queue_time
 _slot_eligible = slot_eligible
 _ready_platform_counts = ready_platform_counts
@@ -135,13 +149,19 @@ def _queue_state(sheets, now=None, accounts=None):
     reserved = set()
     now = now or datetime.now(timezone.utc)
     activity = rolling_activity(records, accounts or {}, now)
-    patterns = (f"{FINGERPRINT_PREFIX}:", f"{JOB_ID_PREFIX}:")
+    patterns = (
+        f"{FINGERPRINT_PREFIX}:", f"{JOB_ID_PREFIX}:",
+        f"{PRODUCT_ACCOUNT_PREFIX}:",
+    )
     for rec in records:
         status = str(rec.get("status", "") or "").strip().lower()
         if status in (Config.JOB_STATUS_UPLOADED, "hold"):
             job_marker = _job_id_marker(rec)
             if job_marker:
                 reserved.add(job_marker)
+            product_marker = _product_account_marker(rec)
+            if product_marker:
+                reserved.add(product_marker)
             notes = str(rec.get("notes", "") or "")
             for part in notes.split("|"):
                 part = part.strip()
@@ -565,6 +585,16 @@ def _healthy_candidates(
                         housekeeping += 1
                     continue
 
+                product_marker = _product_account_marker(job)
+                if product_marker and product_marker in reserved_fingerprints:
+                    if housekeeping < HOUSEKEEPING_LIMIT:
+                        sheets.update_job(job, {
+                            "status": Config.JOB_STATUS_SKIPPED,
+                            "notes": "Duplicate product already uploaded to this account in another media format",
+                        })
+                        housekeeping += 1
+                    continue
+
                 source = sources.get(job.get("sku"))
                 if not source:
                     if housekeeping < HOUSEKEEPING_LIMIT:
@@ -633,6 +663,8 @@ def _healthy_candidates(
                 reserved_fingerprints.add(marker)
                 if job_marker:
                     reserved_fingerprints.add(job_marker)
+                if product_marker:
+                    reserved_fingerprints.add(product_marker)
                 break
 
             if chosen:
@@ -675,9 +707,12 @@ def guarded_publish(job, source, account):
     old_notes = str(job.get("notes", "") or "")
     marker = _fingerprint_marker(job, source)
     job_marker = _job_id_marker(job)
+    product_marker = _product_account_marker(job)
     lock_note = f"{LOCK_PREFIX}:{int(time.time())} | {marker}"
     if job_marker:
         lock_note = f"{lock_note} | {job_marker}"
+    if product_marker:
+        lock_note = f"{lock_note} | {product_marker}"
     if old_notes:
         lock_note = f"{lock_note} | {old_notes}"
 

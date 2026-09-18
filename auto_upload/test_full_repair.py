@@ -48,6 +48,53 @@ import optimized_runner
 
 
 class FullRepairTests(unittest.TestCase):
+    def test_same_product_different_format_is_blocked_per_account(self):
+        records = [{
+            "job_id": "298-IG-KUWAIT-carousel",
+            "sku": "298",
+            "account_id": "IG-KUWAIT",
+            "platform": "instagram",
+            "status": "uploaded",
+            "notes": "",
+        }]
+        queue_ws = types.SimpleNamespace(get_all_records=lambda head: records)
+        queue_sheets = types.SimpleNamespace(queue_ws=queue_ws, queue_header_row=1)
+        reserved, _ = optimized_runner._queue_state(queue_sheets)
+
+        duplicate_video = {
+            "job_id": "298-IG-KUWAIT-product_video",
+            "sku": "298",
+            "account_id": "IG-KUWAIT",
+            "platform": "instagram",
+            "format": "video",
+            "media_selection": "product_video",
+            "row": 9,
+            "attempts": 0,
+            "notes": "",
+        }
+        updates = []
+        sheets = types.SimpleNamespace(
+            update_job=lambda job, values: updates.append((job, values))
+        )
+        accounts = {
+            "IG-KUWAIT": {
+                "enabled": True,
+                "platform": "instagram",
+                "platform_account_id": "17841436113237015",
+                "timezone": "Asia/Kuwait",
+            }
+        }
+        with patch("optimized_runner._local_slot_due", return_value=True), \
+             patch("optimized_runner._rotation_rank", return_value=0):
+            selected = optimized_runner._healthy_candidates(
+                [duplicate_video], accounts, {}, sheets, limit=1,
+                reserved_fingerprints=reserved,
+            )
+
+        self.assertEqual(selected, [])
+        self.assertEqual(updates[0][1]["status"], "skipped")
+        self.assertIn("another media format", updates[0][1]["notes"])
+
     def test_instagram_carousel_does_not_embed_product_video(self):
         source = {
             "main_image": "https://media.example/center.jpg",
