@@ -191,6 +191,35 @@ class RegionalLanguageTests(unittest.TestCase):
         self.assertIn("ดูสินค้า: https://colourdiam.com/product/1", caption)
         self.assertNotIn("View product", caption)
 
+    def test_kuwait_instagram_uses_clickable_bio_cta_not_caption_url(self):
+        source = {
+            "sku": "298",
+            "lang_captions": {"ar": "وصف عربي فاخر"},
+            "lang_hashtags": {"ar": "#ألماس"},
+            "hashtags": "#diamond",
+            "product_link": "https://colourdiam.com/productdetail/298",
+        }
+        account = {
+            "primary_language": "ar-KW",
+            "fallback_language": "en-GB",
+            "account_name": "Colour Diam Kuwait",
+        }
+        caption = main.build_caption(
+            {"platform": "instagram", "account_id": "IG-KUWAIT"},
+            source,
+            account,
+        )
+        self.assertIn("الرابط في السيرة الذاتية", caption)
+        self.assertIn("رمز المنتج: 298", caption)
+        self.assertNotIn("https://colourdiam.com/productdetail/298", caption)
+
+        facebook_caption = main.build_caption(
+            {"platform": "facebook", "account_id": "FB-KUWAIT"},
+            source,
+            account,
+        )
+        self.assertIn("https://colourdiam.com/productdetail/298", facebook_caption)
+
     def test_wrong_diamond_weight_caption_is_blocked(self):
         source = {
             "sku": "681",

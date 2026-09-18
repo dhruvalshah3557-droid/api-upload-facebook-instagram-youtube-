@@ -297,11 +297,21 @@ _PRODUCT_LINK_LABELS = {
 }
 
 
-def _append_product_link(caption, source, lang="en"):
+def _append_product_link(caption, source, lang="en", platform="", account_id=""):
     caption = str(caption or "").strip()
     product_link = str(source.get("product_link", "") or "").strip()
     if not product_link or product_link in caption:
         return caption
+    # Instagram does not make URLs in post/Reel captions clickable. For the
+    # Kuwait account, send shoppers to the clickable profile link and retain
+    # the SKU so they land on (or can request) the exact product. Facebook
+    # continues to receive the direct, clickable product URL below.
+    if platform == "instagram" and account_id == "IG-KUWAIT":
+        sku = str(source.get("sku", "") or "").strip()
+        link_line = "تسوقي عبر الرابط في السيرة الذاتية: colourdiam.com"
+        if sku:
+            link_line += f" • رمز المنتج: {sku}"
+        return f"{caption}\n\n{link_line}" if caption else link_line
     label = _PRODUCT_LINK_LABELS.get(lang, "View product")
     link_line = f"{label}: {product_link}"
     return f"{caption}\n\n{link_line}" if caption else link_line
@@ -476,7 +486,9 @@ def build_caption(job, source, account):
         caption_text = f"{auto_caption}\n\n{auto_hashtags}"
 
     _validate_caption_product_match(caption_text, source)
-    return _append_product_link(caption_text, source, lang)
+    return _append_product_link(
+        caption_text, source, lang, platform, str(job.get("account_id", "") or "")
+    )
 
 
 def _carousel_images(media):
