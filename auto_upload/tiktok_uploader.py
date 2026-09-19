@@ -1,111 +1,90 @@
-import logging
+"""TikTok video/photo publishing through the connected Zernio account."""
 import os
+import uuid
 
 import requests
 
-from media_prep import prepare_video
-
-logger = logging.getLogger(__name__)
-
-TIKTOK_BASE = "https://open.tiktokapis.com/v2"
-
-_VIDEO_EXTS = (".mp4", ".mov", ".avi", ".mkv", ".webm")
+BASE = "https://zernio.com/api/v1"
 
 
-def _env(key, default=""):
-    value = os.getenv(key)
-    return value.strip() if value is not None and value.strip() else default
-
-
-def _is_video_url(url):
-    return any(ext in url.lower() for ext in _VIDEO_EXTS)
+class TikTokDeliveryUncertain(Exception):
+    """A post may exist; do not automatically submit it again."""
 
 
 class TikTokUploader:
-    """Publish videos via the TikTok Content Posting API v2.
-
-    Flow: POST /post/publish/video/init/ -> PUT the video bytes to the returned
-    upload_url (single chunk) -> POST /post/publish/video/finalize/. The access
-    token must carry the `video.publish` scope and be for a Content Posting API
-    app (not the old share/creator endpoints).
-    """
-
-    def __init__(self, access_token="", account_name=""):
-        self.access_token = access_token or _env("TIKTOK_ACCESS_TOKEN")
-        self.account_name = account_name
-        if not self.access_token:
-            raise Exception(
-                "TikTok access token missing: set TIKTOK_ACCESS_TOKEN"
-            )
+    def __init__(self, access_token="", account_name="", account_id="", job_id=""):
+        self.token = access_token or os.getenv("ZERNIO_API_KEY", "")
+        self.account_id = account_id
+        self.job_id = job_id
+        if not self.token or not self.account_id:
+            raise ValueError("TikTok requires ZERNIO_API_KEY and a Zernio account ID")
 
     def _headers(self):
-        return {
-            "Authorization": f"Bearer {self.access_token}",
-            "Content-Type": "application/json",
-        }
+        return {"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"}
 
-    def _init_upload(self, video_size, title):
+    def creator_info(self, media_type):
+        response = requests.get(
+            f"{BASE}/accounts/{self.account_id}/tiktok/creator-info",
+            headers=self._headers(), params={"mediaType": media_type}, timeout=30,
+        )
+        response.raise_for_status()
+        info = response.json()
+        levels = [p.get("value") if isinstance(p, dict) else p for p in info.get("privacyLevels", [])]
+        if "PUBLIC_TO_EVERYONE" not in levels:
+            raise ValueError("TikTok public posting is unavailable for this account")
+        if info.get("creator", {}).get("canPostMore") is False:
+            raise ValueError("TikTok creator posting limit reached")
+        return info
+
+    def _publish(self, urls, caption, media_type):
+        if not urls or any(not str(url).startswith("https://") for url in urls):
+            raise ValueError("TikTok requires publicly accessible HTTPS media URLs")
+        if media_type == "photo" and len(urls) > 35:
+            raise ValueError("TikTok photo posts allow at most 35 images")
+        info = self.creator_info(media_type)
+        settings = {
+            "privacy_level": "PUBLIC_TO_EVERYONE",
+            "allow_comment": False,
+            "content_preview_confirmed": True,
+            "express_consent_given": True,
+            "commercialContentType": "brand_organic",
+        }
+        # This account publishes its own product catalogue. Interactions are off;
+        # the operator authorized public automated publishing of the sheet queue.
+        if media_type == "photo":
+            settings.update(media_type="photo", photo_cover_index=0,
+                            description=caption[:4000], auto_add_music=True)
+        else:
+            settings.update(allow_duet=False, allow_stitch=False)
         body = {
-            "post_info": {
-                "title": (title or "")[:150],
-                "privacy_level": "SELF_ONLY",
-                "disable_duet": False,
-                "disable_comment": False,
-                "disable_stitch": False,
-            },
-            "source_info": {
-                "source": "FILE_UPLOAD",
-                "video_size": video_size,
-                "chunk_size": video_size,
-                "total_chunk_count": 1,
-            },
-            "draft": False,
+            "content": caption[:90] if media_type == "photo" else caption[:2200],
+            "mediaItems": [{"type": "image" if media_type == "photo" else "video", "url": u} for u in urls],
+            "platforms": [{"platform": "tiktok", "accountId": self.account_id}],
+            "tiktokSettings": settings,
+            "publishNow": True,
         }
-        resp = requests.post(
-            f"{TIKTOK_BASE}/post/publish/video/init/",
-            headers=self._headers(),
-            json=body,
-            timeout=60,
-        )
-        data = resp.json()
-        result = data.get("data", {})
-        publish_id = result.get("publish_id")
-        if not publish_id:
-            raise Exception(f"TikTok init error: {data}")
-        upload_url = result.get("upload_url", "")
-        logger.info(f"[{self.account_name}] TikTok publish_id={publish_id}")
-        return publish_id, upload_url
-
-    def _upload_content(self, upload_url, content):
-        resp = requests.put(
-            upload_url,
-            data=content,
-            headers={"Content-Type": "video/mp4"},
-            timeout=600,
-        )
-        if resp.status_code not in (200, 201, 204):
-            raise Exception(f"TikTok upload error {resp.status_code}: {resp.text[:500]}")
-
-    def _finalize(self, publish_id):
-        resp = requests.post(
-            f"{TIKTOK_BASE}/post/publish/video/finalize/",
-            headers=self._headers(),
-            json={"publish_id": publish_id},
-            timeout=60,
-        )
-        data = resp.json()
-        if not data.get("data", {}).get("publish_id"):
-            raise Exception(f"TikTok finalize error: {data}")
-        logger.info(f"[{self.account_name}] TikTok video published: {publish_id}")
+        headers = self._headers()
+        headers["x-request-id"] = str(uuid.uuid5(uuid.NAMESPACE_URL, self.account_id + ":" + self.job_id)) if self.job_id else str(uuid.uuid4())
+        try:
+            response = requests.post(f"{BASE}/posts", headers=headers, json=body, timeout=180)
+            if response.status_code >= 500:
+                raise TikTokDeliveryUncertain(f"Zernio HTTP {response.status_code}; check dashboard before retry")
+            if response.status_code == 409:
+                raise TikTokDeliveryUncertain("Zernio reports duplicate content; reconcile existing post")
+            response.raise_for_status()
+            data = response.json()
+        except (requests.Timeout, requests.ConnectionError) as exc:
+            raise TikTokDeliveryUncertain("Zernio request interrupted; check dashboard before retry") from exc
+        except ValueError as exc:
+            raise TikTokDeliveryUncertain("Zernio returned an unreadable response") from exc
+        post = data.get("post") or data.get("existingPost") or {}
+        targets = [p for p in post.get("platforms", []) if p.get("platform") == "tiktok"]
+        if not targets or targets[0].get("status") != "published":
+            raise TikTokDeliveryUncertain(f"Zernio post {post.get('_id', 'unknown')} not confirmed published; check dashboard")
+        return {"id": post.get("_id", ""), "url": targets[0].get("platformPostUrl") or ""}
 
     def upload(self, media_url, title="", description="", is_video=None):
-        """Publish a single video (TikTok is video-only)."""
-        name, content, content_type = prepare_video(media_url)
-        publish_id, upload_url = self._init_upload(len(content), title)
-        self._upload_content(upload_url, content)
-        self._finalize(publish_id)
-        return {"id": publish_id, "url": f"https://www.tiktok.com/@{self.account_name}/video/{publish_id}"}
+        return self._publish([media_url], description or title, "video")
 
     def upload_carousel(self, image_urls, caption="", product_id=""):
-        """TikTok does not support carousel/image posts via the Content Posting API."""
-        raise Exception("TikTok supports video posts only; carousel jobs should not be generated")
+        return self._publish(image_urls, caption, "photo")

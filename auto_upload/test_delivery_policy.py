@@ -157,6 +157,7 @@ class DeliveryPolicyTests(unittest.TestCase):
             "facebook": 21,
             "instagram": 5,
             "youtube": 1,
+            "tiktok": 0,
             "line": 0,
         })
         self.assertEqual(sum(slots.values()), 27)

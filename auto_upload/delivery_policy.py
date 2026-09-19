@@ -8,7 +8,7 @@ while its monthly Messaging API quota is exhausted.
 from datetime import datetime, timedelta, timezone
 import re
 
-PRIMARY_PLATFORMS = ("instagram", "facebook", "youtube")
+PRIMARY_PLATFORMS = ("instagram", "facebook", "youtube", "tiktok")
 MINIMUM_POSTS_24H = 7
 MINIMUM_GAP_HOURS = 2
 LINE_QUOTA_EXHAUSTED = True
@@ -69,13 +69,13 @@ def slot_eligible(account):
     platform = str(account.get("platform", "") or "").strip().lower()
     if platform not in PRIMARY_PLATFORMS:
         return False
-    if platform == "instagram" and not str(account.get("platform_account_id") or "").strip():
+    if platform in ("instagram", "tiktok") and not str(account.get("platform_account_id") or "").strip():
         return False
     return True
 
 
 def ready_platform_counts(accounts):
-    counts = {"facebook": 0, "instagram": 0, "youtube": 0}
+    counts = {"facebook": 0, "instagram": 0, "youtube": 0, "tiktok": 0}
     for _account_id, account in _accounts_items(accounts):
         platform = str((account or {}).get("platform", "") or "").strip().lower()
         if platform in counts and slot_eligible(account):

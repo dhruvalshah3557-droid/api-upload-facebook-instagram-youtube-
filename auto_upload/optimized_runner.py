@@ -302,6 +302,9 @@ def _account_publish_ready(account):
     Meta can resolve the linked professional account, use it immediately;
     otherwise skip it without consuming one of the limited Instagram slots.
     """
+    if account.get("platform") == "tiktok":
+        return bool(account.get("platform_account_id") and (
+            os.getenv(account.get("credential_property_key", "")) or os.getenv("ZERNIO_API_KEY")))
     if account.get("platform") != "instagram" or account.get("platform_account_id"):
         return True
 
@@ -349,7 +352,7 @@ def _platform_limits(limit, accounts=None):
         line = 1
     remaining = max(0, int(limit) - line)
     if remaining <= 0:
-        return {"facebook": 0, "instagram": 0, "youtube": 0, "line": line}
+        return {"facebook": 0, "instagram": 0, "youtube": 0, "tiktok": 0, "line": line}
 
     ready = _ready_platform_counts(accounts) if accounts is not None else None
     if ready is not None:
@@ -362,18 +365,18 @@ def _platform_limits(limit, accounts=None):
             instagram_cap = max(0, int(os.getenv("IG_MAX_JOBS_PER_RUN", "5")))
             slots["instagram"] = min(slots["instagram"], instagram_cap)
             return slots
-        slots = {"facebook": 0, "instagram": 0, "youtube": 0, "line": line}
+        slots = {"facebook": 0, "instagram": 0, "youtube": 0, "tiktok": 0, "line": line}
         assigned = 0
-        for platform in ("facebook", "instagram", "youtube"):
+        for platform in ("facebook", "instagram", "youtube", "tiktok"):
             if ready[platform] <= 0:
                 continue
             share = max(1, remaining * ready[platform] // total_ready)
             slots[platform] = min(ready[platform], share)
             assigned += slots[platform]
-        overflow = [p for p in ("facebook", "instagram", "youtube") if slots[p] < ready[p]]
+        overflow = [p for p in ("facebook", "instagram", "youtube", "tiktok") if slots[p] < ready[p]]
         while assigned > remaining:
             reduced = False
-            for platform in ("facebook", "instagram", "youtube"):
+            for platform in ("facebook", "instagram", "youtube", "tiktok"):
                 if assigned <= remaining:
                     break
                 if slots[platform] > 1:
@@ -541,7 +544,7 @@ def _healthy_candidates(
         slots.get("youtube", 0), slots.get("line", 0),
     )
 
-    for platform in ("facebook", "instagram", "youtube", "line"):
+    for platform in ("facebook", "instagram", "youtube", "tiktok", "line"):
         if platform == "instagram" and instagram_cooldown:
             main.logger.warning(
                 "Instagram selection deferred for %ss: Meta application cooldown active",
@@ -731,7 +734,7 @@ def _healthy_candidates(
 
 def _is_ambiguous_delivery_error(exc):
     """True when the platform may have accepted the post before the error."""
-    if isinstance(exc, (requests.Timeout, requests.ConnectionError)):
+    if isinstance(exc, (main.DeliveryUncertainError, requests.Timeout, requests.ConnectionError)):
         return True
     message = str(exc).lower()
     markers = (

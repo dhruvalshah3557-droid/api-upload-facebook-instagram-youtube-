@@ -103,3 +103,9 @@ Columns: `job_id, attempt_time, result, platform_post_id, published_url, api_err
 
 - Preview page: `auto_upload/preview.html` — interactive simulation of the pipeline (serve via `python3 -m http.server`).
 - `.env` goes in `auto_upload/` (gitignored), keys per `auto_upload/.env.example`.
+
+## TikTok via Zernio
+
+- TIKTOK-CD uses Zernio account ID `6aae50288d284ffb211a67e9` (@colourdiamondsbkk), with `ZERNIO_API_KEY` stored only in GitHub Secrets.
+- Supports product/model videos and photo carousels; caption comes from the existing same-SKU caption pipeline. Public own-brand posts, comments/duets/stitches off.
+- Included in production selection and the existing seven-post rolling daily delivery target. Unconfirmed Zernio responses remain on hold to prevent duplicate submissions.

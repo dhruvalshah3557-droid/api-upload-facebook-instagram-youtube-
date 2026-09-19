@@ -25,7 +25,7 @@ from media_prep import media_kind, validate_media_url
 from pinterest_uploader import PinterestUploader
 from shopee_uploader import ShopeeUploader
 from sheets_reader import SheetsReader
-from tiktok_uploader import TikTokUploader
+from tiktok_uploader import TikTokUploader, TikTokDeliveryUncertain
 from twitch_uploader import TwitchUploader
 from wechat_uploader import WeChatUploader
 from x_uploader import XUploader
@@ -654,13 +654,17 @@ def publish_job(job, source, account):
         return post_id, url
 
     if platform == "tiktok":
-        tiktok_token = os.getenv(account.get("credential_property_key", "")) or os.getenv("TIKTOK_ACCESS_TOKEN")
-        uploader = TikTokUploader(tiktok_token, account.get("account_name", ""))
-        title = (job.get("title") or source.get("product_name") or "Video")[:150]
-        post = uploader.upload(media[0], title=title, description=caption)
-        post_id = post.get("id", "")
-        url = post.get("url", f"https://www.tiktok.com/@{account.get('account_name', '')}/video/{post_id}")
-        return post_id, url
+        token = os.getenv(account.get("credential_property_key", "")) or os.getenv("ZERNIO_API_KEY")
+        uploader = TikTokUploader(token, account.get("account_name", ""),
+                                  account.get("platform_account_id", ""), job.get("job_id", ""))
+        try:
+            if format_type == "carousel":
+                post = uploader.upload_carousel(_carousel_images(media), caption)
+            else:
+                post = uploader.upload(media[0], description=caption)
+        except TikTokDeliveryUncertain as exc:
+            raise DeliveryUncertainError(str(exc)) from exc
+        return post.get("id", ""), post.get("url", "")
 
     if platform == "twitch":
         if format_type != "video":

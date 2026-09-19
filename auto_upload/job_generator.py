@@ -98,7 +98,7 @@ def generate_jobs(sources, accounts):
             platform = account.get("platform", "")
             account_id = account.get("account_id", "")
 
-            if platform in ("facebook", "instagram", "line", "wechat", "pinterest", "x", "linkedin"):
+            if platform in ("facebook", "instagram", "line", "wechat", "pinterest", "x", "linkedin", "tiktok"):
                 if has_carousel_media:
                     jobs.append(_make_job(sku, account_id, platform, "carousel", "carousel", account))
                 if source["video_url"]:
@@ -107,7 +107,7 @@ def generate_jobs(sources, accounts):
                     jobs.append(_make_job(sku, account_id, platform, "carousel", f"model_photo:{i}", account))
                 for i in range(len(source["model_videos"])):
                     jobs.append(_make_job(sku, account_id, platform, "video", f"model_video:{i}", account))
-            elif platform in ("youtube", "tiktok", "twitch"):
+            elif platform in ("youtube", "twitch"):
                 if source["video_url"]:
                     jobs.append(_make_job(sku, account_id, platform, "video", "product_video", account))
                 for i in range(len(source["model_videos"])):
