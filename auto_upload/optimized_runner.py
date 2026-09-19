@@ -34,6 +34,7 @@ from delivery_policy import (
     slot_eligible,
 )
 from job_generator import _is_clean_source
+from sheets_reader import SheetsReader
 PREFLIGHT_SCAN_LIMIT = 1000
 PER_ACCOUNT_SCAN_LIMIT = 300
 HOUSEKEEPING_LIMIT = 8
@@ -137,7 +138,7 @@ def _job_id_marker(job):
 
 def _product_account_marker(job):
     """Stable lock for one product per destination, regardless of post format."""
-    sku = str(job.get("sku", "") or "").strip().lower()
+    sku = SheetsReader._normalize_sku(job.get("sku", "")).lower()
     account_id = str(job.get("account_id", "") or "").strip().lower()
     platform = str(job.get("platform", "") or "").strip().lower()
     if not sku or not account_id:

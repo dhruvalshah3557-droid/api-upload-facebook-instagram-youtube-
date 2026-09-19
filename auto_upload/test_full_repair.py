@@ -158,6 +158,51 @@ class FullRepairTests(unittest.TestCase):
 
         self.assertEqual(selected, [])
 
+    def test_sheets_numeric_sku_still_blocks_same_product_on_page(self):
+        records = [{
+            "job_id": "1135-FB-CD-carousel",
+            "sku": 1135.0,
+            "account_id": "FB-CD",
+            "platform": "facebook",
+            "status": "uploaded",
+            "notes": "",
+        }]
+        queue_ws = types.SimpleNamespace(get_all_records=lambda head: records)
+        queue_sheets = types.SimpleNamespace(queue_ws=queue_ws, queue_header_row=1)
+        reserved, _ = optimized_runner._queue_state(queue_sheets)
+
+        duplicate_video = {
+            "job_id": "1135-FB-CD-product_video",
+            "sku": "1135",
+            "account_id": "FB-CD",
+            "platform": "facebook",
+            "format": "video",
+            "media_selection": "product_video",
+            "row": 9,
+            "attempts": 0,
+            "notes": "",
+        }
+        updates = []
+        sheets = types.SimpleNamespace(
+            update_job=lambda job, values: updates.append((job, values))
+        )
+        accounts = {
+            "FB-CD": {
+                "enabled": True,
+                "platform": "facebook",
+                "timezone": "Asia/Bangkok",
+            }
+        }
+        with patch("optimized_runner._local_slot_due", return_value=True), \
+             patch("optimized_runner._rotation_rank", return_value=0):
+            selected = optimized_runner._healthy_candidates(
+                [duplicate_video], accounts, {}, sheets, limit=1,
+                reserved_fingerprints=reserved,
+            )
+
+        self.assertEqual(selected, [])
+        self.assertEqual(updates[0][1]["status"], "skipped")
+
     def test_caption_preflight_skips_unpublishable_job_and_picks_next(self):
         jobs = [
             {"job_id": "1263-FB-TURKEY-carousel", "sku": "1263", "account_id": "FB-TURKEY",
