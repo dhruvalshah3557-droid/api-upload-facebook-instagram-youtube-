@@ -157,6 +157,8 @@ class FakeSheets:
                 "tag_stock_id_used": str(rec.get("tag_stock_id_used", "")).strip(),
                 "caption_final": str(rec.get("caption_final", "")).strip(),
                 "attempts": int(rec.get("attempts") or 0),
+                "last_attempt_at": str(rec.get("last_attempt_at", "") or "").strip(),
+                "error_message": str(rec.get("error_message", "") or "").strip(),
                 "notes": str(rec.get("notes", "")).strip(),
             })
         return jobs

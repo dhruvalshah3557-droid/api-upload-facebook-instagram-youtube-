@@ -176,10 +176,12 @@ class DeliveryPolicyTests(unittest.TestCase):
     def test_platform_limits_fallback_excludes_line_at_production_cap(self):
         slots = optimized_runner._platform_limits(50)
         self.assertEqual(slots["line"], 0)
+        self.assertEqual(slots["tiktok"], 0)
         self.assertEqual(sum(slots.values()), 50)
         self.assertGreaterEqual(slots["facebook"], 1)
         self.assertGreaterEqual(slots["instagram"], 1)
         self.assertGreaterEqual(slots["youtube"], 1)
+        self.assertEqual(set(slots), {"facebook", "instagram", "youtube", "tiktok", "line"})
 
     def test_healthy_candidates_apply_global_instagram_budget(self):
         jobs = []

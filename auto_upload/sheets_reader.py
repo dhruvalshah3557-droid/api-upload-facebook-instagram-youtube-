@@ -469,6 +469,8 @@ class SheetsReader:
                 "tag_stock_id_used": self._normalize_sku(rec.get("tag_stock_id_used", "")),
                 "caption_final": str(rec.get("caption_final", "")).strip(),
                 "attempts": int(rec.get("attempts") or 0) if str(rec.get("attempts") or "").strip().isdigit() else 0,
+                "last_attempt_at": str(rec.get("last_attempt_at", "") or "").strip(),
+                "error_message": str(rec.get("error_message", "") or "").strip(),
                 "notes": str(rec.get("notes", "")).strip(),
             })
         return jobs

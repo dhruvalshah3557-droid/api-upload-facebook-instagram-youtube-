@@ -464,6 +464,65 @@ class FullRepairTests(unittest.TestCase):
         self.assertTrue(active)
         self.assertGreater(wait, 0)
 
+    def test_instagram_rate_limit_reads_notes_when_error_message_missing(self):
+        now = datetime(2026, 9, 9, 12, 0, tzinfo=timezone.utc)
+        jobs = [{
+            "platform": "instagram",
+            "error_message": "",
+            "notes": "Meta application limit; cooldown active, retry preserved META_RATE_LIMIT",
+            "last_attempt_at": "2026-09-09T11:55:00",
+        }]
+        active, wait = optimized_runner._instagram_rate_limit_active(jobs, now)
+        self.assertTrue(active)
+        self.assertGreater(wait, 0)
+
+    def test_known_unusable_pending_jobs_are_skipped_so_healthy_work_is_found(self):
+        jobs = []
+        for row in range(1, 40):
+            jobs.append({
+                "job_id": "bad-%s-YT-CD-product_video" % row,
+                "account_id": "YT-CD",
+                "platform": "youtube",
+                "sku": "bad-%s" % row,
+                "row": row,
+                "attempts": 0,
+                "notes": "",
+                "error_message": "Media preflight failed: all media URLs are unavailable, dead, DNS-invalid, or not media",
+            })
+        jobs.append({
+            "job_id": "good-YT-CD-product_video",
+            "account_id": "YT-CD",
+            "platform": "youtube",
+            "sku": "good",
+            "row": 40,
+            "attempts": 0,
+            "notes": "",
+            "error_message": "",
+        })
+        accounts = {
+            "YT-CD": {
+                "enabled": True,
+                "platform": "youtube",
+                "platform_account_id": "UCTWbcY-YtvAx2QUZKXt230A",
+                "timezone": "Asia/Bangkok",
+            }
+        }
+        sources = {
+            "good": {"sku": "good", "main_image": "https://media.example/good.jpg"},
+        }
+        sheets = types.SimpleNamespace(update_job=lambda *args, **kwargs: None)
+        with patch("optimized_runner._local_slot_due", return_value=True), \
+             patch("optimized_runner._rotation_rank", return_value=0), \
+             patch("optimized_runner._is_clean_source", return_value=(True, "")), \
+             patch("optimized_runner.resolve_media_fixed", return_value=["https://media.example/good.mp4"]), \
+             patch("optimized_runner._dns_resolves", return_value=True), \
+             patch("optimized_runner.main._classify_media_url", return_value="video"), \
+             patch("optimized_runner._video_validation_reason", return_value=""):
+            selected = optimized_runner._healthy_candidates(
+                jobs, accounts, sources, sheets, limit=1,
+            )
+        self.assertEqual([job["sku"] for job in selected], ["good"])
+
 
 if __name__ == "__main__":
     unittest.main()

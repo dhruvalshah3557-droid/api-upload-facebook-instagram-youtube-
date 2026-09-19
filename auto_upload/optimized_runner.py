@@ -38,7 +38,7 @@ from job_generator import _is_clean_source
 from sheets_reader import SheetsReader
 PREFLIGHT_SCAN_LIMIT = 1000
 PER_ACCOUNT_SCAN_LIMIT = 300
-HOUSEKEEPING_LIMIT = 8
+HOUSEKEEPING_LIMIT = 24
 REVIVE_LIMIT = 12
 LOCK_PREFIX = "IDEMPOTENCY_LOCK"
 FINGERPRINT_PREFIX = "MEDIA_FINGERPRINT"
@@ -52,6 +52,27 @@ LOCAL_POSTING_SLOTS = ((2, 0), (8, 0), (12, 0), (16, 0), (20, 0))
 SLOT_WINDOW_MINUTES = 45
 
 INSTAGRAM_RATE_LIMIT_MARKER = "meta_rate_limit"
+_UNUSABLE_PENDING_MARKERS = (
+    "media preflight failed",
+    "all media urls are unavailable",
+    "source row integrity mismatch",
+    "invalid_grant",
+    "invalid_client",
+    "401 client error",
+    "unauthorized for url",
+    "dns-invalid",
+    "not media",
+    "token has been expired or revoked",
+)
+
+
+def _known_unusable_pending(job):
+    """True when a pending row already recorded a permanent media/auth failure."""
+    blob = " ".join((
+        str(job.get("error_message", "") or ""),
+        str(job.get("notes", "") or ""),
+    )).lower()
+    return any(marker in blob for marker in _UNUSABLE_PENDING_MARKERS)
 
 
 def _instagram_rate_limit_active(jobs, now=None):
@@ -62,8 +83,15 @@ def _instagram_rate_limit_active(jobs, now=None):
     for job in jobs:
         if str(job.get("platform", "") or "").lower() != "instagram":
             continue
-        error = str(job.get("error_message", "") or "").lower()
-        if INSTAGRAM_RATE_LIMIT_MARKER not in error:
+        blob = " ".join((
+            str(job.get("error_message", "") or ""),
+            str(job.get("notes", "") or ""),
+        )).lower()
+        if (
+            INSTAGRAM_RATE_LIMIT_MARKER not in blob
+            and "application limit" not in blob
+            and "application request limit" not in blob
+        ):
             continue
         attempted_at = _parse_queue_time(job.get("last_attempt_at"))
         if attempted_at and attempted_at >= cutoff:
@@ -360,16 +388,22 @@ def _platform_limits(limit, accounts=None):
     if not LINE_QUOTA_EXHAUSTED and limit >= 5:
         line = 1
     remaining = max(0, int(limit) - line)
+    empty = {
+        "facebook": 0, "instagram": 0, "youtube": 0, "tiktok": 0, "line": line,
+    }
     if remaining <= 0:
-        return {"facebook": 0, "instagram": 0, "youtube": 0, "tiktok": 0, "line": line}
+        return empty
 
     ready = _ready_platform_counts(accounts) if accounts is not None else None
     if ready is not None:
         total_ready = sum(ready.values())
         if total_ready <= 0:
-            return {"facebook": remaining, "instagram": 0, "youtube": 0, "line": line}
+            slots = dict(empty)
+            slots["facebook"] = remaining
+            return slots
         if total_ready <= remaining:
-            slots = dict(ready)
+            slots = dict(empty)
+            slots.update(ready)
             slots["line"] = line
             instagram_cap = max(0, int(os.getenv("IG_MAX_JOBS_PER_RUN", "5")))
             slots["instagram"] = min(slots["instagram"], instagram_cap)
@@ -408,16 +442,26 @@ def _platform_limits(limit, accounts=None):
         return slots
 
     if remaining <= 1:
-        return {"facebook": 1, "instagram": 0, "youtube": 0, "line": line}
+        slots = dict(empty)
+        slots["facebook"] = 1
+        return slots
     if remaining <= 3:
-        return {"facebook": 1, "instagram": 1, "youtube": max(0, remaining - 2), "line": line}
+        slots = dict(empty)
+        slots["facebook"] = 1
+        slots["instagram"] = 1
+        slots["youtube"] = max(0, remaining - 2)
+        return slots
     youtube = 2 if remaining >= 50 else 1
     instagram = min(
         max(0, remaining - youtube - 1),
         max(0, int(os.getenv("IG_MAX_JOBS_PER_RUN", "5"))),
     )
     facebook = remaining - youtube - instagram
-    return {"facebook": facebook, "instagram": instagram, "youtube": youtube, "line": line}
+    slots = dict(empty)
+    slots["facebook"] = facebook
+    slots["instagram"] = instagram
+    slots["youtube"] = youtube
+    return slots
 
 
 def _rotation_rank(account_id, platform, accounts, slots):
@@ -548,9 +592,9 @@ def _healthy_candidates(
         ))
 
     main.logger.info(
-        "Account rotation slot: FB=%s IG=%s YT=%s LINE=%s",
+        "Account rotation slot: FB=%s IG=%s YT=%s TT=%s LINE=%s",
         slots.get("facebook", 0), slots.get("instagram", 0),
-        slots.get("youtube", 0), slots.get("line", 0),
+        slots.get("youtube", 0), slots.get("tiktok", 0), slots.get("line", 0),
     )
 
     for platform in ("facebook", "instagram", "youtube", "tiktok", "line"):
@@ -596,7 +640,10 @@ def _healthy_candidates(
             if not _account_publish_ready(account):
                 continue
 
-            account_jobs = jobs_by_account.get(account_id, [])
+            account_jobs = [
+                job for job in jobs_by_account.get(account_id, [])
+                if not _known_unusable_pending(job)
+            ]
             if not account_jobs:
                 continue
 
@@ -622,6 +669,8 @@ def _healthy_candidates(
                 if _is_locked(job):
                     continue
                 if str(job.get("platform", "") or "").lower() != platform:
+                    continue
+                if _known_unusable_pending(job):
                     continue
 
                 job_marker = _job_id_marker(job)
