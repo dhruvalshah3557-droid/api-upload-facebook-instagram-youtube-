@@ -16,7 +16,7 @@ if not TOKEN:
     sys.exit(1)
 
 resp = requests.get(
-    "https://graph.facebook.com/v19.0/me/accounts",
+    "https://graph.facebook.com/v26.0/me/accounts",
     params={
         "access_token": TOKEN,
         "fields": "id,name,access_token,instagram_business_account{id,username}",

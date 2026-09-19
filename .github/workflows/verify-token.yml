@@ -20,7 +20,7 @@ jobs:
           fi
 
           RESPONSE=$(curl -sS --max-time 60 \
-            "https://graph.facebook.com/v19.0/debug_token?input_token=$FB_ACCESS_TOKEN&access_token=$FB_ACCESS_TOKEN")
+            "https://graph.facebook.com/v26.0/debug_token?input_token=$FB_ACCESS_TOKEN&access_token=$FB_ACCESS_TOKEN")
 
           python3 -c '
           import json, sys, time

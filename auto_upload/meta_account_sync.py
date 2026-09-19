@@ -37,6 +37,7 @@ MARKETS = {
     "france": ("FRANCE", "fr-FR", "Europe/Paris"),
     "turkey": ("TURKEY", "tr-TR", "Europe/Istanbul"),
     "china": ("CHINA", "zh-CN", "Asia/Shanghai"),
+    "greece": ("GREECE", "el-GR", "Europe/Athens"),
 }
 
 

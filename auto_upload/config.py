@@ -69,7 +69,7 @@ class Config:
         if not cls.FB_ACCESS_TOKEN:
             return []
         resp = requests.get(
-            "https://graph.facebook.com/v19.0/me/accounts",
+            "https://graph.facebook.com/v26.0/me/accounts",
             params={"access_token": cls.FB_ACCESS_TOKEN},
             timeout=15,
         )
@@ -80,7 +80,7 @@ class Config:
             page_token = page["access_token"]
             page_name = page.get("name", "")
             ig_resp = requests.get(
-                f"https://graph.facebook.com/v19.0/{page_id}",
+                f"https://graph.facebook.com/v26.0/{page_id}",
                 params={
                     "fields": "instagram_business_account",
                     "access_token": cls.FB_ACCESS_TOKEN,

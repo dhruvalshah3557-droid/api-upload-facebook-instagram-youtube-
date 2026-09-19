@@ -6,7 +6,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from meta_account_sync import market_settings, sync_accounts
+from meta_account_sync import market_settings, sync_accounts, unique_account_id
 from sheets_reader import SheetsReader
 
 
@@ -85,6 +85,19 @@ class MetaAccountSyncTests(unittest.TestCase):
     def test_new_markets_have_regional_language_and_timezone(self):
         self.assertEqual(market_settings("Colour Diam Germany"), ("GERMANY", "de-DE", "Europe/Berlin"))
         self.assertEqual(market_settings("colourdiamchina"), ("CHINA", "zh-CN", "Asia/Shanghai"))
+        self.assertEqual(market_settings("Colour Diam Greece"), ("GREECE", "el-GR", "Europe/Athens"))
+
+    def test_greece_unique_account_id_uses_market_code(self):
+        used = set()
+        self.assertEqual(
+            unique_account_id("FB", "Colour Diam Greece", "111222333", used),
+            "FB-GREECE",
+        )
+        self.assertEqual(
+            unique_account_id("IG", "Colour dia Greece", "444555666", used),
+            "IG-GREECE",
+        )
+        self.assertEqual(used, {"FB-GREECE", "IG-GREECE"})
 
 
 if __name__ == "__main__":

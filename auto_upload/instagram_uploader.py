@@ -38,6 +38,7 @@ _REGIONAL_AUDIO_QUERIES = (
     (("france",), ("France trending", "French pop", "French luxury instrumental")),
     (("turkey",), ("Turkey trending", "Turkish pop", "Turkish instrumental")),
     (("china",), ("China trending", "Chinese pop", "Chinese instrumental")),
+    (("greece",), ("Greece trending", "Greek pop", "Greek luxury instrumental")),
 )
 _DEFAULT_AUDIO_QUERIES = ("trending luxury", "elegant instrumental", "cinematic fashion")
 

@@ -24,7 +24,7 @@ import sys
 
 import requests
 
-GRAPH_URL = "https://graph.facebook.com/v19.0"
+GRAPH_URL = "https://graph.facebook.com/v26.0"
 LONG_TOKEN_MAX_AGE_SECONDS = 60 * 24 * 60 * 60
 
 
