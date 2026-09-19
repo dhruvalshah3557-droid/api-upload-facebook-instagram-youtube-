@@ -431,9 +431,15 @@ def build_caption(job, source, account):
     if lang != "en":
         localized_caption = str(lang_captions.get(lang, "") or "").strip()
         if not localized_caption:
-            if lang == "el":
+            # Greece has no dedicated Source Import column. Turkey copy lives in
+            # the misnamed `greek description` header, and empty cells still
+            # need a native caption so the page is not starved.
+            if lang in ("el", "tr"):
+                default_title = (
+                    "Κόσμημα με διαμάντια" if lang == "el" else "Pırlanta mücevher"
+                )
                 product_info = {
-                    "title": source.get("product_name", "Κόσμημα με διαμάντια"),
+                    "title": source.get("product_name", "") or default_title,
                     "description": source.get("product_name", ""),
                     "keywords": [source.get("product_name", "")],
                 }

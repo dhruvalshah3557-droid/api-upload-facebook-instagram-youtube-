@@ -93,6 +93,44 @@ class RegionalLanguageTests(unittest.TestCase):
         self.assertIn("Δείτε το προϊόν:", caption)
         self.assertNotIn("#diamond", caption)
 
+    def test_turkey_uses_misnamed_greek_source_columns(self):
+        row = {
+            "greek description": "2.01 karat sari pirlanta yuzuk",
+            "greek hashtag ": "#SariPirlanta, #LuksMucevher",
+        }
+        caption = SheetsReader._pick(
+            row,
+            SheetsReader.LANG_CAPTION_COLS["tr"],
+            *SheetsReader.LANG_CAPTION_ALIASES["tr"],
+        )
+        hashtag = SheetsReader._pick(
+            row,
+            SheetsReader.LANG_TAG_COLS["tr"],
+            *SheetsReader.LANG_TAG_ALIASES["tr"],
+        )
+        self.assertEqual(caption, "2.01 karat sari pirlanta yuzuk")
+        self.assertEqual(hashtag, "#SariPirlanta, #LuksMucevher")
+
+    def test_turkey_generates_native_fallback_when_source_cell_is_empty(self):
+        source = {
+            "lang_captions": {},
+            "lang_hashtags": {},
+            "hashtags": "#diamond",
+            "product_link": "https://colourdiam.com/product/1",
+            "product_name": "Fancy Yellow Diamond Ring",
+        }
+        account = {
+            "primary_language": "tr-TR",
+            "fallback_language": "en-GB",
+            "account_name": "Colour Diam Turkey",
+        }
+
+        caption = main.build_caption({"platform": "facebook"}, source, account)
+        self.assertIn("#Elmas", caption)
+        self.assertIn("Ürünü görüntüle:", caption)
+        self.assertNotIn("#diamond", caption)
+        self.assertNotIn("Missing required tr regional caption", caption)
+
     def test_turkish_headers_ignore_trailing_spaces_and_case(self):
         row = {
             "Turkish Description": "Türkçe ürün açıklaması",

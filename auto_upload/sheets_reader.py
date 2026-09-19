@@ -118,11 +118,15 @@ class SheetsReader:
     }
     # Keep legacy/configured names above, while accepting the headers currently
     # used by Source Import. Header matching is exact after normalization.
+    # Live workbook stores Turkish copy in the misnamed `greek description` /
+    # `greek hashtag` columns (there is no `turkish description` header).
     LANG_CAPTION_ALIASES = {
         "vi": ("vietnam description",),
+        "tr": ("greek description",),
     }
     LANG_TAG_ALIASES = {
         "vi": ("vietnam hashtag",),
+        "tr": ("greek hashtag",),
     }
 
     QUEUE_COLS = [

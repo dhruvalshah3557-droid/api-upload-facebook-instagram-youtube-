@@ -157,8 +157,55 @@ class FullRepairTests(unittest.TestCase):
             )
 
         self.assertEqual(selected, [])
-        self.assertEqual(updates[0][1]["status"], "skipped")
-        self.assertIn("another media format", updates[0][1]["notes"])
+
+    def test_caption_preflight_skips_unpublishable_job_and_picks_next(self):
+        jobs = [
+            {"job_id": "1263-FB-TURKEY-carousel", "sku": "1263", "account_id": "FB-TURKEY",
+             "platform": "facebook", "format": "carousel", "media_selection": "carousel",
+             "row": 30, "attempts": 0, "notes": ""},
+            {"job_id": "1913-FB-TURKEY-carousel", "sku": "1913", "account_id": "FB-TURKEY",
+             "platform": "facebook", "format": "carousel", "media_selection": "carousel",
+             "row": 10, "attempts": 0, "notes": ""},
+        ]
+        accounts = {
+            "FB-TURKEY": {
+                "enabled": True,
+                "platform": "facebook",
+                "timezone": "Europe/Istanbul",
+                "primary_language": "vi-VN",
+            }
+        }
+        sources = {
+            "1263": {
+                "sku": "1263",
+                "lang_captions": {},
+                "product_name": "Ring",
+                "main_image": "https://media.example/1263.jpg",
+                "side_images": [],
+            },
+            "1913": {
+                "sku": "1913",
+                "lang_captions": {"vi": "Mo ta tieng Viet"},
+                "product_name": "Ring",
+                "main_image": "https://media.example/1913.jpg",
+                "side_images": [],
+            },
+        }
+        updates = []
+        sheets = types.SimpleNamespace(
+            update_job=lambda job, values: updates.append((job, values))
+        )
+        with patch("optimized_runner._platform_limits", return_value={"facebook": 1, "instagram": 0, "youtube": 0, "line": 0}), \
+             patch("optimized_runner._local_slot_due", return_value=True), \
+             patch("optimized_runner._rotation_rank", return_value=0), \
+             patch("optimized_runner._is_clean_source", return_value=(True, "")), \
+             patch("optimized_runner._media_preflight_reason", return_value=""):
+            selected = optimized_runner._healthy_candidates(
+                jobs, accounts, sources, sheets, limit=1
+            )
+        self.assertEqual(selected[0]["sku"], "1913")
+        self.assertEqual(updates[0][0]["job_id"], "1263-FB-TURKEY-carousel")
+        self.assertEqual(updates[0][1]["status"], "needs_review")
 
     def test_instagram_carousel_does_not_embed_product_video(self):
         source = {

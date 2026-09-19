@@ -67,6 +67,13 @@ CAPTION_TEMPLATES = {
         "Νέα άφιξη: {title}. Ένα κόσμημα που ξεχωρίζει.",
         "Κάντε κάθε στιγμή ξεχωριστή με το {title}.",
     ],
+    "tr": [
+        "{title} \u2014 zamans\u0131z \u015f\u0131kl\u0131k ve e\u015fsiz bir \u0131\u015f\u0131lt\u0131.",
+        "{title} g\u00fczelli\u011fini ke\u015ffedin.",
+        "Tarz\u0131n\u0131z\u0131 {title} ile \u00f6ne \u00e7\u0131kar\u0131n.",
+        "Yeni gelen: {title}. Fark yaratan bir m\u00fccevher.",
+        "Her an\u0131 {title} ile \u00f6zel k\u0131l\u0131n.",
+    ],
 }
 
 HASHTAG_TEMPLATES = {
@@ -79,6 +86,7 @@ HASHTAG_TEMPLATES = {
     "ja": ["#ColourDiam", "#ジュエリー", "#ダイヤモンド", "#ラグジュアリー", "#ギフト"],
     "ko": ["#ColourDiam", "#주얼리", "#다이아몬드", "#럭셔리", "#선물"],
     "el": ["#ColourDiam", "#Διαμάντια", "#Κοσμήματα", "#ΠολυτελήΚοσμήματα", "#Κομψότητα"],
+    "tr": ["#ColourDiam", "#Elmas", "#Mücevher", "#LüksMücevher", "#Pırlanta"],
 }
 
 PAGE_LANG_MAP = {
@@ -107,6 +115,7 @@ PAGE_LANG_MAP = {
     "hebrew": "he",
     "colour diam spain": "es",
     "colour diam greece": "el",
+    "colour diam turkey": "tr",
     "colour diam arabic": "ar",
     "trending jewel": "en",
     "colour diam limited": "en",

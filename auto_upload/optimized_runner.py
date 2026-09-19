@@ -685,6 +685,26 @@ def _healthy_candidates(
                         housekeeping += 1
                     continue
 
+                try:
+                    main.build_caption(job, source, account)
+                except ValueError as exc:
+                    caption_error = str(exc)
+                    if housekeeping < HOUSEKEEPING_LIMIT:
+                        sheets.update_job(job, {
+                            "status": Config.JOB_STATUS_NEEDS_REVIEW,
+                            "notes": "Auto-cleaned: regional caption preflight failed",
+                            "error_message": caption_error,
+                        })
+                        housekeeping += 1
+                    else:
+                        main.logger.warning(
+                            "Skipping %s for %s: %s",
+                            job.get("job_id", ""),
+                            account_id,
+                            caption_error,
+                        )
+                    continue
+
                 fingerprint = _media_fingerprint(job, source)
                 marker = _fingerprint_marker(job, source)
                 if marker in reserved_fingerprints:
