@@ -137,11 +137,13 @@ def get_lang(page_name):
 
 def generate_caption(product_info, page_name="", language=""):
     lang = str(language or "").split("-")[0].lower() or get_lang(page_name)
-    title = product_info.get("title", "Diamond Jewelry")
-    description = product_info.get("description", "Discover timeless elegance")
+    title = str(product_info.get("title") or "").strip() or "Diamond Jewelry"
+    description = str(product_info.get("description") or "").strip()
+    if description == title:
+        description = ""
     templates = CAPTION_TEMPLATES.get(lang, CAPTION_TEMPLATES["en"])
     template = random.choice(templates)
-    return template.format(title=title[:50], description=description[:100])
+    return template.format(title=title[:80], description=description[:100]).strip()
 
 
 def generate_hashtags(product_info, page_name="", language=""):

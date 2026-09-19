@@ -263,6 +263,54 @@ class SheetsReader:
         return s
 
     @staticmethod
+    def _details_fields(details):
+        fields = {}
+        for line in str(details or "").replace("\r", "").split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            for separator in (" - ", ": "):
+                if separator not in line:
+                    continue
+                key, value = line.split(separator, 1)
+                key = key.strip().lower()
+                value = value.strip()
+                if key and value and len(key) <= 24:
+                    fields[key] = value
+                    break
+        return fields
+
+    @classmethod
+    def _product_name_from_row(cls, rec, sku):
+        """Build a real product title from Source Import after PRODUCT NAME vanished."""
+        name = cls._pick(rec, "PRODUCT NAME", "Product Name", "product name")
+        if name:
+            return name
+        details = cls._pick(rec, "DETAILS", "Details")
+        code = cls._pick(rec, "CODE", "Code")
+        fields = cls._details_fields(details)
+        weight = fields.get("weight") or fields.get("carat") or fields.get("cts")
+        colour = fields.get("colour") or fields.get("color") or code
+        shape = fields.get("shape")
+        clarity = fields.get("clarity")
+        jewellery = "ring" in details.lower() or "18k" in details.lower()
+        if weight and colour:
+            parts = [f"{weight} Ct", colour]
+            if shape:
+                parts.append(shape)
+            parts.append("Ring" if jewellery else "Diamond")
+            if clarity:
+                parts.append(clarity)
+            return " ".join(part for part in parts if part)
+        for line in str(details).replace("\r", "").split("\n"):
+            line = line.strip()
+            if line and not line.lower().startswith("sku"):
+                return line[:120]
+        if code:
+            return f"{code} Diamond"
+        return f"STK {sku} Diamond Jewelry" if sku else "Diamond Jewelry"
+
+    @staticmethod
     def _is_center(url):
         return "center" in os.path.basename(str(url).split("?")[0]).lower()
 
@@ -412,6 +460,7 @@ class SheetsReader:
                 integrity_errors.append(
                     f"product link belongs to another SKU ({product_link})"
                 )
+            details = self._pick(rec, "DETAILS", "Details")
             sources[sku] = {
                 "row": idx,
                 "sku": sku,
@@ -421,7 +470,8 @@ class SheetsReader:
                 "certificate_media_url": certificate_media_url,
                 "source_status": str(rec.get("Status", "")).strip(),
                 "product_link": product_link,
-                "product_name": str(rec.get("PRODUCT NAME", "")).strip(),
+                "details": details,
+                "product_name": self._product_name_from_row(rec, sku),
                 "images": images,
                 "main_image": main_image,
                 "side_images": side_images,

@@ -702,6 +702,34 @@ def test_source_import_duplicate_headers_do_not_abort_uploads():
     print("OK test_source_import_duplicate_headers_do_not_abort_uploads")
 
 
+def test_source_import_builds_product_name_from_details():
+    from sheets_reader import SheetsReader
+
+    reader = SheetsReader.__new__(SheetsReader)
+    reader.SOURCE_HEADER_ROW = 1
+    reader.source_ws = types.SimpleNamespace(get_all_values=lambda: [
+        ["STK", "DETAILS", "CODE", "image1 link", "PRODUCT LINK"],
+        [
+            "309",
+            "Sku - 309\nWeight - 0.16\nColour - Fancy Deep Pink\nShape - Marquise\nClarity - SI2",
+            "Fancy Deep Pink",
+            "https://media.example/309/center.jpg",
+            "https://www.colourdiam.com/diamonddetails/Diamonds/Product/309",
+        ],
+        [
+            "1263",
+            "0.30 – Fancy Green VS\n18K Ring : 5.183 gram",
+            "",
+            "https://media.example/1263/center.jpg",
+            "https://colourdiam.com/productdetail/1263",
+        ],
+    ])
+    sources = reader.get_source_rows()
+    assert sources["309"]["product_name"] == "0.16 Ct Fancy Deep Pink Marquise Diamond SI2"
+    assert sources["1263"]["product_name"] == "0.30 – Fancy Green VS"
+    print("OK test_source_import_builds_product_name_from_details")
+
+
 if __name__ == "__main__":
     test_generate_is_idempotent()
     test_generate_uses_stable_job_id_when_mutable_key_drifted()
@@ -720,4 +748,5 @@ if __name__ == "__main__":
     test_stable_job_id_blocks_duplicate_when_media_changed()
     test_account_local_posting_slots_are_timezone_aware_and_idempotent()
     test_source_import_duplicate_headers_do_not_abort_uploads()
+    test_source_import_builds_product_name_from_details()
     print("All pipeline tests passed.")

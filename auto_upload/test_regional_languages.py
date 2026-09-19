@@ -258,6 +258,40 @@ class RegionalLanguageTests(unittest.TestCase):
         )
         self.assertIn("https://colourdiam.com/productdetail/298", facebook_caption)
 
+    def test_english_caption_uses_details_when_product_name_column_is_missing(self):
+        source = {
+            "sku": "309",
+            "product_name": "0.16 Ct Fancy Deep Pink Marquise Diamond SI2",
+            "details": "Sku - 309\nWeight - 0.16\nColour - Fancy Deep Pink",
+            "product_link": "https://www.colourdiam.com/diamonddetails/Diamonds/Product/309",
+            "facebook_caption": "",
+            "instagram_caption": "",
+            "hashtags": "",
+            "lang_captions": {},
+            "lang_hashtags": {},
+        }
+        account = {"primary_language": "en-GB", "account_name": "Colour Diam"}
+        caption = main.build_caption({"platform": "facebook"}, source, account)
+        self.assertIn("0.16 Ct Fancy Deep Pink", caption)
+        self.assertFalse(main._caption_has_blank_product(caption))
+
+    def test_blank_product_caption_is_replaced_with_product_title(self):
+        source = {
+            "sku": "256",
+            "product_name": "",
+            "details": "",
+            "product_link": "https://www.colourdiam.com/diamonddetails/Diamonds/Product/256",
+            "facebook_caption": "Elevate your style with .",
+            "hashtags": "#ColourDiam",
+            "lang_captions": {},
+            "lang_hashtags": {},
+        }
+        account = {"primary_language": "en-GB", "account_name": "Colour Diam"}
+        caption = main.build_caption({"platform": "facebook"}, source, account)
+        self.assertIn("STK 256", caption)
+        self.assertNotIn("Elevate your style with .", caption)
+        self.assertFalse(main._caption_has_blank_product(caption))
+
     def test_wrong_diamond_weight_caption_is_blocked(self):
         source = {
             "sku": "681",

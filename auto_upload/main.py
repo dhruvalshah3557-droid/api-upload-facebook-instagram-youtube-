@@ -391,8 +391,34 @@ def _carat_weights(text):
     return [float(value.replace(",", ".")) for value in _CARAT_WEIGHT_RE.findall(str(text or ""))]
 
 
+_BLANK_PRODUCT_CAPTION_RE = re.compile(
+    r"(with\s+\.|beauty of\s+\.|Stunning\s+just arrived|Make a statement with\s+\.|✨\s+—)",
+    re.IGNORECASE,
+)
+
+
+def _product_title(source):
+    name = str((source or {}).get("product_name") or "").strip()
+    if name:
+        return name
+    details = str((source or {}).get("details") or "").strip()
+    for line in details.replace("\r", "").split("\n"):
+        line = line.strip()
+        if line and not line.lower().startswith("sku"):
+            return line[:120]
+    sku = str((source or {}).get("sku") or "").strip()
+    return f"STK {sku} Diamond Jewelry" if sku else "Diamond Jewelry"
+
+
+def _caption_has_blank_product(caption_text):
+    text = re.sub(r"\s+", " ", str(caption_text or "")).strip()
+    return bool(_BLANK_PRODUCT_CAPTION_RE.search(text))
+
+
 def _validate_caption_product_match(caption_text, source):
     """Block a loose-diamond caption that describes a different carat weight."""
+    if _caption_has_blank_product(caption_text):
+        raise ValueError("Blank product caption; refusing to publish")
     product_link = str(source.get("product_link", "") or "").lower()
     if "/product/diamond/" not in product_link:
         return
@@ -435,13 +461,11 @@ def build_caption(job, source, account):
             # the misnamed `greek description` header, and empty cells still
             # need a native caption so the page is not starved.
             if lang in ("el", "tr"):
-                default_title = (
-                    "Κόσμημα με διαμάντια" if lang == "el" else "Pırlanta mücevher"
-                )
+                product_title = _product_title(source)
                 product_info = {
-                    "title": source.get("product_name", "") or default_title,
-                    "description": source.get("product_name", ""),
-                    "keywords": [source.get("product_name", "")],
+                    "title": product_title,
+                    "description": str(source.get("details") or "").strip() or product_title,
+                    "keywords": [product_title],
                 }
                 localized_caption = generate_caption(
                     product_info, account.get("account_name", ""), lang
@@ -479,16 +503,19 @@ def build_caption(job, source, account):
         else:
             caption = source.get("instagram_caption", "")
 
+        if _caption_has_blank_product(caption):
+            caption = ""
         if caption and hashtags:
             caption_text = f"{caption}\n\n{hashtags}"
         elif caption:
             caption_text = caption
 
     if not caption_text:
+        product_title = _product_title(source)
         product_info = {
-            "title": source.get("product_name", "Diamond Jewelry"),
-            "description": source.get("product_name", ""),
-            "keywords": [source.get("product_name", "")],
+            "title": product_title,
+            "description": str(source.get("details") or "").strip() or product_title,
+            "keywords": [product_title],
         }
         auto_caption = generate_caption(
             product_info, account.get("account_name", ""), lang
