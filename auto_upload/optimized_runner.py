@@ -136,6 +136,14 @@ def _product_account_marker(job):
     return f"{PRODUCT_ACCOUNT_PREFIX}:{digest}"
 
 
+def _paired_market_key(account_id):
+    """Return the shared market key for an FB/IG destination pair."""
+    account_id = str(account_id or "").strip().upper()
+    if account_id.startswith("FB-") or account_id.startswith("IG-"):
+        return account_id.split("-", 1)[1]
+    return ""
+
+
 _parse_queue_time = parse_queue_time
 _slot_eligible = slot_eligible
 _ready_platform_counts = ready_platform_counts
@@ -487,6 +495,7 @@ def _healthy_candidates(
     slots = _platform_limits(limit, accounts)
     seen_fingerprints = set()
     reserved_fingerprints = set(reserved_fingerprints or ())
+    paired_sku_by_market = {}
 
     jobs_by_account = {}
     for job in jobs:
@@ -568,6 +577,21 @@ def _healthy_candidates(
 
             chosen = None
             scan_jobs = _account_scan_jobs(account_jobs)
+            # Facebook is processed before Instagram. When both accounts share
+            # the same regional suffix (for example FB-MMR and IG-MMR), prefer
+            # the Facebook SKU for Instagram so the linked profiles publish
+            # the same product instead of two independent rotations. If that
+            # SKU has no healthy Instagram media, the normal fallback remains.
+            if platform == "instagram":
+                paired_sku = paired_sku_by_market.get(
+                    _paired_market_key(account_id)
+                )
+                if paired_sku:
+                    scan_jobs.sort(
+                        key=lambda job: 0
+                        if str(job.get("sku", "") or "") == paired_sku
+                        else 1
+                    )
             for job in scan_jobs:
 
                 if _is_locked(job):
@@ -670,6 +694,12 @@ def _healthy_candidates(
             if chosen:
                 selected.append(chosen)
                 platform_selected += 1
+                if platform == "facebook":
+                    market_key = _paired_market_key(account_id)
+                    if market_key:
+                        paired_sku_by_market[market_key] = str(
+                            chosen.get("sku", "") or ""
+                        )
                 main.logger.info(
                     "Selected account %s (%s), rotation rank=%s, account scan=%s",
                     account_id,

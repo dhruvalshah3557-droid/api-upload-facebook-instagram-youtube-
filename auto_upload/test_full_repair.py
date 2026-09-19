@@ -48,6 +48,35 @@ import optimized_runner
 
 
 class FullRepairTests(unittest.TestCase):
+    def test_linked_facebook_and_instagram_market_prefer_same_sku(self):
+        jobs = [
+            {"job_id": "101-FB-MMR-carousel", "sku": "101", "account_id": "FB-MMR", "platform": "facebook", "format": "carousel", "media_selection": "carousel", "row": 10, "attempts": 0, "notes": ""},
+            {"job_id": "202-IG-MMR-carousel", "sku": "202", "account_id": "IG-MMR", "platform": "instagram", "format": "carousel", "media_selection": "carousel", "row": 30, "attempts": 0, "notes": ""},
+            {"job_id": "101-IG-MMR-carousel", "sku": "101", "account_id": "IG-MMR", "platform": "instagram", "format": "carousel", "media_selection": "carousel", "row": 20, "attempts": 0, "notes": ""},
+        ]
+        accounts = {
+            "FB-MMR": {"enabled": True, "platform": "facebook", "timezone": "Asia/Yangon"},
+            "IG-MMR": {"enabled": True, "platform": "instagram", "platform_account_id": "17841430974311329", "timezone": "Asia/Yangon"},
+        }
+        sources = {
+            "101": {"main_image": "https://media.example/101.jpg", "side_images": []},
+            "202": {"main_image": "https://media.example/202.jpg", "side_images": []},
+        }
+        sheets = types.SimpleNamespace(update_job=lambda *args: None)
+        with patch("optimized_runner._platform_limits", return_value={"facebook": 1, "instagram": 1, "youtube": 0, "line": 0}), \
+             patch("optimized_runner._local_slot_due", return_value=True), \
+             patch("optimized_runner._rotation_rank", return_value=0), \
+             patch("optimized_runner._is_clean_source", return_value=(True, "")), \
+             patch("optimized_runner._media_preflight_reason", return_value=""):
+            selected = optimized_runner._healthy_candidates(
+                jobs, accounts, sources, sheets, limit=2
+            )
+
+        self.assertEqual(
+            [(job["account_id"], job["sku"]) for job in selected],
+            [("FB-MMR", "101"), ("IG-MMR", "101")],
+        )
+
     def test_same_product_different_format_is_blocked_per_account(self):
         records = [{
             "job_id": "298-IG-KUWAIT-carousel",
