@@ -22,11 +22,12 @@ DEFAULT_MODEL = "gpt-4o-mini"
 NO_FIX_MARKER = "NO_FIX"
 AUTO_FIX_LABEL = "auto-fix"
 SKIP_LABELS = {"auto-pr", "needs-human", "wontfix"}
-MAX_SELECT_FILES = 6
-MAX_FILE_CHARS = 15000
-MAX_CONTEXT_CHARS = 60000
-MAX_DIFF_CHARS = 30000
+MAX_SELECT_FILES = 8
+MAX_FILE_CHARS = 18000
+MAX_CONTEXT_CHARS = 80000
+MAX_DIFF_CHARS = 40000
 USER_AGENT = "auto-upload-issue-fixer"
+PIPELINE_TEST_TIMEOUT = 90
 
 
 def repo():
@@ -178,8 +179,10 @@ def request_diff(api_key, base_url, model, issue, context):
         {"role": "system", "content": (
             "You are an expert Python engineer fixing a bug in a social-media "
             "auto-uploader. Produce ONLY a unified git diff that fixes the "
-            "issue. If no code change can fix it, reply with exactly %s. "
-            "Never include markdown fences, prose, or explanations."
+            "issue. Prefer the smallest correct change. Do not invent secrets, "
+            "do not delete tests, and keep existing function names. If no code "
+            "change can fix it, reply with exactly %s. Never include markdown "
+            "fences, prose, or explanations."
         ) % NO_FIX_MARKER},
         {"role": "user", "content": (
             "Issue title: %s\n\nIssue body:\n%s\n\n"
@@ -256,6 +259,18 @@ def apply_and_validate(diff):
             if compiled.returncode != 0:
                 return False, "py_compile failed for %s:\n%s" % (
                     path, compiled.stderr.strip())
+    try:
+        tests = subprocess.run(
+            ["python3", "-m", "unittest", "discover", "-p", "test_*.py"],
+            cwd="auto_upload",
+            capture_output=True, text=True, timeout=PIPELINE_TEST_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        return False, "unittest timed out after %ss" % PIPELINE_TEST_TIMEOUT
+    if tests.returncode != 0:
+        return False, "unittest failed:\n%s" % (
+            (tests.stderr or tests.stdout or "unknown test failure")[-4000:]
+        )
     return True, changed
 
 
@@ -313,7 +328,7 @@ def handle_issue(token, api_key, base_url, model, issue):
     if SKIP_LABELS & labels:
         log("Issue #%s skipped (label %s)" % (
             number, sorted(SKIP_LABELS & labels)))
-        return "skipped"
+        return "skipped", None
 
     changed = None
     reason = None

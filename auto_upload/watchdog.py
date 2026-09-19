@@ -41,6 +41,25 @@ LEDGER_TITLE = "Watchdog Ledger"
 AUTO_FIX_LABEL = "auto-fix"
 MANUAL_REVIEW_LABEL = "manual-review"
 CONSECUTIVE_FAILURE_THRESHOLD = 3
+ZERO_UPLOAD_STALL_THRESHOLD = 2
+ZERO_UPLOAD_RE = re.compile(
+    r"(\d+)\s+pending\s+->\s+(\d+)\s+healthy job\(s\) selected",
+    re.IGNORECASE,
+)
+STALL_SIGNAL_PATTERNS = (
+    re.compile(r"No healthy upload candidates found", re.IGNORECASE),
+    re.compile(r"Media host does not resolve in DNS", re.IGNORECASE),
+    re.compile(r"Source row integrity mismatch", re.IGNORECASE),
+    re.compile(r"No healthy candidate for enabled account", re.IGNORECASE),
+)
+ACTIONABLE_STALL_PATTERNS = (
+    re.compile(r"Media host does not resolve in DNS", re.IGNORECASE),
+    re.compile(r"Source row integrity mismatch", re.IGNORECASE),
+    re.compile(
+        r"No healthy candidate for enabled account \S+ \((youtube|tiktok|facebook)\)",
+        re.IGNORECASE,
+    ),
+)
 
 # Credential / permission / configuration failures can never be fixed by the
 # Issue Fixer (no code change can refresh an invalidated access token). The
@@ -154,6 +173,61 @@ def extract_error_signature(log_text):
         if "error" in low or "failed" in low:
             return re.sub(r"\s+", " ", line.strip())[:220]
     return "unknown failure (no error text in log tail)"
+
+
+def parse_selected_jobs(log_text):
+    """Return (pending, selected) from a production log, or (None, None)."""
+    if not log_text:
+        return None, None
+    match = ZERO_UPLOAD_RE.search(log_text)
+    if not match:
+        return None, None
+    return int(match.group(1)), int(match.group(2))
+
+
+def extract_stall_signature(log_text):
+    if not log_text:
+        return "zero healthy jobs selected (run log unavailable)"
+    for pattern in ACTIONABLE_STALL_PATTERNS + STALL_SIGNAL_PATTERNS:
+        for line in log_text.splitlines():
+            if pattern.search(line):
+                return re.sub(r"\s+", " ", line.strip())[:220]
+    pending, selected = parse_selected_jobs(log_text)
+    if selected == 0:
+        return "Optimized queue: %s pending -> 0 healthy job(s) selected" % (
+            pending if pending is not None else "?"
+        )
+    return "zero healthy jobs selected"
+
+
+def is_actionable_stall(log_text):
+    """True when a green 0-upload run failed for a code-fixable media/source reason.
+
+    Instagram Meta cooldown with Facebook already at the 24h floor is expected
+    and must not open auto-fix issues.
+    """
+    if not log_text:
+        return False
+    return any(pattern.search(log_text) for pattern in ACTIONABLE_STALL_PATTERNS)
+
+
+def is_zero_upload_run(run, log_text=None):
+    if str(run.get("conclusion", "") or "").strip().lower() != "success":
+        return False
+    pending, selected = parse_selected_jobs(log_text or "")
+    return selected == 0
+
+
+def consecutive_zero_upload_runs(token, runs, limit=3):
+    """Inspect recent successful production runs for 0-selected-job stalls."""
+    stalled = []
+    for run in (runs or [])[:limit]:
+        log_text = get_run_log(token, run["id"])
+        if not is_zero_upload_run(run, log_text):
+            break
+        pending, selected = parse_selected_jobs(log_text)
+        stalled.append((run, log_text, pending, selected))
+    return stalled
 
 
 def is_credential_failure(signature):
@@ -610,6 +684,29 @@ def main():
                 lines.append("- Catch-up dispatch: skipped")
         else:
             lines.append("- Catch-up dispatch: not needed")
+
+        if due and runs_ok:
+            stalled = consecutive_zero_upload_runs(
+                token, runs, limit=ZERO_UPLOAD_STALL_THRESHOLD
+            )
+            if len(stalled) >= ZERO_UPLOAD_STALL_THRESHOLD:
+                _newest_run, log_text, pending, selected = stalled[0]
+                if is_actionable_stall(log_text):
+                    signature = extract_stall_signature(log_text)
+                    result = escalate_failure(
+                        token,
+                        signature,
+                        [item[0] for item in stalled],
+                    )
+                    lines.append(
+                        "- Zero-upload stall: %s pending -> %s selected; %s"
+                        % (pending if pending is not None else "?", selected, result)
+                    )
+                    lines.append("- Stall signature: `%s`" % signature)
+                else:
+                    lines.append(
+                        "- Zero-upload stall: ignored (Instagram cooldown or accounts already at floor)"
+                    )
 
     report = "\n".join(lines)
     print(report)

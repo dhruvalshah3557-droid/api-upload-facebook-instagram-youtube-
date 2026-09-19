@@ -730,6 +730,62 @@ def test_source_import_builds_product_name_from_details():
     print("OK test_source_import_builds_product_name_from_details")
 
 
+def test_compound_sku_product_links_are_not_false_mismatches():
+    from sheets_reader import SheetsReader
+
+    reader = SheetsReader.__new__(SheetsReader)
+    reader.SOURCE_HEADER_ROW = 1
+    reader.source_ws = types.SimpleNamespace(get_all_values=lambda: [
+        ["STK", "image1 link", "PRODUCT LINK"],
+        [
+            "665_142",
+            "https://www.colourdiam.com/Product/Jewellery/665_142/white45/center.jpg",
+            "https://colourdiam.com/productdetail/Menu/665/142",
+        ],
+        [
+            "3443_3444",
+            "https://www.colourdiam.com/Product/Jewellery/3442/white45/center.jpg",
+            "https://colourdiam.com/productdetail/Menu/3443/3444",
+        ],
+    ])
+    sources = reader.get_source_rows()
+    assert sources["665_142"]["integrity_error"] == ""
+    assert "another SKU" in sources["3443_3444"]["integrity_error"]
+    print("OK test_compound_sku_product_links_are_not_false_mismatches")
+
+
+def test_dead_cdn_hosts_are_rewritten_onto_live_origin():
+    import optimized_runner
+
+    rewritten = optimized_runner._rewrite_media_url(
+        "https://images.colourdiam.com/videos/STK298/model-video.mp4"
+    )
+    assert rewritten == "https://www.colourdiam.com/videos/STK298/model-video.mp4"
+    urls = optimized_runner._rewrite_media_urls(
+        ["https://videos.colourdiam.com/stk461-1.mp4"],
+        include_fallbacks=True,
+    )
+    assert urls[0] == "https://www.colourdiam.com/stk461-1.mp4"
+    assert "https://colourdiam.com/stk461-1.mp4" in urls
+    print("OK test_dead_cdn_hosts_are_rewritten_onto_live_origin")
+
+
+def test_dns_and_integrity_preflight_failures_are_retried():
+    import optimized_runner
+
+    job = {
+        "error_message": "Media preflight failed: all media URLs are unavailable, dead, DNS-invalid, or not media",
+        "notes": "Auto-cleaned: media failed production preflight",
+    }
+    assert not optimized_runner._known_unusable_pending(job)
+    auth_job = {
+        "error_message": "invalid_grant",
+        "notes": "",
+    }
+    assert optimized_runner._known_unusable_pending(auth_job)
+    print("OK test_dns_and_integrity_preflight_failures_are_retried")
+
+
 if __name__ == "__main__":
     test_generate_is_idempotent()
     test_generate_uses_stable_job_id_when_mutable_key_drifted()
@@ -749,4 +805,7 @@ if __name__ == "__main__":
     test_account_local_posting_slots_are_timezone_aware_and_idempotent()
     test_source_import_duplicate_headers_do_not_abort_uploads()
     test_source_import_builds_product_name_from_details()
+    test_compound_sku_product_links_are_not_false_mismatches()
+    test_dead_cdn_hosts_are_rewritten_onto_live_origin()
+    test_dns_and_integrity_preflight_failures_are_retried()
     print("All pipeline tests passed.")

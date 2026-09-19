@@ -53,26 +53,77 @@ SLOT_WINDOW_MINUTES = 45
 
 INSTAGRAM_RATE_LIMIT_MARKER = "meta_rate_limit"
 _UNUSABLE_PENDING_MARKERS = (
-    "media preflight failed",
-    "all media urls are unavailable",
-    "source row integrity mismatch",
     "invalid_grant",
     "invalid_client",
     "401 client error",
     "unauthorized for url",
-    "dns-invalid",
-    "not media",
     "token has been expired or revoked",
 )
+_RETRIABLE_PREFLIGHT_MARKERS = (
+    "media preflight failed",
+    "all media urls are unavailable",
+    "source row integrity mismatch",
+    "dns-invalid",
+    "not media",
+    "auto-blocked: source row integrity mismatch",
+    "auto-cleaned: media failed production preflight",
+)
+_DEAD_MEDIA_HOSTS = {
+    "images.colourdiam.com",
+    "videos.colourdiam.com",
+    "cdn.colourdiam.com",
+}
+_LIVE_MEDIA_HOSTS = (
+    "www.colourdiam.com",
+    "colourdiam.com",
+)
+_REWRITE_LOGGED = set()
 
 
 def _known_unusable_pending(job):
-    """True when a pending row already recorded a permanent media/auth failure."""
+    """True when a pending row already recorded a permanent auth failure."""
     blob = " ".join((
         str(job.get("error_message", "") or ""),
         str(job.get("notes", "") or ""),
     )).lower()
+    if any(marker in blob for marker in _RETRIABLE_PREFLIGHT_MARKERS):
+        return False
     return any(marker in blob for marker in _UNUSABLE_PENDING_MARKERS)
+
+
+def _rewrite_media_url(url):
+    """Map dead Colour Diam CDN hosts onto the live product origin."""
+    raw = str(url or "").strip()
+    if not raw:
+        return raw
+    try:
+        parsed = urlparse(raw)
+    except Exception:
+        return raw
+    host = (parsed.hostname or "").strip().lower()
+    if host not in _DEAD_MEDIA_HOSTS:
+        return raw
+    rewritten = parsed._replace(netloc=_LIVE_MEDIA_HOSTS[0]).geturl()
+    if host not in _REWRITE_LOGGED:
+        _REWRITE_LOGGED.add(host)
+        main.logger.info("Rewrote dead media host %s onto %s", host, _LIVE_MEDIA_HOSTS[0])
+    return rewritten
+
+
+def _rewrite_media_urls(urls, include_fallbacks=False):
+    rewritten = []
+    seen = set()
+    for url in urls or []:
+        value = _rewrite_media_url(url)
+        if value and value not in seen:
+            seen.add(value)
+            rewritten.append(value)
+        if include_fallbacks and value and value != url:
+            fallback = urlparse(value)._replace(netloc=_LIVE_MEDIA_HOSTS[1]).geturl()
+            if fallback not in seen:
+                seen.add(fallback)
+                rewritten.append(fallback)
+    return rewritten
 
 
 def _instagram_rate_limit_active(jobs, now=None):
@@ -123,8 +174,8 @@ def resolve_media_fixed(job, source):
         if certificate_media and main._is_carousel_image_url(certificate_media):
             media.append(certificate_media)
         media.extend(list(source.get("side_images", [])))
-        return main._dedupe_media(media)[:10]
-    return ORIGINAL_RESOLVE_MEDIA(job, source)
+        return _rewrite_media_urls(main._dedupe_media(media)[:10])
+    return _rewrite_media_urls(ORIGINAL_RESOLVE_MEDIA(job, source))
 
 
 def _model_media_priority(job):
@@ -263,7 +314,9 @@ def _dns_resolves(url):
     generic connection errors as 'unknown' so temporary network outages can retry,
     but a hostname with no DNS record is not transient. Reject it in preflight so
     one bad source URL cannot consume the account's publishing slot or fail the run.
+    Dead Colour Diam CDN hosts are rewritten onto the live origin first.
     """
+    url = _rewrite_media_url(url)
     try:
         host = (urlparse(str(url or "").strip()).hostname or "").strip().lower()
     except Exception:
@@ -308,7 +361,7 @@ def _video_validation_reason(url, force=False):
 def _media_preflight_reason(media, force_video=False):
     """Return why a job's media is definitively unusable, if known."""
     usable = 0
-    for url in media:
+    for url in _rewrite_media_urls(media, include_fallbacks=True):
         if not _dns_resolves(url):
             continue
         classification = main._classify_media_url(url)

@@ -3,8 +3,10 @@ import functools
 import logging
 import os
 import random
+import re
 import threading
 import time
+from urllib.parse import urlparse
 
 import gspread
 from config import Config
@@ -263,6 +265,37 @@ class SheetsReader:
         return s
 
     @staticmethod
+    def _sku_path_tokens(sku):
+        text = str(sku or "").strip().lower()
+        if not text:
+            return []
+        return [part for part in re.split(r"[_\-/]+", text) if part]
+
+    @classmethod
+    def _url_matches_sku(cls, url, sku):
+        """True when a media/product URL belongs to this SKU.
+
+        Compound SKUs such as 665_142 are stored as 665/142 in productdetail
+        paths. A raw substring check treated those as a different product and
+        blocked every paired jewellery row from auto-publish.
+        """
+        url_l = str(url or "").strip().lower()
+        sku_l = str(sku or "").strip().lower()
+        if not sku_l:
+            return True
+        if not url_l:
+            return False
+        if sku_l in url_l:
+            return True
+        tokens = cls._sku_path_tokens(sku_l)
+        if len(tokens) <= 1:
+            return False
+        path = urlparse(url_l).path
+        segments = [seg for seg in re.split(r"[/_\-]+", path) if seg]
+        segment_set = set(segments)
+        return all(token in segment_set for token in tokens)
+
+    @staticmethod
     def _details_fields(details):
         fields = {}
         for line in str(details or "").replace("\r", "").split("\n"):
@@ -440,15 +473,14 @@ class SheetsReader:
                 for code, col in self.LANG_TAG_COLS.items()
             }
             integrity_errors = []
-            sku_token = sku.lower()
-            if main_image and sku_token not in main_image.lower():
+            if main_image and not self._url_matches_sku(main_image, sku):
                 integrity_errors.append(
                     f"main image belongs to another SKU ({main_image})"
                 )
             mismatched_product_images = [
                 url for url in images
                 if "/product/jewellery/" in url.lower()
-                and sku_token not in url.lower()
+                and not self._url_matches_sku(url, sku)
             ]
             if mismatched_product_images:
                 integrity_errors.append(
@@ -456,7 +488,7 @@ class SheetsReader:
                     f"({mismatched_product_images[0]})"
                 )
             product_link = str(rec.get("PRODUCT LINK", "")).strip()
-            if product_link and sku_token not in product_link.lower():
+            if product_link and not self._url_matches_sku(product_link, sku):
                 integrity_errors.append(
                     f"product link belongs to another SKU ({product_link})"
                 )

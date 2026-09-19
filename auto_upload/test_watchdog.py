@@ -123,6 +123,25 @@ class WatchdogDeliveryTests(unittest.TestCase):
             {"uploaded": 2, "pending": 1},
         )
 
+    def test_zero_upload_log_is_actionable_for_dns_and_youtube_stalls(self):
+        log_text = (
+            "Optimized queue: 63126 pending -> 0 healthy job(s) selected\n"
+            "Media host does not resolve in DNS; rejecting URL: https://images.colourdiam.com/a.mp4\n"
+            "No healthy candidate for enabled account YT-CD (youtube) in bounded sample of 300/721 account jobs\n"
+        )
+        pending, selected = watchdog.parse_selected_jobs(log_text)
+        self.assertEqual((pending, selected), (63126, 0))
+        self.assertTrue(watchdog.is_actionable_stall(log_text))
+        self.assertIn("DNS", watchdog.extract_stall_signature(log_text))
+
+    def test_instagram_cooldown_zero_upload_is_not_actionable(self):
+        log_text = (
+            "Instagram selection deferred for 1560s: Meta application cooldown active\n"
+            "Optimized queue: 63126 pending -> 0 healthy job(s) selected\n"
+            "No healthy upload candidates found in per-account preflight\n"
+        )
+        self.assertFalse(watchdog.is_actionable_stall(log_text))
+
 
 if __name__ == "__main__":
     unittest.main()
