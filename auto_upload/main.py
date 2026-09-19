@@ -301,6 +301,7 @@ _PRODUCT_LINK_LABELS = {
     "id": "Lihat produk", "my": "ကုန်ပစ္စည်းကိုကြည့်ရန်", "th": "ดูสินค้า",
     "tl": "Tingnan ang produkto", "fil": "Tingnan ang produkto",
     "el": "Δείτε το προϊόν",
+    "lb": "عرض المنتج", "cs": "Zobrazit produkt",
 }
 
 
@@ -377,6 +378,8 @@ _REGIONAL_FALLBACK_HASHTAGS = {
     "tl": "#Brilyante #Alahas #MarangyangAlahas",
     "fil": "#Brilyante #Alahas #MarangyangAlahas",
     "el": "#Διαμάντια #Κοσμήματα #ΠολυτελήΚοσμήματα",
+    "lb": "#ألماس #مجوهرات #مجوهرات_فاخرة",
+    "cs": "#Diamanty #Šperky #LuxusníŠperky",
 }
 
 
@@ -458,9 +461,10 @@ def build_caption(job, source, account):
         localized_caption = str(lang_captions.get(lang, "") or "").strip()
         if not localized_caption:
             # Greece has no dedicated Source Import column. Turkey copy lives in
-            # the misnamed `greek description` header, and empty cells still
+            # the misnamed `greek description` header. Lebanon and Czech use the
+            # live `lebenesse` / `vestslavic` headers, and empty cells still
             # need a native caption so the page is not starved.
-            if lang in ("el", "tr"):
+            if lang in ("el", "tr", "lb", "cs"):
                 product_title = _product_title(source)
                 product_info = {
                     "title": product_title,

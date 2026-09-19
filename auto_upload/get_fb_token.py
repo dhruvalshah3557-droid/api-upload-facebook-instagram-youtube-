@@ -112,6 +112,9 @@ def print_secrets(token, include_fallback):
     print(f"META_TOKEN_FB_CD={token}")
     print(f"META_TOKEN_FB_NFCD={token}")
     print(f"META_TOKEN_FB_INDO={token}")
+    print(f"META_TOKEN_FB_GREECE={token}")
+    print(f"META_TOKEN_FB_LEBANON={token}")
+    print(f"META_TOKEN_FB_CZECH={token}")
     print("=" * 60)
     print(
         "Set each KEY=VALUE line as a GitHub Secret (Settings > Secrets and "

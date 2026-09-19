@@ -43,6 +43,8 @@ class RegionalLanguageTests(unittest.TestCase):
             "my": ("Burmese Description", "Burmese Hashtag"),
             "th": ("Thai Description", "Thai Hashtag"),
             "fil": ("Filipino Description", "Filipino Hashtag"),
+            "lb": ("lebenesse description", "lebenesse hashtag"),
+            "cs": ("vestslavic description", "vestslavic hashtag"),
         }
         for code, (caption_col, hashtag_col) in expected.items():
             self.assertEqual(SheetsReader.LANG_CAPTION_COLS[code], caption_col)
@@ -91,6 +93,80 @@ class RegionalLanguageTests(unittest.TestCase):
         caption = main.build_caption({"platform": "instagram"}, source, account)
         self.assertIn("#Διαμάντια", caption)
         self.assertIn("Δείτε το προϊόν:", caption)
+        self.assertNotIn("#diamond", caption)
+
+    def test_lebanon_uses_lebenesse_source_columns(self):
+        row = {
+            "lebenesse description": "وصف لبناني فاخر",
+            "lebenesse hashtag": "#ألماس, #لبنان",
+        }
+        caption = SheetsReader._pick(
+            row,
+            SheetsReader.LANG_CAPTION_COLS["lb"],
+            *SheetsReader.LANG_CAPTION_ALIASES["lb"],
+        )
+        hashtag = SheetsReader._pick(
+            row,
+            SheetsReader.LANG_TAG_COLS["lb"],
+            *SheetsReader.LANG_TAG_ALIASES["lb"],
+        )
+        self.assertEqual(caption, "وصف لبناني فاخر")
+        self.assertEqual(hashtag, "#ألماس, #لبنان")
+
+    def test_czech_uses_vestslavic_source_columns(self):
+        row = {
+            "vestslavic description": "Popis v cestine",
+            "vestslavic hashtag": "#Diamanty, #Sperky",
+        }
+        caption = SheetsReader._pick(
+            row,
+            SheetsReader.LANG_CAPTION_COLS["cs"],
+            *SheetsReader.LANG_CAPTION_ALIASES["cs"],
+        )
+        hashtag = SheetsReader._pick(
+            row,
+            SheetsReader.LANG_TAG_COLS["cs"],
+            *SheetsReader.LANG_TAG_ALIASES["cs"],
+        )
+        self.assertEqual(caption, "Popis v cestine")
+        self.assertEqual(hashtag, "#Diamanty, #Sperky")
+
+    def test_lebanon_generates_native_fallback_when_source_cell_is_empty(self):
+        source = {
+            "lang_captions": {},
+            "lang_hashtags": {},
+            "hashtags": "#diamond",
+            "product_link": "https://colourdiam.com/product/1",
+            "product_name": "Fancy Yellow Diamond Ring",
+        }
+        account = {
+            "primary_language": "lb-LB",
+            "fallback_language": "en-GB",
+            "account_name": "Colour Diam Lebanon",
+        }
+
+        caption = main.build_caption({"platform": "instagram"}, source, account)
+        self.assertIn("#ألماس", caption)
+        self.assertIn("عرض المنتج:", caption)
+        self.assertNotIn("#diamond", caption)
+
+    def test_czech_generates_native_fallback_when_source_cell_is_empty(self):
+        source = {
+            "lang_captions": {},
+            "lang_hashtags": {},
+            "hashtags": "#diamond",
+            "product_link": "https://colourdiam.com/product/1",
+            "product_name": "Fancy Yellow Diamond Ring",
+        }
+        account = {
+            "primary_language": "cs-CZ",
+            "fallback_language": "en-GB",
+            "account_name": "Colour Diam Czech",
+        }
+
+        caption = main.build_caption({"platform": "facebook"}, source, account)
+        self.assertIn("#Diamanty", caption)
+        self.assertIn("Zobrazit produkt:", caption)
         self.assertNotIn("#diamond", caption)
 
     def test_turkey_uses_misnamed_greek_source_columns(self):

@@ -86,6 +86,10 @@ class MetaAccountSyncTests(unittest.TestCase):
         self.assertEqual(market_settings("Colour Diam Germany"), ("GERMANY", "de-DE", "Europe/Berlin"))
         self.assertEqual(market_settings("colourdiamchina"), ("CHINA", "zh-CN", "Asia/Shanghai"))
         self.assertEqual(market_settings("Colour Diam Greece"), ("GREECE", "el-GR", "Europe/Athens"))
+        self.assertEqual(market_settings("Colour Diam Lebanon"), ("LEBANON", "lb-LB", "Asia/Beirut"))
+        self.assertEqual(market_settings("colourdiamlebanon"), ("LEBANON", "lb-LB", "Asia/Beirut"))
+        self.assertEqual(market_settings("Colour Diam Czech"), ("CZECH", "cs-CZ", "Europe/Prague"))
+        self.assertEqual(market_settings("colourdiamczech"), ("CZECH", "cs-CZ", "Europe/Prague"))
 
     def test_greece_unique_account_id_uses_market_code(self):
         used = set()
@@ -98,6 +102,26 @@ class MetaAccountSyncTests(unittest.TestCase):
             "IG-GREECE",
         )
         self.assertEqual(used, {"FB-GREECE", "IG-GREECE"})
+
+    def test_lebanon_and_czech_unique_account_ids_use_market_codes(self):
+        used = set()
+        self.assertEqual(
+            unique_account_id("FB", "Colour Diam Lebanon", "111222333", used),
+            "FB-LEBANON",
+        )
+        self.assertEqual(
+            unique_account_id("IG", "colourdiamlebanon", "444555666", used),
+            "IG-LEBANON",
+        )
+        self.assertEqual(
+            unique_account_id("FB", "Colour Diam Czech", "777888999", used),
+            "FB-CZECH",
+        )
+        self.assertEqual(
+            unique_account_id("IG", "colourdiamczech", "101112131", used),
+            "IG-CZECH",
+        )
+        self.assertEqual(used, {"FB-LEBANON", "IG-LEBANON", "FB-CZECH", "IG-CZECH"})
 
 
 if __name__ == "__main__":

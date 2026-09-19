@@ -74,6 +74,20 @@ CAPTION_TEMPLATES = {
         "Yeni gelen: {title}. Fark yaratan bir m\u00fccevher.",
         "Her an\u0131 {title} ile \u00f6zel k\u0131l\u0131n.",
     ],
+    "lb": [
+        "✨ {title} — أناقة خالدة ولمعان فريد.",
+        "اكتشفوا جمال {title}. ✨",
+        "خلّوا ستايلكم يبرز مع {title}.",
+        "وصل حديثاً: {title}. مجوهرات بتميّز خاص.",
+        "خلّوا كل لحظة مميزة مع {title}.",
+    ],
+    "cs": [
+        "✨ {title} — nadčasová elegance a jedinečný lesk.",
+        "Objevte krásu {title}. ✨",
+        "Podtrhněte svůj styl s {title}.",
+        "Novinka: {title}. Šperk, který vynikne.",
+        "Udělejte z každého okamžiku něco výjimečného s {title}.",
+    ],
 }
 
 HASHTAG_TEMPLATES = {
@@ -87,6 +101,8 @@ HASHTAG_TEMPLATES = {
     "ko": ["#ColourDiam", "#주얼리", "#다이아몬드", "#럭셔리", "#선물"],
     "el": ["#ColourDiam", "#Διαμάντια", "#Κοσμήματα", "#ΠολυτελήΚοσμήματα", "#Κομψότητα"],
     "tr": ["#ColourDiam", "#Elmas", "#Mücevher", "#LüksMücevher", "#Pırlanta"],
+    "lb": ["#ColourDiam", "#ألماس", "#مجوهرات", "#مجوهرات_فاخرة", "#لبنان"],
+    "cs": ["#ColourDiam", "#Diamanty", "#Šperky", "#LuxusníŠperky", "#Elegantní"],
 }
 
 PAGE_LANG_MAP = {
@@ -116,6 +132,9 @@ PAGE_LANG_MAP = {
     "colour diam spain": "es",
     "colour diam greece": "el",
     "colour diam turkey": "tr",
+    "colour diam lebanon": "lb",
+    "colour diam czech": "cs",
+    "colour diam czechia": "cs",
     "colour diam arabic": "ar",
     "trending jewel": "en",
     "colour diam limited": "en",

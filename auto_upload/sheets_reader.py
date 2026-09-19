@@ -105,6 +105,7 @@ class SheetsReader:
         "fr": "french description", "de": "german description",
         "da": "danish description", "pl": "polish description",
         "tr": "turkish description", "sv": "sweden description",
+        "lb": "lebenesse description", "cs": "vestslavic description",
     }
     LANG_TAG_COLS = {
         "my": "Burmese Hashtag", "th": "Thai Hashtag",
@@ -117,6 +118,7 @@ class SheetsReader:
         "fr": "french hashtag", "de": "german hashtag",
         "da": "danish hashtag", "pl": "polish hahstag",
         "tr": "turkish hashtag", "sv": "sweden hashtag",
+        "lb": "lebenesse hashtag", "cs": "vestslavic hashtag",
     }
     # Keep legacy/configured names above, while accepting the headers currently
     # used by Source Import. Header matching is exact after normalization.
@@ -125,10 +127,14 @@ class SheetsReader:
     LANG_CAPTION_ALIASES = {
         "vi": ("vietnam description",),
         "tr": ("greek description",),
+        "lb": ("lebanese description", "lebanon description"),
+        "cs": ("czech description", "west slavic description", "westslavic description"),
     }
     LANG_TAG_ALIASES = {
         "vi": ("vietnam hashtag",),
         "tr": ("greek hashtag",),
+        "lb": ("lebanese hashtag", "lebanon hashtag"),
+        "cs": ("czech hashtag", "west slavic hashtag", "westslavic hashtag"),
     }
 
     QUEUE_COLS = [

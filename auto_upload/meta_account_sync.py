@@ -38,6 +38,12 @@ MARKETS = {
     "turkey": ("TURKEY", "tr-TR", "Europe/Istanbul"),
     "china": ("CHINA", "zh-CN", "Asia/Shanghai"),
     "greece": ("GREECE", "el-GR", "Europe/Athens"),
+    "lebanon": ("LEBANON", "lb-LB", "Asia/Beirut"),
+    "lebanese": ("LEBANON", "lb-LB", "Asia/Beirut"),
+    "lebenesse": ("LEBANON", "lb-LB", "Asia/Beirut"),
+    "czech": ("CZECH", "cs-CZ", "Europe/Prague"),
+    "czechia": ("CZECH", "cs-CZ", "Europe/Prague"),
+    "vestslavic": ("CZECH", "cs-CZ", "Europe/Prague"),
 }
 
 
