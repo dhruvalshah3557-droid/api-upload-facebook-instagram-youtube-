@@ -1,1 +1,1 @@
-2026-09-19 - start production and test newly enabled Zernio TikTok uploads
+2026-09-19 - retest TikTok after operator updated ZERNIO_API_KEY
