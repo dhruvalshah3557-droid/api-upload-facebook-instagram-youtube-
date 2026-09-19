@@ -84,6 +84,67 @@ class FullRepairTests(unittest.TestCase):
             )
         self.assertEqual(selected[0]["media_selection"], "model_photo:0")
 
+    def test_model_video_outranks_model_photo_and_product_media(self):
+        jobs = [
+            {"job_id": "1-FB-CD-carousel", "sku": "1", "account_id": "FB-CD", "platform": "facebook", "format": "carousel", "media_selection": "carousel", "row": 40, "attempts": 0, "notes": ""},
+            {"job_id": "1-FB-CD-product_video", "sku": "1", "account_id": "FB-CD", "platform": "facebook", "format": "video", "media_selection": "product_video", "row": 30, "attempts": 0, "notes": ""},
+            {"job_id": "1-FB-CD-model_photo-0", "sku": "1", "account_id": "FB-CD", "platform": "facebook", "format": "carousel", "media_selection": "model_photo:0", "row": 20, "attempts": 0, "notes": ""},
+            {"job_id": "1-FB-CD-model_video-0", "sku": "1", "account_id": "FB-CD", "platform": "facebook", "format": "video", "media_selection": "model_video:0", "row": 10, "attempts": 1, "notes": ""},
+        ]
+        accounts = {"FB-CD": {"enabled": True, "platform": "facebook", "timezone": "Asia/Bangkok"}}
+        sources = {
+            "1": {
+                "main_image": "https://media.example/product.jpg",
+                "side_images": [],
+                "video_url": "https://media.example/product.mp4",
+                "model_images": ["https://media.example/model.jpg"],
+                "model_videos": ["https://media.example/model.mp4"],
+            },
+        }
+        sheets = types.SimpleNamespace(update_job=lambda *args: None)
+        with patch("optimized_runner._platform_limits", return_value={"facebook": 1, "instagram": 0, "youtube": 0, "line": 0}), \
+             patch("optimized_runner._local_slot_due", return_value=True), \
+             patch("optimized_runner._rotation_rank", return_value=0), \
+             patch("optimized_runner._is_clean_source", return_value=(True, "")), \
+             patch("optimized_runner._media_preflight_reason", return_value=""):
+            selected = optimized_runner._healthy_candidates(
+                jobs, accounts, sources, sheets, limit=1
+            )
+        self.assertEqual(selected[0]["media_selection"], "model_video:0")
+
+    def test_instagram_model_photo_outranks_product_carousel(self):
+        jobs = [
+            {"job_id": "9-IG-CD-carousel", "sku": "9", "account_id": "IG-CD", "platform": "instagram", "format": "carousel", "media_selection": "carousel", "row": 30, "attempts": 0, "notes": ""},
+            {"job_id": "9-IG-CD-product_video", "sku": "9", "account_id": "IG-CD", "platform": "instagram", "format": "video", "media_selection": "product_video", "row": 20, "attempts": 0, "notes": ""},
+            {"job_id": "9-IG-CD-model_photo-0", "sku": "9", "account_id": "IG-CD", "platform": "instagram", "format": "carousel", "media_selection": "model_photo:0", "row": 10, "attempts": 0, "notes": ""},
+        ]
+        accounts = {
+            "IG-CD": {
+                "enabled": True,
+                "platform": "instagram",
+                "platform_account_id": "17841400000000000",
+                "timezone": "Asia/Bangkok",
+            }
+        }
+        sources = {
+            "9": {
+                "main_image": "https://media.example/product.jpg",
+                "side_images": [],
+                "video_url": "https://media.example/product.mp4",
+                "model_images": ["https://media.example/model.jpg"],
+            },
+        }
+        sheets = types.SimpleNamespace(update_job=lambda *args: None)
+        with patch("optimized_runner._platform_limits", return_value={"facebook": 0, "instagram": 1, "youtube": 0, "line": 0}), \
+             patch("optimized_runner._local_slot_due", return_value=True), \
+             patch("optimized_runner._rotation_rank", return_value=0), \
+             patch("optimized_runner._is_clean_source", return_value=(True, "")), \
+             patch("optimized_runner._media_preflight_reason", return_value=""):
+            selected = optimized_runner._healthy_candidates(
+                jobs, accounts, sources, sheets, limit=1
+            )
+        self.assertEqual(selected[0]["media_selection"], "model_photo:0")
+
     def test_linked_facebook_and_instagram_market_prefer_same_sku(self):
         jobs = [
             {"job_id": "101-FB-MMR-carousel", "sku": "101", "account_id": "FB-MMR", "platform": "facebook", "format": "carousel", "media_selection": "carousel", "row": 10, "attempts": 0, "notes": ""},

@@ -46,6 +46,27 @@ def _make_job(sku, account_id, platform, fmt, media_selection, account):
     }
 
 
+def model_media_priority(job):
+    """Always prefer model video, then model photo, over product media."""
+    selection = str((job or {}).get("media_selection", "") or "")
+    if selection.startswith("model_video:"):
+        return 0
+    if selection.startswith("model_photo:"):
+        return 1
+    if selection == "product_video":
+        return 2
+    return 3
+
+
+def _append_model_jobs(jobs, sku, account_id, platform, account, source, photos=True, videos=True):
+    if videos:
+        for i in range(len(source.get("model_videos", []))):
+            jobs.append(_make_job(sku, account_id, platform, "video", f"model_video:{i}", account))
+    if photos:
+        for i in range(len(source.get("model_images", []))):
+            jobs.append(_make_job(sku, account_id, platform, "carousel", f"model_photo:{i}", account))
+
+
 def _make_review_job(sku, account, reason):
     """A single needs_review placeholder job for sources that must not auto-publish."""
     return {
@@ -75,9 +96,10 @@ def _make_review_job(sku, account, reason):
 def generate_jobs(sources, accounts):
     """Build upload jobs from clean Source Import rows for enabled accounts.
 
-    Carousel + product Reel/video + one job for EACH model photo/video, per the
-    UPLOAD GUIDE format rules. Unclean rows (NON CERTIFIED, API error) are
-    blocked from auto-publish and surfaced as a needs_review queue entry.
+    Model video + model photo first, then product Reel/video, then product
+    carousel, per the UPLOAD GUIDE format rules. Unclean rows (NON CERTIFIED,
+    API error) are blocked from auto-publish and surfaced as a needs_review
+    queue entry.
     """
     jobs = []
     for sku, source in sources.items():
@@ -99,19 +121,17 @@ def generate_jobs(sources, accounts):
             account_id = account.get("account_id", "")
 
             if platform in ("facebook", "instagram", "line", "wechat", "pinterest", "x", "linkedin", "tiktok"):
+                _append_model_jobs(jobs, sku, account_id, platform, account, source)
+                if source["video_url"]:
+                    jobs.append(_make_job(sku, account_id, platform, "video", "product_video", account))
                 if has_carousel_media:
                     jobs.append(_make_job(sku, account_id, platform, "carousel", "carousel", account))
-                if source["video_url"]:
-                    jobs.append(_make_job(sku, account_id, platform, "video", "product_video", account))
-                for i in range(len(source.get("model_images", []))):
-                    jobs.append(_make_job(sku, account_id, platform, "carousel", f"model_photo:{i}", account))
-                for i in range(len(source["model_videos"])):
-                    jobs.append(_make_job(sku, account_id, platform, "video", f"model_video:{i}", account))
             elif platform in ("youtube", "twitch"):
+                _append_model_jobs(
+                    jobs, sku, account_id, platform, account, source, photos=False
+                )
                 if source["video_url"]:
                     jobs.append(_make_job(sku, account_id, platform, "video", "product_video", account))
-                for i in range(len(source["model_videos"])):
-                    jobs.append(_make_job(sku, account_id, platform, "video", f"model_video:{i}", account))
             elif platform in ("shopee", "lazada"):
                 if has_carousel_media:
                     jobs.append(_make_job(sku, account_id, platform, "carousel", "carousel", account))

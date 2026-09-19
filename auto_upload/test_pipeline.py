@@ -263,6 +263,37 @@ def _source(sku="100"):
     }
 
 
+def test_generate_queues_model_media_before_product_media():
+    accounts = [_account()]
+    source = _source("100")
+    source["model_images"] = ["http://example.com/100_model.jpg"]
+    sources = {"100": source}
+    fake = FakeSheets(sources, accounts, [])
+    with patch.object(Config, "MAX_GENERATE_JOBS", 10):
+        main.run_generate(fake)
+    selections = [job["media_selection"] for job in fake.appended_jobs]
+    assert selections == [
+        "model_video:0",
+        "model_photo:0",
+        "product_video",
+        "carousel",
+    ], selections
+    print("OK test_generate_queues_model_media_before_product_media")
+
+
+def test_round_robin_prefers_model_media_within_platform():
+    jobs = [
+        {"job_id": "fb-carousel", "platform": "facebook", "media_selection": "carousel", "attempts": 0, "row": 1},
+        {"job_id": "fb-model", "platform": "facebook", "media_selection": "model_photo:0", "attempts": 0, "row": 2},
+        {"job_id": "ig-product", "platform": "instagram", "media_selection": "product_video", "attempts": 0, "row": 3},
+        {"job_id": "ig-model", "platform": "instagram", "media_selection": "model_video:0", "attempts": 0, "row": 4},
+    ]
+    selected = main._round_robin_jobs(jobs, 2)
+    picked = [job["job_id"] for job in selected]
+    assert picked == ["fb-model", "ig-model"], picked
+    print("OK test_round_robin_prefers_model_media_within_platform")
+
+
 def test_generate_is_idempotent():
     accounts = [_account()]
     sources = {"100": _source("100")}
@@ -787,6 +818,8 @@ def test_dns_and_integrity_preflight_failures_are_retried():
 
 
 if __name__ == "__main__":
+    test_generate_queues_model_media_before_product_media()
+    test_round_robin_prefers_model_media_within_platform()
     test_generate_is_idempotent()
     test_generate_uses_stable_job_id_when_mutable_key_drifted()
     test_generation_cap_is_fair_across_accounts()

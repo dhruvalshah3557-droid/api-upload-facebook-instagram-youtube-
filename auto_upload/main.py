@@ -18,7 +18,7 @@ from instagram_uploader import (
     InstagramRateLimitError,
     InstagramUploader,
 )
-from job_generator import generate_jobs
+from job_generator import generate_jobs, model_media_priority
 from line_uploader import LineUploader
 from linkedin_uploader import LinkedInUploader
 from media_prep import media_kind, validate_media_url
@@ -825,6 +825,12 @@ def _round_robin_jobs(jobs, limit):
             by_platform[platform] = []
             order.append(platform)
         by_platform[platform].append(job)
+    for platform_jobs in by_platform.values():
+        platform_jobs.sort(key=lambda job: (
+            model_media_priority(job),
+            int(job.get("attempts", 0) or 0),
+            int(job.get("row", 0) or 0),
+        ))
     selected = []
     while len(selected) < limit and any(by_platform.values()):
         for platform in order:
@@ -1017,6 +1023,13 @@ def run_generate(sheets=None):
         existing_job_ids.add(job_id)
         account_id = str(job.get("account_id", "") or "review")
         missing_by_account.setdefault(account_id, []).append(job)
+
+    for bucket in missing_by_account.values():
+        bucket.sort(key=lambda job: (
+            model_media_priority(job),
+            str(job.get("media_selection", "") or ""),
+            str(job.get("sku", "") or ""),
+        ))
 
     # Select missing work fairly. The former first-N loop repeatedly exhausted
     # its cap on early Accounts rows, so newly added destinations such as Spain,

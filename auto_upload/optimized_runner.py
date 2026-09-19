@@ -34,7 +34,7 @@ from delivery_policy import (
     rolling_activity,
     slot_eligible,
 )
-from job_generator import _is_clean_source
+from job_generator import _is_clean_source, model_media_priority
 from sheets_reader import SheetsReader
 PREFLIGHT_SCAN_LIMIT = 1000
 PER_ACCOUNT_SCAN_LIMIT = 300
@@ -179,15 +179,8 @@ def resolve_media_fixed(job, source):
 
 
 def _model_media_priority(job):
-    """Prefer model videos/photos while retaining healthy product fallbacks."""
-    selection = str(job.get("media_selection", "") or "")
-    if selection.startswith("model_video:"):
-        return 0
-    if selection.startswith("model_photo:"):
-        return 1
-    if selection == "product_video":
-        return 2
-    return 3
+    """Always prefer model videos/photos over product media."""
+    return model_media_priority(job)
 
 
 def _is_locked(job):
@@ -626,20 +619,21 @@ def _healthy_candidates(
         jobs_by_account.setdefault(account_id, []).append(job)
 
     for account_jobs in jobs_by_account.values():
-        # Prefer fresh zero-attempt work. An account with a large historical
-        # backlog (notably YouTube) must not spend its bounded scan entirely on
-        # stale duplicate or invalid rows while current healthy media waits.
+        # Model videos/photos always outrank product media. Fresh zero-attempt
+        # work still wins inside the same media class so a large historical
+        # backlog cannot hide current healthy model posts.
         account_jobs.sort(key=lambda j: (
-            int(j.get("attempts", 0) or 0),
             _model_media_priority(j),
-            # An Instagram carousel needs one container request per image plus
-            # a parent-container and publish request. Prefer a Reel/single
-            # media job when both are available so one account turn does not
-            # exhaust the shared Meta application budget. Carousels remain a
-            # fallback and continue to publish normally.
+            int(j.get("attempts", 0) or 0),
+            # An Instagram product carousel needs one container request per
+            # image plus a parent-container and publish request. Prefer a
+            # Reel/single media job when both are available so one account
+            # turn does not exhaust the shared Meta application budget.
+            # Model photos stay ahead of that Instagram carousel penalty.
             1 if (
                 str(j.get("platform", "")).lower() == "instagram"
                 and str(j.get("format", "")).lower() == "carousel"
+                and not str(j.get("media_selection", "") or "").startswith("model_")
             ) else 0,
             -int(j.get("row", 0) or 0),
         ))
