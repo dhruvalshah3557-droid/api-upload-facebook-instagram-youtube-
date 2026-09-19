@@ -96,6 +96,9 @@ jobs:
           # the shared Meta app quota. Reel/single-media jobs are chosen first and
           # the worker stops making IG calls on the first quota error.
           IG_MAX_JOBS_PER_RUN: "5"
+          # Leave YouTube uncapped so leftover run budget after FB/IG shares
+          # is used for as many Shorts as the remaining 50-job window allows.
+          YT_MAX_JOBS_PER_RUN: ""
           IG_AUDIO_SEARCH_QUERY: ${{ vars.IG_AUDIO_SEARCH_QUERY }}
           IG_AUDIO_SEARCH_QUERIES: ${{ vars.IG_AUDIO_SEARCH_QUERIES }}
           IG_AUDIO_VOLUME: "80"

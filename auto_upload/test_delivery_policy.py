@@ -154,14 +154,12 @@ class DeliveryPolicyTests(unittest.TestCase):
             "platform_account_id": "",
         }
         slots = optimized_runner._platform_limits(50, accounts)
-        self.assertEqual(slots, {
-            "facebook": 21,
-            "instagram": 5,
-            "youtube": 1,
-            "tiktok": 0,
-            "line": 0,
-        })
-        self.assertEqual(sum(slots.values()), 27)
+        self.assertEqual(slots["facebook"], 21)
+        self.assertEqual(slots["instagram"], 5)
+        self.assertEqual(slots["tiktok"], 0)
+        self.assertEqual(slots["line"], 0)
+        self.assertEqual(slots["youtube"], 24)
+        self.assertEqual(sum(slots.values()), 50)
 
     def test_instagram_per_run_cap_is_configurable(self):
         accounts = {
@@ -299,6 +297,66 @@ class DeliveryPolicyTests(unittest.TestCase):
             )
 
         self.assertEqual([job["sku"] for job in selected], ["good"])
+
+    def test_youtube_receives_leftover_slots_and_multiple_jobs_per_account(self):
+        accounts = {
+            "FB-A": _primary("FB-A", "facebook"),
+            "IG-A": _primary("IG-A", "instagram"),
+            "YT-CD": _primary("YT-CD", "youtube"),
+        }
+        slots = optimized_runner._platform_limits(50, accounts)
+        self.assertEqual(slots["facebook"], 1)
+        self.assertEqual(slots["instagram"], 1)
+        self.assertEqual(slots["youtube"], 48)
+
+        jobs = []
+        sources = {}
+        for idx in range(1, 6):
+            sku = "yt-%s" % idx
+            sources[sku] = {"sku": sku}
+            jobs.append({
+                "job_id": "%s-YT-CD-product_video" % sku,
+                "account_id": "YT-CD",
+                "platform": "youtube",
+                "sku": sku,
+                "row": idx,
+                "attempts": 0,
+                "notes": "",
+            })
+        jobs.append({
+            "job_id": "100-FB-A-carousel",
+            "account_id": "FB-A",
+            "platform": "facebook",
+            "sku": "100",
+            "row": 10,
+            "attempts": 0,
+            "notes": "",
+        })
+        sources["100"] = {"sku": "100"}
+        sheets = type("Sheets", (), {"update_job": staticmethod(lambda *a, **k: None)})()
+        activity = {
+            "FB-A": {"count": 0, "last": None, "success_times": []},
+            "YT-CD": {"count": 0, "last": None, "success_times": []},
+        }
+
+        def resolve(job, source):
+            return ["https://example.com/%s.mp4" % job.get("sku")]
+
+        with patch("optimized_runner.resolve_media_fixed", side_effect=resolve), \
+             patch("optimized_runner._dns_resolves", return_value=True), \
+             patch("optimized_runner.main._classify_media_url", return_value="video"), \
+             patch("optimized_runner._local_slot_due", return_value=False), \
+             patch("optimized_runner._video_validation_reason", return_value=""):
+            selected = optimized_runner._healthy_candidates(
+                jobs, accounts, sources, sheets, limit=50,
+                recent_upload_activity=activity,
+            )
+        youtube_jobs = [job for job in selected if job["account_id"] == "YT-CD"]
+        self.assertEqual(len(youtube_jobs), 5)
+        self.assertEqual(
+            [job["sku"] for job in youtube_jobs],
+            ["yt-5", "yt-4", "yt-3", "yt-2", "yt-1"],
+        )
 
 
 if __name__ == "__main__":
