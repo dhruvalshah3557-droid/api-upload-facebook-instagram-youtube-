@@ -75,7 +75,7 @@ def _make_review_job(sku, account, reason):
 def generate_jobs(sources, accounts):
     """Build upload jobs from clean Source Import rows for enabled accounts.
 
-    Carousel + product Reel/video + one job for EACH model video, per the
+    Carousel + product Reel/video + one job for EACH model photo/video, per the
     UPLOAD GUIDE format rules. Unclean rows (NON CERTIFIED, API error) are
     blocked from auto-publish and surfaced as a needs_review queue entry.
     """
@@ -103,6 +103,8 @@ def generate_jobs(sources, accounts):
                     jobs.append(_make_job(sku, account_id, platform, "carousel", "carousel", account))
                 if source["video_url"]:
                     jobs.append(_make_job(sku, account_id, platform, "video", "product_video", account))
+                for i in range(len(source.get("model_images", []))):
+                    jobs.append(_make_job(sku, account_id, platform, "carousel", f"model_photo:{i}", account))
                 for i in range(len(source["model_videos"])):
                     jobs.append(_make_job(sku, account_id, platform, "video", f"model_video:{i}", account))
             elif platform in ("youtube", "tiktok", "twitch"):

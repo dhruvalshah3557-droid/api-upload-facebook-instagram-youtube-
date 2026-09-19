@@ -48,6 +48,42 @@ import optimized_runner
 
 
 class FullRepairTests(unittest.TestCase):
+    def test_model_photo_is_resolved_as_independent_upload(self):
+        source = {
+            "model_images": [
+                "https://colourdiam.com/Product/Model%20Photo%20Video/298/1.jpeg",
+                "https://colourdiam.com/Product/Model%20Photo%20Video/298/2.jpeg",
+            ]
+        }
+        self.assertEqual(
+            optimized_runner.resolve_media_fixed(
+                {"platform": "facebook", "media_selection": "model_photo:1"},
+                source,
+            ),
+            ["https://colourdiam.com/Product/Model%20Photo%20Video/298/2.jpeg"],
+        )
+
+    def test_model_media_is_preferred_over_product_carousel(self):
+        jobs = [
+            {"job_id": "1-FB-CD-carousel", "sku": "1", "account_id": "FB-CD", "platform": "facebook", "format": "carousel", "media_selection": "carousel", "row": 30, "attempts": 0, "notes": ""},
+            {"job_id": "2-FB-CD-model_photo-0", "sku": "2", "account_id": "FB-CD", "platform": "facebook", "format": "carousel", "media_selection": "model_photo:0", "row": 20, "attempts": 0, "notes": ""},
+        ]
+        accounts = {"FB-CD": {"enabled": True, "platform": "facebook", "timezone": "Asia/Bangkok"}}
+        sources = {
+            "1": {"main_image": "https://media.example/product.jpg", "side_images": []},
+            "2": {"model_images": ["https://media.example/model.jpg"]},
+        }
+        sheets = types.SimpleNamespace(update_job=lambda *args: None)
+        with patch("optimized_runner._platform_limits", return_value={"facebook": 1, "instagram": 0, "youtube": 0, "line": 0}), \
+             patch("optimized_runner._local_slot_due", return_value=True), \
+             patch("optimized_runner._rotation_rank", return_value=0), \
+             patch("optimized_runner._is_clean_source", return_value=(True, "")), \
+             patch("optimized_runner._media_preflight_reason", return_value=""):
+            selected = optimized_runner._healthy_candidates(
+                jobs, accounts, sources, sheets, limit=1
+            )
+        self.assertEqual(selected[0]["media_selection"], "model_photo:0")
+
     def test_linked_facebook_and_instagram_market_prefer_same_sku(self):
         jobs = [
             {"job_id": "101-FB-MMR-carousel", "sku": "101", "account_id": "FB-MMR", "platform": "facebook", "format": "carousel", "media_selection": "carousel", "row": 10, "attempts": 0, "notes": ""},

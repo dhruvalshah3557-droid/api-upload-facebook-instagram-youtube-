@@ -275,6 +275,13 @@ def resolve_media(job, source):
 
     if selection == "product_video":
         return [source["video_url"]] if source["video_url"] else []
+    if selection.startswith("model_photo:"):
+        try:
+            idx = int(selection.split(":", 1)[1])
+            photos = source.get("model_images", [])
+            return [photos[idx]] if 0 <= idx < len(photos) else []
+        except (ValueError, IndexError):
+            return []
     if selection.startswith("model_video:"):
         try:
             idx = int(selection.split(":", 1)[1])

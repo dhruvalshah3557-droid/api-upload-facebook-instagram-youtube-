@@ -97,6 +97,18 @@ def resolve_media_fixed(job, source):
     return ORIGINAL_RESOLVE_MEDIA(job, source)
 
 
+def _model_media_priority(job):
+    """Prefer model videos/photos while retaining healthy product fallbacks."""
+    selection = str(job.get("media_selection", "") or "")
+    if selection.startswith("model_video:"):
+        return 0
+    if selection.startswith("model_photo:"):
+        return 1
+    if selection == "product_video":
+        return 2
+    return 3
+
+
 def _is_locked(job):
     return LOCK_PREFIX in str(job.get("notes", "") or "")
 
@@ -510,6 +522,7 @@ def _healthy_candidates(
         # stale duplicate or invalid rows while current healthy media waits.
         account_jobs.sort(key=lambda j: (
             int(j.get("attempts", 0) or 0),
+            _model_media_priority(j),
             # An Instagram carousel needs one container request per image plus
             # a parent-container and publish request. Prefer a Reel/single
             # media job when both are available so one account turn does not
