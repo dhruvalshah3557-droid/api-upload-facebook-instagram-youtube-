@@ -203,6 +203,70 @@ class FullRepairTests(unittest.TestCase):
         self.assertEqual(selected, [])
         self.assertEqual(updates[0][1]["status"], "skipped")
 
+    def test_numeric_sku_still_finds_source_and_pairs_instagram(self):
+        jobs = [
+            {
+                "job_id": "1135-FB-MMR-carousel",
+                "sku": 1135.0,
+                "account_id": "FB-MMR",
+                "platform": "facebook",
+                "format": "carousel",
+                "media_selection": "carousel",
+                "row": 10,
+                "attempts": 0,
+                "notes": "",
+            },
+            {
+                "job_id": "202-IG-MMR-carousel",
+                "sku": "202",
+                "account_id": "IG-MMR",
+                "platform": "instagram",
+                "format": "carousel",
+                "media_selection": "carousel",
+                "row": 30,
+                "attempts": 0,
+                "notes": "",
+            },
+            {
+                "job_id": "1135-IG-MMR-carousel",
+                "sku": "1135",
+                "account_id": "IG-MMR",
+                "platform": "instagram",
+                "format": "carousel",
+                "media_selection": "carousel",
+                "row": 20,
+                "attempts": 0,
+                "notes": "",
+            },
+        ]
+        accounts = {
+            "FB-MMR": {"enabled": True, "platform": "facebook", "timezone": "Asia/Yangon"},
+            "IG-MMR": {
+                "enabled": True,
+                "platform": "instagram",
+                "platform_account_id": "17841430974311329",
+                "timezone": "Asia/Yangon",
+            },
+        }
+        sources = {
+            "1135": {"main_image": "https://media.example/1135.jpg", "side_images": []},
+            "202": {"main_image": "https://media.example/202.jpg", "side_images": []},
+        }
+        sheets = types.SimpleNamespace(update_job=lambda *args: None)
+        with patch("optimized_runner._platform_limits", return_value={"facebook": 1, "instagram": 1, "youtube": 0, "line": 0}), \
+             patch("optimized_runner._local_slot_due", return_value=True), \
+             patch("optimized_runner._rotation_rank", return_value=0), \
+             patch("optimized_runner._is_clean_source", return_value=(True, "")), \
+             patch("optimized_runner._media_preflight_reason", return_value=""):
+            selected = optimized_runner._healthy_candidates(
+                jobs, accounts, sources, sheets, limit=2
+            )
+
+        self.assertEqual(
+            [(job["account_id"], optimized_runner._job_sku(job)) for job in selected],
+            [("FB-MMR", "1135"), ("IG-MMR", "1135")],
+        )
+
     def test_caption_preflight_skips_unpublishable_job_and_picks_next(self):
         jobs = [
             {"job_id": "1263-FB-TURKEY-carousel", "sku": "1263", "account_id": "FB-TURKEY",

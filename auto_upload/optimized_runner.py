@@ -137,9 +137,14 @@ def _job_id_marker(job):
     return f"{JOB_ID_PREFIX}:{digest}"
 
 
+def _job_sku(job):
+    """Normalize Sheets numeric SKUs such as 1135.0 to 1135."""
+    return SheetsReader._normalize_sku(job.get("sku", "") if job else "")
+
+
 def _product_account_marker(job):
     """Stable lock for one product per destination, regardless of post format."""
-    sku = SheetsReader._normalize_sku(job.get("sku", "")).lower()
+    sku = _job_sku(job).lower()
     account_id = str(job.get("account_id", "") or "").strip().lower()
     platform = str(job.get("platform", "") or "").strip().lower()
     if not sku or not account_id:
@@ -609,7 +614,7 @@ def _healthy_candidates(
                 if paired_sku:
                     scan_jobs.sort(
                         key=lambda job: 0
-                        if str(job.get("sku", "") or "") == paired_sku
+                        if _job_sku(job) == paired_sku
                         else 1
                     )
             for job in scan_jobs:
@@ -639,7 +644,7 @@ def _healthy_candidates(
                         housekeeping += 1
                     continue
 
-                source = sources.get(job.get("sku"))
+                source = sources.get(_job_sku(job))
                 if not source:
                     if housekeeping < HOUSEKEEPING_LIMIT:
                         sheets.update_job(job, {
@@ -737,9 +742,7 @@ def _healthy_candidates(
                 if platform == "facebook":
                     market_key = _paired_market_key(account_id)
                     if market_key:
-                        paired_sku_by_market[market_key] = str(
-                            chosen.get("sku", "") or ""
-                        )
+                        paired_sku_by_market[market_key] = _job_sku(chosen)
                 main.logger.info(
                     "Selected account %s (%s), rotation rank=%s, account scan=%s",
                     account_id,

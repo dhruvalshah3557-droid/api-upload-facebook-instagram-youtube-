@@ -838,7 +838,7 @@ def process_pending(sheets=None):
                 logger.warning(f"Job {job_id}: skipped - account not enabled")
                 continue
 
-            source = sources.get(job["sku"])
+            source = sources.get(SheetsReader._normalize_sku(job.get("sku", "")))
             if not source:
                 sheets.update_job(job, {"status": Config.JOB_STATUS_SKIPPED, "notes": "SKU not found in Source Import"})
                 log_buffer.append(sheets.log_entry(job, "skipped", "SKU not found in Source Import"))
