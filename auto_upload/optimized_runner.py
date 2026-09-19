@@ -7,6 +7,7 @@ publishing, and Instagram carousel ordering. Account selection rotates on every
 
 Quota budget: production is tuned for up to 50 publish attempts/run so every
 publish-ready Facebook, Instagram and YouTube account can receive a turn.
+Instagram stays globally capped per run to protect the shared Meta app quota.
 LINE is excluded while its monthly Messaging API quota is exhausted.
 Maintenance writes remain capped so Google Sheets quota has comfortable headroom.
 """
@@ -47,7 +48,7 @@ _CURRENT_SHEETS = None
 _DNS_CACHE = {}
 _VIDEO_VALIDATION_CACHE = {}
 
-LOCAL_POSTING_SLOTS = ((2, 0), (5, 0), (8, 0), (11, 0), (14, 0), (17, 0), (20, 0))
+LOCAL_POSTING_SLOTS = ((2, 0), (8, 0), (12, 0), (16, 0), (20, 0))
 SLOT_WINDOW_MINUTES = 45
 
 INSTAGRAM_RATE_LIMIT_MARKER = "meta_rate_limit"
@@ -345,8 +346,10 @@ def _platform_limits(limit, accounts=None):
 
     LINE is excluded while LINE_QUOTA_EXHAUSTED is set so Facebook, Instagram
     and YouTube keep the full production budget. Instagram is intentionally
-    capped globally per workflow run; the 10-minute account rotation provides
-    enough daily turns without opening many Meta containers simultaneously.
+    capped globally per workflow run so the shared Meta app quota is not
+    exhausted while still covering the five-post daily floor. The 10-minute
+    account rotation provides enough daily turns without opening many Meta
+    containers simultaneously.
     """
     line = 0
     if not LINE_QUOTA_EXHAUSTED and limit >= 5:

@@ -7,7 +7,7 @@ expired tokens, etc.) are detected by signature and routed to a single
 `manual-review` issue instead, since no code change can fix them. Every 30
 minutes it also calculates the rolling 24-hour delivery deficit for each
 publish-ready Facebook, Instagram and YouTube account and dispatches Auto
-Upload Production when a deficit account is due after the three-hour spacing
+Upload Production when a deficit account is due after the two-hour spacing
 period.
 
 No extra secrets are required: workflow-run data comes from the Actions API and

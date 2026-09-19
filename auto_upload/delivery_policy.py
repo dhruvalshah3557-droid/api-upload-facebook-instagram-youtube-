@@ -2,14 +2,15 @@
 
 Every enabled publish-ready primary account must reach MINIMUM_POSTS_24H
 successful posts in each rolling 24-hour UTC window. Posts for an account
-are spaced at least MINIMUM_GAP_HOURS apart. LINE is excluded from capacity
-while its monthly Messaging API quota is exhausted.
+are spaced at least MINIMUM_GAP_HOURS apart so API and upload quota are not
+burst in a single run. LINE is excluded from capacity while its monthly
+Messaging API quota is exhausted.
 """
 from datetime import datetime, timedelta, timezone
 import re
 
 PRIMARY_PLATFORMS = ("instagram", "facebook", "youtube", "tiktok")
-MINIMUM_POSTS_24H = 7
+MINIMUM_POSTS_24H = 5
 MINIMUM_GAP_HOURS = 2
 LINE_QUOTA_EXHAUSTED = True
 _GVIZ_DATE_RE = re.compile(
