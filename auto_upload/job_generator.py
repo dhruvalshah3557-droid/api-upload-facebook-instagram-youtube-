@@ -3,6 +3,22 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _account_can_receive_jobs(account):
+    """True when an enabled destination can actually be published to.
+
+    Instagram/TikTok placeholders stay enabled so Meta sync can fill them, but
+    they must not consume generation slots until a platform ID exists.
+    """
+    if not account or not account.get("enabled"):
+        return False
+    platform = str(account.get("platform", "") or "").strip().lower()
+    if platform in ("instagram", "tiktok") and not str(
+        account.get("platform_account_id") or ""
+    ).strip():
+        return False
+    return True
+
+
 def _is_clean_source(source):
     integrity_error = str(source.get("integrity_error", "") or "").strip()
     if integrity_error:
@@ -107,7 +123,7 @@ def generate_jobs(sources, accounts):
         if not clean:
             logger.warning(f"SKU {sku}: blocked for auto-publish ({reason})")
             for account in accounts:
-                if account.get("enabled"):
+                if _account_can_receive_jobs(account):
                     jobs.append(_make_review_job(sku, account, reason))
                     break
             continue
@@ -115,7 +131,7 @@ def generate_jobs(sources, accounts):
         has_carousel_media = bool(source["images"])
 
         for account in accounts:
-            if not account.get("enabled"):
+            if not _account_can_receive_jobs(account):
                 continue
             platform = account.get("platform", "")
             account_id = account.get("account_id", "")

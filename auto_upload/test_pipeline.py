@@ -338,6 +338,24 @@ def test_generate_uses_stable_job_id_when_mutable_key_drifted():
     print("OK test_generate_uses_stable_job_id_when_mutable_key_drifted")
 
 
+def test_generate_skips_unlinked_instagram_placeholders():
+    accounts = [
+        _account("IG-CD", "instagram"),
+        _account("IG-DENMARK", "instagram"),
+        _account("FB-CD", "facebook"),
+    ]
+    accounts[1]["platform_account_id"] = ""
+    sources = {"100": _source("100")}
+    fake = FakeSheets(sources, accounts, [])
+    with patch.object(Config, "MAX_GENERATE_JOBS", 40):
+        main.run_generate(fake)
+    generated_accounts = {job["account_id"] for job in fake.appended_jobs}
+    assert "IG-CD" in generated_accounts, generated_accounts
+    assert "FB-CD" in generated_accounts, generated_accounts
+    assert "IG-DENMARK" not in generated_accounts, generated_accounts
+    print("OK test_generate_skips_unlinked_instagram_placeholders")
+
+
 def test_generation_cap_is_fair_across_accounts():
     accounts = [
         _account("IG-OLD", "instagram"),
@@ -631,7 +649,7 @@ def test_all_primary_accounts_prioritize_24h_deficit():
 
     now = datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc)
     due = {"IG-SPAIN": {"count": 2, "last": now - timedelta(hours=6)}}
-    recent = {"IG-SPAIN": {"count": 2, "last": now - timedelta(hours=2)}}
+    recent = {"IG-SPAIN": {"count": 2, "last": now - timedelta(hours=2) + timedelta(seconds=1)}}
     complete = {"IG-SPAIN": {"count": 5, "last": now - timedelta(hours=6)}}
     assert optimized_runner._minimum_delivery_priority("IG-SPAIN", due, now) == (0, 2)
     assert optimized_runner._minimum_delivery_priority("IG-SPAIN", recent, now) == (1, 2)
@@ -822,6 +840,7 @@ if __name__ == "__main__":
     test_round_robin_prefers_model_media_within_platform()
     test_generate_is_idempotent()
     test_generate_uses_stable_job_id_when_mutable_key_drifted()
+    test_generate_skips_unlinked_instagram_placeholders()
     test_generation_cap_is_fair_across_accounts()
     test_one_failure_does_not_stop_others()
     test_second_run_does_not_repost_uploaded()

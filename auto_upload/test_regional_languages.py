@@ -73,8 +73,10 @@ class RegionalLanguageTests(unittest.TestCase):
         )
 
         account["primary_language"] = "vi-VN"
-        with self.assertRaisesRegex(ValueError, "refusing English fallback"):
-            main.build_caption({"platform": "instagram"}, source, account)
+        caption = main.build_caption({"platform": "instagram"}, source, account)
+        self.assertIn("#KimCương", caption)
+        self.assertNotIn("English Instagram caption", caption)
+        self.assertNotIn("#diamond", caption)
 
     def test_greece_generates_native_fallback_when_source_has_no_greek_column(self):
         source = {
@@ -412,6 +414,58 @@ class RegionalLanguageTests(unittest.TestCase):
 
         caption = main.build_caption({"platform": "instagram"}, source, account)
         self.assertIn("0.25 ct", caption)
+
+    def test_sweden_generates_native_fallback_when_source_cell_is_empty(self):
+        source = {
+            "lang_captions": {},
+            "lang_hashtags": {},
+            "hashtags": "#diamond",
+            "product_link": "https://colourdiam.com/product/1",
+            "product_name": "Fancy Yellow Diamond Ring",
+        }
+        account = {
+            "primary_language": "sv-SE",
+            "fallback_language": "en-GB",
+            "account_name": "Colour Diam Sweden",
+        }
+
+        caption = main.build_caption({"platform": "instagram"}, source, account)
+        self.assertIn("#Diamanter", caption)
+        self.assertIn("Visa produkt:", caption)
+        self.assertNotIn("#diamond", caption)
+        self.assertNotIn("Missing required sv regional caption", caption)
+
+    def test_empty_regional_source_cells_use_native_fallback_not_english(self):
+        source = {
+            "lang_captions": {},
+            "lang_hashtags": {},
+            "hashtags": "#diamond",
+            "product_link": "https://colourdiam.com/product/1",
+            "product_name": "Fancy Yellow Diamond Ring",
+        }
+        expected_tags = {
+            "de-DE": "#Diamanten",
+            "pl-PL": "#Diamenty",
+            "da-DK": "#Diamanter",
+            "fr-FR": "#Diamants",
+            "it-IT": "#Diamanti",
+            "es-ES": "#Diamantes",
+            "ja-JP": "#ダイヤモンド",
+            "ko-KR": "#다이아몬드",
+            "vi-VN": "#KimCương",
+            "id-ID": "#Berlian",
+            "he-IL": "#יהלומים",
+            "ar-KW": "#ألماس",
+        }
+        for language, tag in expected_tags.items():
+            account = {
+                "primary_language": language,
+                "fallback_language": "en-GB",
+                "account_name": "Colour Diam",
+            }
+            caption = main.build_caption({"platform": "facebook"}, source, account)
+            self.assertIn(tag, caption, language)
+            self.assertNotIn("#diamond", caption)
 
     def test_all_regional_languages_have_local_product_link_labels(self):
         regional_codes = set(SheetsReader.LANG_CAPTION_COLS) - {"en"}

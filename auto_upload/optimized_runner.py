@@ -159,6 +159,12 @@ _META_RETRY_MARKERS = (
     "user logged out",
     "oauth",
 )
+_CAPTION_RETRY_MARKERS = (
+    "missing required",
+    "regional caption",
+    "refusing english fallback",
+    "auto-cleaned: regional caption preflight failed",
+)
 
 
 def resolve_media_fixed(job, source):
@@ -592,6 +598,47 @@ def _revive_stale_meta_failures(sheets, accounts):
     return revived
 
 
+def _revive_caption_blockers(sheets, accounts):
+    """Requeue jobs parked as needs_review after empty regional captions.
+
+    Native caption fallbacks now cover every regional language, so Sweden and
+    similar markets must not stay blocked on leftover Source Import blanks.
+    """
+    enabled = {
+        aid for aid, a in accounts.items()
+        if a.get("enabled")
+    }
+    if not enabled:
+        return 0
+    records = sheets.queue_ws.get_all_records(head=sheets.queue_header_row)
+    revived = 0
+    for idx, rec in enumerate(records, start=sheets.queue_header_row + 1):
+        if revived >= REVIVE_LIMIT:
+            break
+        status = str(rec.get("status", "")).strip().lower()
+        if status not in (Config.JOB_STATUS_NEEDS_REVIEW, Config.JOB_STATUS_FAILED):
+            continue
+        account_id = str(rec.get("account_id", "")).strip()
+        if account_id not in enabled:
+            continue
+        blob = " ".join((
+            str(rec.get("error_message", "") or ""),
+            str(rec.get("notes", "") or ""),
+        )).lower()
+        if not any(marker in blob for marker in _CAPTION_RETRY_MARKERS):
+            continue
+        sheets.update_job({"row": idx}, {
+            "status": "pending",
+            "attempts": 0,
+            "error_message": "",
+            "notes": "Auto-revived after native regional caption fallback",
+        })
+        revived += 1
+    if revived:
+        main.logger.info("Revived %s regional-caption blocked job(s)", revived)
+    return revived
+
+
 
 def _account_scan_jobs(account_jobs, limit=PER_ACCOUNT_SCAN_LIMIT):
     """Return a bounded scan that covers both fresh and deep backlog jobs."""
@@ -968,6 +1015,7 @@ def process_optimized():
     sources = sheets.get_source_rows()
 
     _revive_stale_meta_failures(sheets, accounts)
+    _revive_caption_blockers(sheets, accounts)
     jobs = sheets.get_pending_jobs()
     if not jobs:
         main.logger.info("No pending jobs")

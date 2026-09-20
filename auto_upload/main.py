@@ -460,24 +460,19 @@ def build_caption(job, source, account):
     if lang != "en":
         localized_caption = str(lang_captions.get(lang, "") or "").strip()
         if not localized_caption:
-            # Greece has no dedicated Source Import column. Turkey copy lives in
-            # the misnamed `greek description` header. Lebanon and Czech use the
-            # live `lebenesse` / `vestslavic` headers, and empty cells still
-            # need a native caption so the page is not starved.
-            if lang in ("el", "tr", "lb", "cs"):
-                product_title = _product_title(source)
-                product_info = {
-                    "title": product_title,
-                    "description": str(source.get("details") or "").strip() or product_title,
-                    "keywords": [product_title],
-                }
-                localized_caption = generate_caption(
-                    product_info, account.get("account_name", ""), lang
-                )
-            else:
-                raise ValueError(
-                    f"Missing required {lang} regional caption; refusing English fallback"
-                )
+            # Empty Source Import cells must not starve the market or burn the
+            # production run on English-fallback refusals. Greece has no dedicated
+            # column; other regional headers can also be blank. Always generate
+            # native copy in the account language instead of mixing English.
+            product_title = _product_title(source)
+            product_info = {
+                "title": product_title,
+                "description": str(source.get("details") or "").strip() or product_title,
+                "keywords": [product_title],
+            }
+            localized_caption = generate_caption(
+                product_info, account.get("account_name", ""), lang
+            )
         tags = _REGIONAL_FALLBACK_HASHTAGS.get(lang, "")
         if not tags:
             raise ValueError(

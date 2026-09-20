@@ -348,8 +348,9 @@ class FullRepairTests(unittest.TestCase):
         sources = {
             "1263": {
                 "sku": "1263",
-                "lang_captions": {},
-                "product_name": "Ring",
+                "lang_captions": {"vi": "A 0.05 ct Light Bluish Gray Round diamond."},
+                "product_name": "0.11ct Fancy Deep Pink Marquise GIA Natural Diamond",
+                "product_link": "https://colourdiam.com/Product/Diamond/1263/",
                 "main_image": "https://media.example/1263.jpg",
                 "side_images": [],
             },
@@ -536,6 +537,36 @@ class FullRepairTests(unittest.TestCase):
         active, wait = optimized_runner._instagram_rate_limit_active(jobs, now)
         self.assertTrue(active)
         self.assertGreater(wait, 0)
+
+    def test_caption_blockers_are_revived_for_retry(self):
+        updates = []
+        records = [
+            {
+                "status": "needs_review",
+                "account_id": "IG-SWEDEN",
+                "error_message": "Missing required sv regional caption; refusing English fallback",
+                "notes": "Auto-cleaned: regional caption preflight failed",
+            },
+            {
+                "status": "failed",
+                "account_id": "FB-CD",
+                "error_message": "oauth",
+                "notes": "",
+            },
+        ]
+        sheets = types.SimpleNamespace(
+            queue_header_row=1,
+            queue_ws=types.SimpleNamespace(get_all_records=lambda head=1: records),
+            update_job=lambda job, payload: updates.append((job, payload)),
+        )
+        accounts = {
+            "IG-SWEDEN": {"enabled": True, "platform": "instagram"},
+            "FB-CD": {"enabled": True, "platform": "facebook"},
+        }
+        revived = optimized_runner._revive_caption_blockers(sheets, accounts)
+        self.assertEqual(revived, 1)
+        self.assertEqual(updates[0][1]["status"], "pending")
+        self.assertIn("native regional caption fallback", updates[0][1]["notes"])
 
     def test_known_unusable_pending_jobs_are_skipped_so_healthy_work_is_found(self):
         jobs = []
