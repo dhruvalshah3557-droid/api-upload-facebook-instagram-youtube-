@@ -51,7 +51,7 @@ class TikTokTests(unittest.TestCase):
 
     def test_generates_photos_and_videos(self):
         source={'images':['https://cdn.test/a.jpg'],'video_url':'https://cdn.test/a.mp4','model_videos':[],'model_images':[]}
-        jobs=generate_jobs({'1':source},[{'enabled':True,'platform':'tiktok','account_id':'TIKTOK-CD'}])
+        jobs=generate_jobs({'1':source},[{'enabled':True,'platform':'tiktok','account_id':'TIKTOK-CD','platform_account_id':'6aae50288d284ffb211a67e9'}])
         self.assertEqual({j['format'] for j in jobs},{'carousel','video'})
 
     def test_scheduler_reserves_tiktok_slot(self):

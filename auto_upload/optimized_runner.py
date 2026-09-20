@@ -7,8 +7,10 @@ publishing, and Instagram carousel ordering. Account selection rotates on every
 
 Quota budget: production is tuned for up to 50 publish attempts/run so every
 publish-ready Facebook, Instagram and YouTube account can receive a turn.
-Instagram stays globally capped per run to protect the shared Meta app quota.
-LINE is excluded while its monthly Messaging API quota is exhausted.
+Instagram and Facebook both get one slot per due account; Instagram keeps a
+configurable per-run cap so the shared Meta app quota is not burst. Unused
+Facebook budget is given to Instagram before YouTube. LINE is excluded while
+its monthly Messaging API quota is exhausted.
 Maintenance writes remain capped so Google Sheets quota has comfortable headroom.
 """
 import hashlib
@@ -427,7 +429,7 @@ def _account_publish_ready(account):
 
 
 def _instagram_run_cap():
-    return max(0, int(os.getenv("IG_MAX_JOBS_PER_RUN", "5")))
+    return max(0, int(os.getenv("IG_MAX_JOBS_PER_RUN", "20")))
 
 
 def _youtube_run_cap(remaining):
@@ -437,33 +439,108 @@ def _youtube_run_cap(remaining):
     return max(0, int(raw))
 
 
+def _used_slots(slots):
+    return (
+        int(slots.get("facebook", 0) or 0)
+        + int(slots.get("instagram", 0) or 0)
+        + int(slots.get("youtube", 0) or 0)
+        + int(slots.get("tiktok", 0) or 0)
+    )
+
+
+def _fill_instagram_leftover(slots, remaining, ready, instagram_cap):
+    """Give unused Facebook budget to due Instagram accounts first."""
+    ready_instagram = int((ready or {}).get("instagram", 0) or 0)
+    current = int(slots.get("instagram", 0) or 0)
+    if ready_instagram <= 0:
+        return slots
+    leftover = max(0, int(remaining) - _used_slots(slots))
+    slots["instagram"] = min(instagram_cap, ready_instagram, current + leftover)
+    return slots
+
+
 def _fill_youtube_leftover(slots, remaining, ready=None):
     """Give unused run budget to YouTube after Facebook/Instagram/TikTok shares."""
     ready_youtube = int((ready or {}).get("youtube", 0) or 0)
     current = int(slots.get("youtube", 0) or 0)
     if current <= 0 and ready_youtube <= 0:
         return slots
-    used = (
-        int(slots.get("facebook", 0) or 0)
-        + int(slots.get("instagram", 0) or 0)
-        + current
-        + int(slots.get("tiktok", 0) or 0)
-    )
-    leftover = max(0, int(remaining) - used)
+    leftover = max(0, int(remaining) - _used_slots(slots))
     cap = _youtube_run_cap(remaining)
     slots["youtube"] = min(cap, current + leftover)
     return slots
 
 
-def _platform_limits(limit, accounts=None):
+def _demand_platform_counts(accounts, activity=None):
+    """Prefer 24h-deficit accounts so a finished platform cannot hog the run."""
+    ready = _ready_platform_counts(accounts)
+    if activity is None:
+        return ready
+    demand = {"facebook": 0, "instagram": 0, "youtube": 0, "tiktok": 0}
+    for item in _due_deficit_accounts(accounts, activity):
+        platform = str(item.get("platform", "") or "").strip().lower()
+        if platform in demand:
+            demand[platform] += 1
+    if sum(demand.values()) <= 0:
+        return ready
+    return demand
+
+
+def _assign_platform_slots(empty, remaining, alloc, instagram_cap, ready):
+    total = sum(alloc.values())
+    if total <= 0:
+        slots = dict(empty)
+        slots["facebook"] = remaining
+        return slots
+    if total <= remaining:
+        slots = dict(empty)
+        slots.update(alloc)
+        slots["instagram"] = min(int(slots.get("instagram", 0) or 0), instagram_cap)
+        _fill_instagram_leftover(slots, remaining, ready, instagram_cap)
+        return _fill_youtube_leftover(slots, remaining, ready)
+    slots = dict(empty)
+    assigned = 0
+    for platform in ("instagram", "facebook", "youtube", "tiktok"):
+        if alloc.get(platform, 0) <= 0:
+            continue
+        share = max(1, remaining * alloc[platform] // total)
+        slots[platform] = min(alloc[platform], share)
+        assigned += slots[platform]
+    overflow = [p for p in ("instagram", "facebook", "youtube", "tiktok") if slots[p] < alloc.get(p, 0)]
+    while assigned > remaining:
+        reduced = False
+        for platform in ("facebook", "youtube", "tiktok", "instagram"):
+            if assigned <= remaining:
+                break
+            if slots[platform] > 1:
+                slots[platform] -= 1
+                assigned -= 1
+                reduced = True
+        if not reduced:
+            break
+    idx = 0
+    while assigned < remaining and overflow:
+        platform = overflow[idx % len(overflow)]
+        if slots[platform] < alloc.get(platform, 0):
+            slots[platform] += 1
+            assigned += 1
+        idx += 1
+        if idx > remaining * 4:
+            break
+    slots["instagram"] = min(slots["instagram"], instagram_cap)
+    _fill_instagram_leftover(slots, remaining, ready, instagram_cap)
+    return _fill_youtube_leftover(slots, remaining, ready)
+
+
+def _platform_limits(limit, accounts=None, activity=None):
     """Allocate platform slots without bursting the shared Instagram app quota.
 
     LINE is excluded while LINE_QUOTA_EXHAUSTED is set so Facebook, Instagram
-    and YouTube keep the full production budget. Instagram is intentionally
-    capped globally per workflow run so the shared Meta app quota is not
-    exhausted while still covering the five-post daily floor. Unused remainder
-    after that Instagram cap is given to YouTube, which can consume multiple
-    jobs per account in the same run.
+    and YouTube keep the full production budget. Facebook and Instagram both
+    receive one slot per due account. Instagram is still globally capped per
+    workflow run so the shared Meta app quota is not exhausted. Accounts that
+    already met the 24-hour floor do not reserve slots; that budget goes to
+    Instagram first, then leftover YouTube jobs.
     """
     line = 0
     if not LINE_QUOTA_EXHAUSTED and limit >= 5:
@@ -478,48 +555,8 @@ def _platform_limits(limit, accounts=None):
     instagram_cap = _instagram_run_cap()
     ready = _ready_platform_counts(accounts) if accounts is not None else None
     if ready is not None:
-        total_ready = sum(ready.values())
-        if total_ready <= 0:
-            slots = dict(empty)
-            slots["facebook"] = remaining
-            return slots
-        if total_ready <= remaining:
-            slots = dict(empty)
-            slots.update(ready)
-            slots["line"] = line
-            slots["instagram"] = min(slots["instagram"], instagram_cap)
-            return _fill_youtube_leftover(slots, remaining, ready)
-        slots = {"facebook": 0, "instagram": 0, "youtube": 0, "tiktok": 0, "line": line}
-        assigned = 0
-        for platform in ("facebook", "instagram", "youtube", "tiktok"):
-            if ready[platform] <= 0:
-                continue
-            share = max(1, remaining * ready[platform] // total_ready)
-            slots[platform] = min(ready[platform], share)
-            assigned += slots[platform]
-        overflow = [p for p in ("facebook", "instagram", "youtube", "tiktok") if slots[p] < ready[p]]
-        while assigned > remaining:
-            reduced = False
-            for platform in ("facebook", "instagram", "youtube", "tiktok"):
-                if assigned <= remaining:
-                    break
-                if slots[platform] > 1:
-                    slots[platform] -= 1
-                    assigned -= 1
-                    reduced = True
-            if not reduced:
-                break
-        idx = 0
-        while assigned < remaining and overflow:
-            platform = overflow[idx % len(overflow)]
-            if slots[platform] < ready[platform]:
-                slots[platform] += 1
-                assigned += 1
-            idx += 1
-            if idx > remaining * 4:
-                break
-        slots["instagram"] = min(slots["instagram"], instagram_cap)
-        return _fill_youtube_leftover(slots, remaining, ready)
+        alloc = _demand_platform_counts(accounts, activity)
+        return _assign_platform_slots(empty, remaining, alloc, instagram_cap, ready)
 
     if remaining <= 1:
         slots = dict(empty)
@@ -678,7 +715,12 @@ def _healthy_candidates(
     selected = []
     housekeeping = 0
     instagram_cooldown, instagram_wait = _instagram_rate_limit_active(jobs)
-    slots = _platform_limits(limit, accounts)
+    slots = _platform_limits(limit, accounts, recent_upload_activity)
+    if instagram_cooldown:
+        slots["instagram"] = 0
+        remaining = max(0, int(limit) - int(slots.get("line", 0) or 0))
+        ready = _ready_platform_counts(accounts) if accounts is not None else None
+        slots = _fill_youtube_leftover(slots, remaining, ready)
     seen_fingerprints = set()
     reserved_fingerprints = set(reserved_fingerprints or ())
     paired_sku_by_market = {}

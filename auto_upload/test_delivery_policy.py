@@ -155,11 +155,82 @@ class DeliveryPolicyTests(unittest.TestCase):
         }
         slots = optimized_runner._platform_limits(50, accounts)
         self.assertEqual(slots["facebook"], 21)
-        self.assertEqual(slots["instagram"], 5)
+        self.assertEqual(slots["instagram"], 17)
         self.assertEqual(slots["tiktok"], 0)
         self.assertEqual(slots["line"], 0)
-        self.assertEqual(slots["youtube"], 24)
+        self.assertEqual(slots["youtube"], 12)
         self.assertEqual(sum(slots.values()), 50)
+
+    def test_finished_facebook_accounts_do_not_starve_instagram(self):
+        now = datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc)
+        accounts = {}
+        activity = {}
+        for idx in range(21):
+            aid = "FB-%02d" % idx
+            accounts[aid] = _primary(aid, "facebook")
+            activity[aid] = {"count": 5, "last": now - timedelta(hours=1), "success_times": []}
+        for idx in range(17):
+            aid = "IG-%02d" % idx
+            accounts[aid] = _primary(aid, "instagram")
+            activity[aid] = {"count": 1, "last": now - timedelta(hours=6), "success_times": []}
+        accounts["YT-CD"] = _primary("YT-CD", "youtube")
+        activity["YT-CD"] = {"count": 0, "last": None, "success_times": []}
+        slots = optimized_runner._platform_limits(50, accounts, activity)
+        self.assertEqual(slots["facebook"], 0)
+        self.assertEqual(slots["instagram"], 17)
+        self.assertEqual(slots["youtube"], 33)
+        self.assertEqual(sum(slots.values()), 50)
+
+    def test_instagram_cooldown_moves_unused_slots_to_youtube(self):
+        accounts = {
+            "FB-A": _primary("FB-A", "facebook"),
+            "IG-A": _primary("IG-A", "instagram"),
+            "IG-B": _primary("IG-B", "instagram"),
+            "YT-CD": _primary("YT-CD", "youtube"),
+        }
+        jobs = [{
+            "job_id": "100-IG-A-video",
+            "account_id": "IG-A",
+            "platform": "instagram",
+            "sku": "100",
+            "row": 3,
+            "attempts": 1,
+            "notes": "application request limit reached",
+            "error_message": "application limit",
+            "last_attempt_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
+        }]
+        sources = {"100": {"sku": "100"}}
+        sheets = type("Sheets", (), {"update_job": staticmethod(lambda *a, **k: None)})()
+        activity = {
+            "FB-A": {"count": 5, "last": None, "success_times": []},
+            "IG-A": {"count": 1, "last": None, "success_times": []},
+            "IG-B": {"count": 1, "last": None, "success_times": []},
+            "YT-CD": {"count": 0, "last": None, "success_times": []},
+        }
+        for account_id, platform in (("FB-A", "facebook"), ("IG-A", "instagram"), ("IG-B", "instagram"), ("YT-CD", "youtube")):
+            jobs.append({
+                "job_id": "200-%s-video" % account_id,
+                "account_id": account_id,
+                "platform": platform,
+                "sku": "200",
+                "row": 4,
+                "attempts": 0,
+                "notes": "",
+            })
+        sources["200"] = {"sku": "200"}
+        with patch("optimized_runner.resolve_media_fixed", return_value=["https://example.com/a.mp4"]), \
+             patch("optimized_runner._dns_resolves", return_value=True), \
+             patch("optimized_runner.main._classify_media_url", return_value="video"), \
+             patch("optimized_runner._local_slot_due", return_value=False), \
+             patch("optimized_runner._video_validation_reason", return_value=""):
+            selected = optimized_runner._healthy_candidates(
+                jobs, accounts, sources, sheets, limit=50,
+                recent_upload_activity=activity,
+            )
+        selected_ids = [job["account_id"] for job in selected]
+        self.assertNotIn("IG-A", selected_ids)
+        self.assertNotIn("IG-B", selected_ids)
+        self.assertIn("YT-CD", selected_ids)
 
     def test_instagram_per_run_cap_is_configurable(self):
         accounts = {
