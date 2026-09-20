@@ -370,10 +370,11 @@ class RegionalLanguageTests(unittest.TestCase):
         self.assertNotIn("Elevate your style with .", caption)
         self.assertFalse(main._caption_has_blank_product(caption))
 
-    def test_wrong_diamond_weight_caption_is_blocked(self):
+    def test_wrong_diamond_weight_caption_is_replaced(self):
         source = {
             "sku": "681",
             "product_name": "0.11ct Fancy Deep Pink Marquise GIA Natural Diamond",
+            "details": "Sku - 681\nWeight - 0.11\nShape - Marquise",
             "product_link": "https://colourdiam.com/Product/Diamond/681/",
             "instagram_caption": "A 0.05 ct Light Bluish Gray Round diamond.",
             "hashtags": "#diamond",
@@ -382,8 +383,32 @@ class RegionalLanguageTests(unittest.TestCase):
         }
         account = {"primary_language": "en", "account_name": "Colour Diam"}
 
-        with self.assertRaisesRegex(ValueError, "Caption/product mismatch"):
-            main.build_caption({"platform": "instagram"}, source, account)
+        caption = main.build_caption({"platform": "instagram"}, source, account)
+        self.assertIn("0.11", caption)
+        self.assertNotIn("0.05", caption)
+        self.assertNotIn("Round", caption)
+
+    def test_wrong_diamond_shape_caption_is_replaced(self):
+        source = {
+            "sku": "8717",
+            "product_name": "1.21 Ct Light Green Yellow Marquise Diamond VVS2",
+            "details": "Sku - 8717\nWeight - 1.21\nColour - Light Green Yellow\nShape - Marquise",
+            "product_link": "https://www.colourdiam.com/diamonddetails/Diamonds/Product/8717",
+            "lang_captions": {
+                "vi": "Viên kim cương tự nhiên 1.21 carat hình hạt lê màu vàng lục nhạt.",
+            },
+            "lang_hashtags": {},
+        }
+        account = {
+            "primary_language": "vi-VN",
+            "account_name": "Colour Diam Vietnam",
+        }
+
+        caption = main.build_caption({"platform": "facebook"}, source, account)
+        self.assertIn("1.21", caption)
+        self.assertIn("Marquise", caption)
+        self.assertNotIn("hạt lê", caption)
+        self.assertIn("#KimCương", caption)
 
     def test_matching_diamond_weight_caption_is_allowed(self):
         source = {

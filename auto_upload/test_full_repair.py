@@ -328,7 +328,7 @@ class FullRepairTests(unittest.TestCase):
             [("FB-MMR", "1135"), ("IG-MMR", "1135")],
         )
 
-    def test_caption_preflight_skips_unpublishable_job_and_picks_next(self):
+    def test_caption_preflight_replaces_mismatched_copy_instead_of_skipping(self):
         jobs = [
             {"job_id": "1263-FB-TURKEY-carousel", "sku": "1263", "account_id": "FB-TURKEY",
              "platform": "facebook", "format": "carousel", "media_selection": "carousel",
@@ -350,6 +350,7 @@ class FullRepairTests(unittest.TestCase):
                 "sku": "1263",
                 "lang_captions": {"vi": "A 0.05 ct Light Bluish Gray Round diamond."},
                 "product_name": "0.11ct Fancy Deep Pink Marquise GIA Natural Diamond",
+                "details": "Sku - 1263\nWeight - 0.11\nShape - Marquise",
                 "product_link": "https://colourdiam.com/Product/Diamond/1263/",
                 "main_image": "https://media.example/1263.jpg",
                 "side_images": [],
@@ -374,9 +375,8 @@ class FullRepairTests(unittest.TestCase):
             selected = optimized_runner._healthy_candidates(
                 jobs, accounts, sources, sheets, limit=1
             )
-        self.assertEqual(selected[0]["sku"], "1913")
-        self.assertEqual(updates[0][0]["job_id"], "1263-FB-TURKEY-carousel")
-        self.assertEqual(updates[0][1]["status"], "needs_review")
+        self.assertEqual(selected[0]["sku"], "1263")
+        self.assertEqual(updates, [])
 
     def test_instagram_carousel_does_not_embed_product_video(self):
         source = {

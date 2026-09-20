@@ -384,14 +384,103 @@ _REGIONAL_FALLBACK_HASHTAGS = {
 
 
 _CARAT_WEIGHT_RE = re.compile(
-    r"(?<![\d.,])(\d+(?:[.,]\d+)?)\s*(?:ct|cts|carats?)\b",
+    r"(?<![\d.,])(\d+(?:[.,]\d+)?)\s*-?\s*"
+    r"(?:ct|cts|carats?|karats?|karatowy|karatów|karata|"
+    r"quilates?|carati|карата?|克拉|캐럿|カラット|قيراط|קראט|"
+    r"กะรัต|ကာရက်)\b",
     re.IGNORECASE,
 )
+_SHAPE_ALIASES = {
+    "marquise": (
+        "marquise", "marquesa", "маркиз", "마퀴즈", "マーキース", "马眼",
+        "ماركيز", "מרקיזה",
+    ),
+    "pear": (
+        "pear", "poire", "pera", "hạt lê", "quả lê", "груш", "gruszk",
+        "pear-shaped", "taglio a pera", "talla pera", "taille poire",
+        "كمثرى", "אגס", "ペア", "페어", "birnen", "pære", "pæreform",
+        "αχλαδ",
+    ),
+    "oval": (
+        "oval", "ovale", "óvalo", "овал", "椭圆", "オーバル", "오벌",
+        "بيضاوي", "אובל", "owal",
+    ),
+    "round": (
+        "round", "brilliant", "rond", "redondo", "кругл", "圆形",
+        "ラウンド", "라운드",
+    ),
+    "cushion": ("cushion", "coussin", "cashion", "подуш"),
+    "radiant": ("radiant", "радиант"),
+    "princess": ("princess", "принцесс"),
+    "emerald": ("emerald", "smaragd", "esmeralda", "изумруд"),
+    "heart": ("heart", "cuore", "corazón", "coeur", "сердц"),
+    "asscher": ("asscher",),
+}
 
 
 def _carat_weights(text):
     """Return normalized carat weights mentioned in product copy."""
     return [float(value.replace(",", ".")) for value in _CARAT_WEIGHT_RE.findall(str(text or ""))]
+
+
+def _caption_body(caption_text):
+    return re.sub(r"#\S+", " ", str(caption_text or ""))
+
+
+def _shape_token_in_text(text, alias):
+    alias = str(alias or "").casefold()
+    body = str(text or "").casefold()
+    if not alias or not body:
+        return False
+    if re.search(r"[a-z]", alias):
+        return re.search(r"(?<![a-z0-9])" + re.escape(alias) + r"(?![a-z0-9])", body) is not None
+    return alias in body
+
+
+def _canonical_shape(value):
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    for canonical, aliases in _SHAPE_ALIASES.items():
+        for alias in (canonical,) + tuple(aliases):
+            if _shape_token_in_text(text, alias):
+                return canonical
+    return ""
+
+
+def _shapes_in_text(text):
+    found = set()
+    for canonical, aliases in _SHAPE_ALIASES.items():
+        for alias in (canonical,) + tuple(aliases):
+            if _shape_token_in_text(text, alias):
+                found.add(canonical)
+                break
+    return found
+
+
+def _is_loose_diamond(source):
+    link = str((source or {}).get("product_link", "") or "").lower()
+    return any(
+        token in link
+        for token in ("/product/diamond", "/diamonddetails", "/diamonds/product")
+    )
+
+
+def _product_weight(source):
+    weights = _carat_weights((source or {}).get("product_name", ""))
+    if weights:
+        return weights[0]
+    fields = SheetsReader._details_fields((source or {}).get("details", ""))
+    raw = fields.get("weight") or fields.get("carat") or fields.get("cts") or ""
+    try:
+        return float(str(raw).replace(",", ".").split()[0])
+    except (TypeError, ValueError, IndexError):
+        return None
+
+
+def _product_shape(source):
+    fields = SheetsReader._details_fields((source or {}).get("details", ""))
+    return _canonical_shape(fields.get("shape") or (source or {}).get("product_name", ""))
 
 
 _BLANK_PRODUCT_CAPTION_RE = re.compile(
@@ -418,27 +507,54 @@ def _caption_has_blank_product(caption_text):
     return bool(_BLANK_PRODUCT_CAPTION_RE.search(text))
 
 
-def _validate_caption_product_match(caption_text, source):
-    """Block a loose-diamond caption that describes a different carat weight."""
+def _caption_product_mismatch_reason(caption_text, source):
+    """Return why caption copy does not describe this product, if known."""
     if _caption_has_blank_product(caption_text):
-        raise ValueError("Blank product caption; refusing to publish")
-    product_link = str(source.get("product_link", "") or "").lower()
-    if "/product/diamond/" not in product_link:
-        return
-
-    expected = _carat_weights(source.get("product_name", ""))
-    mentioned = _carat_weights(caption_text)
-    if not expected or not mentioned:
-        return
-
-    expected_weight = expected[0]
-    if not any(abs(value - expected_weight) < 0.0001 for value in mentioned):
-        found = ", ".join(f"{value:g}" for value in mentioned)
-        raise ValueError(
-            "Caption/product mismatch: "
-            f"{source.get('sku', 'unknown SKU')} is {expected_weight:g} ct, "
-            f"but the caption mentions {found} ct"
+        return "blank product caption"
+    if not _is_loose_diamond(source):
+        return ""
+    body = _caption_body(caption_text)
+    expected_weight = _product_weight(source)
+    mentioned = _carat_weights(body)
+    if expected_weight is not None and mentioned:
+        if not any(round(value, 2) == round(expected_weight, 2) for value in mentioned):
+            found = ", ".join(f"{value:g}" for value in mentioned)
+            return (
+                f"{source.get('sku', 'unknown SKU')} is {expected_weight:g} ct, "
+                f"but the caption mentions {found} ct"
+            )
+    expected_shape = _product_shape(source)
+    mentioned_shapes = _shapes_in_text(body)
+    if expected_shape and mentioned_shapes and expected_shape not in mentioned_shapes:
+        found = ", ".join(sorted(mentioned_shapes))
+        return (
+            f"{source.get('sku', 'unknown SKU')} is {expected_shape}, "
+            f"but the caption describes {found}"
         )
+    return ""
+
+
+def _validate_caption_product_match(caption_text, source):
+    """Block a loose-diamond caption that describes a different stone."""
+    reason = _caption_product_mismatch_reason(caption_text, source)
+    if not reason:
+        return
+    if reason == "blank product caption":
+        raise ValueError("Blank product caption; refusing to publish")
+    raise ValueError(f"Caption/product mismatch: {reason}")
+
+
+def _generated_product_caption(source, account, lang):
+    product_title = _product_title(source)
+    product_info = {
+        "title": product_title,
+        "description": str(source.get("details") or "").strip() or product_title,
+        "keywords": [product_title],
+    }
+    caption = generate_caption(
+        product_info, account.get("account_name", ""), lang
+    )
+    return caption, product_info
 
 
 def build_caption(job, source, account):
@@ -459,20 +575,18 @@ def build_caption(job, source, account):
     caption_text = ""
     if lang != "en":
         localized_caption = str(lang_captions.get(lang, "") or "").strip()
+        if localized_caption and _caption_product_mismatch_reason(localized_caption, source):
+            logger.warning(
+                "Discarding mismatched %s caption for SKU %s",
+                lang, source.get("sku", ""),
+            )
+            localized_caption = ""
         if not localized_caption:
             # Empty Source Import cells must not starve the market or burn the
             # production run on English-fallback refusals. Greece has no dedicated
             # column; other regional headers can also be blank. Always generate
             # native copy in the account language instead of mixing English.
-            product_title = _product_title(source)
-            product_info = {
-                "title": product_title,
-                "description": str(source.get("details") or "").strip() or product_title,
-                "keywords": [product_title],
-            }
-            localized_caption = generate_caption(
-                product_info, account.get("account_name", ""), lang
-            )
+            localized_caption, _ = _generated_product_caption(source, account, lang)
         tags = _REGIONAL_FALLBACK_HASHTAGS.get(lang, "")
         if not tags:
             raise ValueError(
@@ -481,12 +595,18 @@ def build_caption(job, source, account):
         caption_text = f"{localized_caption}\n\n{tags}"
     else:
         for code in (lang, fallback):
-            if code and lang_captions.get(code):
-                tags = _normalize_hashtags(lang_hashtags.get(code)) or hashtags
-                caption_text = (
-                    f"{lang_captions[code]}\n\n{tags}" if tags else lang_captions[code]
+            candidate = str(lang_captions.get(code, "") or "").strip()
+            if not candidate:
+                continue
+            if _caption_product_mismatch_reason(candidate, source):
+                logger.warning(
+                    "Discarding mismatched %s caption for SKU %s",
+                    code, source.get("sku", ""),
                 )
-                break
+                continue
+            tags = _normalize_hashtags(lang_hashtags.get(code)) or hashtags
+            caption_text = f"{candidate}\n\n{tags}" if tags else candidate
+            break
 
     if not caption_text:
         if platform in ("facebook", "wechat", "pinterest"):
@@ -502,27 +622,23 @@ def build_caption(job, source, account):
         else:
             caption = source.get("instagram_caption", "")
 
-        if _caption_has_blank_product(caption):
+        if _caption_has_blank_product(caption) or _caption_product_mismatch_reason(caption, source):
             caption = ""
         if caption and hashtags:
             caption_text = f"{caption}\n\n{hashtags}"
         elif caption:
             caption_text = caption
 
-    if not caption_text:
-        product_title = _product_title(source)
-        product_info = {
-            "title": product_title,
-            "description": str(source.get("details") or "").strip() or product_title,
-            "keywords": [product_title],
-        }
-        auto_caption = generate_caption(
-            product_info, account.get("account_name", ""), lang
-        )
+    if not caption_text or _caption_product_mismatch_reason(caption_text, source):
+        auto_caption, product_info = _generated_product_caption(source, account, lang)
         auto_hashtags = generate_hashtags(
             product_info, account.get("account_name", ""), lang
         )
-        caption_text = f"{auto_caption}\n\n{auto_hashtags}"
+        if lang != "en":
+            tags = _REGIONAL_FALLBACK_HASHTAGS.get(lang) or auto_hashtags
+            caption_text = f"{auto_caption}\n\n{tags}"
+        else:
+            caption_text = f"{auto_caption}\n\n{auto_hashtags}"
 
     _validate_caption_product_match(caption_text, source)
     return _append_product_link(
