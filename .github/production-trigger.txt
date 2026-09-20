@@ -1,1 +1,1 @@
-2026-09-19 - retest TikTok after operator updated ZERNIO_API_KEY
+2026-09-20 - model media first; Instagram byte-upload fallback for unfetchable still.jpg

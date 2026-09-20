@@ -62,6 +62,12 @@ def _make_job(sku, account_id, platform, fmt, media_selection, account):
     }
 
 
+def is_model_media(job):
+    """True for standalone model video/photo jobs."""
+    selection = str((job or {}).get("media_selection", "") or "")
+    return selection.startswith("model_video:") or selection.startswith("model_photo:")
+
+
 def model_media_priority(job):
     """Always prefer model video, then model photo, over product media."""
     selection = str((job or {}).get("media_selection", "") or "")

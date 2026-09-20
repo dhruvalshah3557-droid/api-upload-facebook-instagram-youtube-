@@ -57,6 +57,36 @@ def _is_cover_image_url(url):
     )
 
 
+_IMAGE_MAGIC = (
+    b"\xff\xd8\xff",
+    b"\x89PNG\r\n\x1a\n",
+    b"GIF87a",
+    b"GIF89a",
+    b"RIFF",
+)
+_UNFETCHABLE_MEDIA_MARKERS = (
+    "could not be fetched",
+    "media download has failed",
+    "only photo or video can be accepted as media type",
+    "doesn't meet our requirements",
+    "does not meet our requirements",
+    "the media uri",
+)
+_IMAGE_DOWNLOAD_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+}
+
+
+def _is_unfetchable_media_error(error, result=None):
+    blob = " ".join((
+        str((error or {}).get("message", "") or ""),
+        str((error or {}).get("error_user_msg", "") or ""),
+        str((error or {}).get("error_user_title", "") or ""),
+        str(result or ""),
+    )).lower()
+    return any(marker in blob for marker in _UNFETCHABLE_MEDIA_MARKERS)
+
+
 class IGAccountNotLinkedError(Exception):
     """Configured Facebook page is not linked to an Instagram Business account."""
 
@@ -233,6 +263,100 @@ class InstagramUploader:
             "should_loop_audio": True,
         })
 
+    @staticmethod
+    def _download_image_bytes(media_url):
+        """Download original image bytes Meta's crawler could not fetch."""
+        resp = requests.get(
+            media_url, timeout=180, headers=_IMAGE_DOWNLOAD_HEADERS
+        )
+        resp.raise_for_status()
+        content_type = (resp.headers.get("Content-Type") or "").lower().split(";", 1)[0]
+        content = resp.content or b""
+        if content_type.startswith("text/") or "html" in content_type:
+            raise Exception(f"Downloaded media is not an image ({content_type})")
+        if not any(content.startswith(magic) for magic in _IMAGE_MAGIC):
+            raise Exception("Downloaded bytes are not a valid image")
+        name = media_url.split("?")[0].rsplit("/", 1)[-1] or "image.jpg"
+        if content_type not in ("image/jpeg", "image/png", "image/gif", "image/webp"):
+            if content.startswith(b"\xff\xd8\xff"):
+                content_type = "image/jpeg"
+            elif content.startswith(b"\x89PNG"):
+                content_type = "image/png"
+            elif content.startswith(b"GIF8"):
+                content_type = "image/gif"
+            else:
+                content_type = "image/jpeg"
+        return name, content, content_type
+
+    def _create_resumable_image(self, media_url, caption, product_id="", carousel_item=False):
+        """Upload image bytes when Meta cannot fetch the public URL."""
+        name, content, content_type = self._download_image_bytes(media_url)
+        params = {
+            "media_type": "IMAGE",
+            "upload_type": "resumable",
+            "access_token": self.access_token,
+        }
+        if carousel_item:
+            params["is_carousel_item"] = "true"
+        else:
+            params["caption"] = caption
+        if product_id and not carousel_item:
+            params["product_tags"] = f'[{{"product_id":"{product_id}"}}]'
+        logger.info(
+            f"[{self.page_name}] Uploading IG image bytes because Meta could not fetch {media_url}"
+        )
+        self._ensure_not_rate_limited()
+        response = requests.post(
+            f"{FB_GRAPH_URL}/{self.ig_user_id}/media",
+            data=params,
+            timeout=60,
+        )
+        session = self._json_or_error(response)
+        container_id = str(session.get("id", "") or "").strip()
+        if not container_id:
+            error = session.get("error", {})
+            if error.get("code") == 4 or error.get("error_subcode") == 2207051:
+                cooldown = self._record_rate_limit()
+                raise InstagramRateLimitError(
+                    f"META_RATE_LIMIT code={error.get('code')} "
+                    f"subcode={error.get('error_subcode')}; retry after {cooldown}s: "
+                    f"{error.get('message', 'Application request limit reached')}"
+                )
+            raise Exception(session.get("error", {}).get("message", str(session)))
+        upload_url = session.get("uri") or (
+            f"https://rupload.facebook.com/ig-api-upload/v26.0/{container_id}"
+        )
+        upload = requests.post(
+            upload_url,
+            headers={
+                "Authorization": f"OAuth {self.access_token}",
+                "Content-Type": content_type or "image/jpeg",
+                "file_size": str(len(content)),
+                "offset": "0",
+                "file_name": name,
+            },
+            data=content,
+            timeout=180,
+        )
+        upload_result = self._json_or_error(upload)
+        if not upload.ok or not (
+            upload_result.get("success") or upload_result.get("id") or upload.status_code < 300
+        ):
+            error = upload_result.get("error", {})
+            if error.get("code") == 4 or error.get("error_subcode") == 2207051:
+                cooldown = self._record_rate_limit()
+                raise InstagramRateLimitError(
+                    f"META_RATE_LIMIT code={error.get('code')} "
+                    f"subcode={error.get('error_subcode')}; retry after {cooldown}s: "
+                    f"{error.get('message', 'Application request limit reached')}"
+                )
+            raise Exception(
+                upload_result.get("error", {}).get("message")
+                or str(upload_result)
+            )
+        logger.info(f"[{self.page_name}] Uploaded IG image bytes: {name}")
+        return container_id
+
     def _create_resumable_reel(self, media_url, caption, product_id="", cover_url=""):
         """Mix audio into a silent Reel and upload the resulting bytes to Meta."""
         selection_key = f"instagram|{self.ig_user_id}|{media_url}"
@@ -375,6 +499,18 @@ class InstagramUploader:
                 raise InstagramRateLimitError(
                     f"META_RATE_LIMIT code=4 subcode=2207051; retry after {cooldown}s"
                 )
+            if _is_unfetchable_media_error(error, result):
+                logger.warning(
+                    f"[{self.page_name}] Meta could not fetch {media_url}; "
+                    "uploading original bytes instead"
+                )
+                if is_video:
+                    return self._create_resumable_reel(
+                        media_url, caption, product_id, cover_url
+                    )
+                return self._create_resumable_image(
+                    media_url, caption, product_id, carousel_item
+                )
             logger.error(f"[{self.page_name}] Container failed: {result}")
             raise Exception(result.get("error", {}).get("message", str(result)))
         logger.info(f"[{self.page_name}] Container created: {result['id']}")
@@ -463,16 +599,22 @@ class InstagramUploader:
 
         child_ids = []
         for media_url in media_urls[:10]:
-            child_id = self._create_media_container(
-                media_url,
-                caption,
-                is_video=_is_video_url(media_url),
-                product_id="",
-                carousel_item=True,
-            )
+            try:
+                child_id = self._create_media_container(
+                    media_url,
+                    caption,
+                    is_video=_is_video_url(media_url),
+                    product_id="",
+                    carousel_item=True,
+                )
+            except InstagramRateLimitError:
+                raise
+            except Exception as exc:
+                logger.warning(
+                    f"[{self.page_name}] Skipping unusable IG carousel child {media_url}: {exc}"
+                )
+                continue
             child_ids.append(child_id)
-            # Carousel creation is API-expensive (one request per child). Space
-            # requests to avoid bursting Meta application limits.
             time.sleep(max(5, int(os.getenv("IG_CAROUSEL_ITEM_DELAY_SECONDS", "8"))))
 
         container_id = self._create_carousel_container(child_ids, caption, product_id)

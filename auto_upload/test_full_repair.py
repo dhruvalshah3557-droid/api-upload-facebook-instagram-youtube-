@@ -615,6 +615,135 @@ class FullRepairTests(unittest.TestCase):
             )
         self.assertEqual([job["sku"] for job in selected], ["good"])
 
+    def test_model_media_is_not_blocked_by_product_account_lock(self):
+        records = [{
+            "job_id": "298-IG-KUWAIT-carousel",
+            "sku": "298",
+            "account_id": "IG-KUWAIT",
+            "platform": "instagram",
+            "status": "uploaded",
+            "notes": "",
+        }]
+        queue_ws = types.SimpleNamespace(get_all_records=lambda head: records)
+        reserved, _ = optimized_runner._queue_state(
+            types.SimpleNamespace(queue_ws=queue_ws, queue_header_row=1)
+        )
+        model_video = {
+            "job_id": "298-IG-KUWAIT-model_video-0",
+            "sku": "298",
+            "account_id": "IG-KUWAIT",
+            "platform": "instagram",
+            "format": "video",
+            "media_selection": "model_video:0",
+            "row": 9,
+            "attempts": 0,
+            "notes": "",
+        }
+        sources = {
+            "298": {
+                "sku": "298",
+                "model_videos": ["https://media.example/298-model.mp4"],
+                "main_image": "https://media.example/298.jpg",
+            }
+        }
+        accounts = {
+            "IG-KUWAIT": {
+                "enabled": True,
+                "platform": "instagram",
+                "platform_account_id": "17841436113237015",
+                "timezone": "Asia/Kuwait",
+            }
+        }
+        sheets = types.SimpleNamespace(update_job=lambda *a, **k: None)
+        with patch("optimized_runner._local_slot_due", return_value=True), \
+             patch("optimized_runner._rotation_rank", return_value=0), \
+             patch("optimized_runner._is_clean_source", return_value=(True, "")), \
+             patch("optimized_runner._media_preflight_reason", return_value=""):
+            selected = optimized_runner._healthy_candidates(
+                [model_video], accounts, sources, sheets, limit=1,
+                reserved_fingerprints=reserved,
+            )
+        self.assertEqual(selected[0]["media_selection"], "model_video:0")
+
+    def test_instagram_pairing_does_not_outrank_model_media(self):
+        jobs = [
+            {"job_id": "101-FB-MMR-carousel", "sku": "101", "account_id": "FB-MMR",
+             "platform": "facebook", "format": "carousel", "media_selection": "carousel",
+             "row": 10, "attempts": 0, "notes": ""},
+            {"job_id": "101-IG-MMR-carousel", "sku": "101", "account_id": "IG-MMR",
+             "platform": "instagram", "format": "carousel", "media_selection": "carousel",
+             "row": 20, "attempts": 0, "notes": ""},
+            {"job_id": "202-IG-MMR-model_video-0", "sku": "202", "account_id": "IG-MMR",
+             "platform": "instagram", "format": "video", "media_selection": "model_video:0",
+             "row": 5, "attempts": 0, "notes": ""},
+        ]
+        accounts = {
+            "FB-MMR": {"enabled": True, "platform": "facebook", "timezone": "Asia/Yangon"},
+            "IG-MMR": {
+                "enabled": True, "platform": "instagram",
+                "platform_account_id": "17841430974311329", "timezone": "Asia/Yangon",
+            },
+        }
+        sources = {
+            "101": {"main_image": "https://media.example/101.jpg", "side_images": []},
+            "202": {"model_videos": ["https://media.example/202-model.mp4"]},
+        }
+        sheets = types.SimpleNamespace(update_job=lambda *args: None)
+        with patch("optimized_runner._platform_limits", return_value={"facebook": 1, "instagram": 1, "youtube": 0, "line": 0}), \
+             patch("optimized_runner._local_slot_due", return_value=True), \
+             patch("optimized_runner._rotation_rank", return_value=0), \
+             patch("optimized_runner._is_clean_source", return_value=(True, "")), \
+             patch("optimized_runner._media_preflight_reason", return_value=""):
+            selected = optimized_runner._healthy_candidates(
+                jobs, accounts, sources, sheets, limit=2
+            )
+        self.assertEqual(
+            [(job["account_id"], job["media_selection"]) for job in selected],
+            [("FB-MMR", "carousel"), ("IG-MMR", "model_video:0")],
+        )
+
+    def test_account_scan_keeps_model_media_outside_fresh_window(self):
+        jobs = [
+            {"job_id": "carousel-%s" % i, "media_selection": "carousel"}
+            for i in range(400)
+        ]
+        jobs.append({
+            "job_id": "model-late",
+            "media_selection": "model_photo:0",
+        })
+        sampled = optimized_runner._account_scan_jobs(jobs, limit=300)
+        self.assertIn("model-late", [job["job_id"] for job in sampled])
+
+    def test_still_jpg_preflight_also_tries_center_image(self):
+        urls = optimized_runner._rewrite_media_urls(
+            ["https://www.colourdiam.com/Product/Diamond/9542/still.jpg"],
+            include_fallbacks=True,
+        )
+        self.assertEqual(urls[0], "https://www.colourdiam.com/Product/Diamond/9542/still.jpg")
+        self.assertIn(
+            "https://www.colourdiam.com/Product/Diamond/9542/center.jpg",
+            urls,
+        )
+
+    def test_unfetchable_media_jobs_are_revived_for_byte_upload(self):
+        updates = []
+        records = [{
+            "status": "needs_review",
+            "account_id": "IG-MMR",
+            "error_message": "Only photo or video can be accepted as media type.",
+            "notes": "The media could not be fetched from this URI: https://www.colourdiam.com/Product/Diamond/9542/still.jpg",
+        }]
+        sheets = types.SimpleNamespace(
+            queue_header_row=1,
+            queue_ws=types.SimpleNamespace(get_all_records=lambda head=1: records),
+            update_job=lambda job, payload: updates.append((job, payload)),
+        )
+        accounts = {"IG-MMR": {"enabled": True, "platform": "instagram"}}
+        revived = optimized_runner._revive_unfetchable_media_jobs(sheets, accounts)
+        self.assertEqual(revived, 1)
+        self.assertEqual(updates[0][1]["status"], "pending")
+        self.assertIn("byte-upload", updates[0][1]["notes"])
+
 
 if __name__ == "__main__":
     unittest.main()

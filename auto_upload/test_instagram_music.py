@@ -178,6 +178,37 @@ class InstagramMusicRotationTests(unittest.TestCase):
             "instagram|123|https://example.com/reel.mp4",
         )
 
+    def test_unfetchable_image_falls_back_to_byte_upload(self):
+        class _FetchFailResponse:
+            status_code = 400
+            ok = False
+
+            def json(self):
+                return {"error": {
+                    "message": "Only photo or video can be accepted as media type.",
+                    "code": 9004,
+                    "error_subcode": 2207052,
+                    "error_user_title": "Media download has failed. The media URI doesn't meet our requirements.",
+                    "error_user_msg": "The media could not be fetched from this URI: https://www.colourdiam.com/Product/Diamond/4662/still.jpg",
+                }}
+
+        uploader = InstagramUploader.__new__(InstagramUploader)
+        uploader.ig_user_id = "123"
+        uploader.access_token = "token"
+        uploader.page_name = "Colour Diam Myanmar"
+        uploader._ensure_not_rate_limited = lambda: None
+        with mock.patch.object(
+            uploader, "_create_resumable_image", return_value="byte-container"
+        ) as byte_upload, mock.patch(
+            "instagram_uploader.requests.post", return_value=_FetchFailResponse()
+        ):
+            container = uploader._create_media_container(
+                "https://www.colourdiam.com/Product/Diamond/4662/still.jpg",
+                "caption",
+            )
+        self.assertEqual(container, "byte-container")
+        byte_upload.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

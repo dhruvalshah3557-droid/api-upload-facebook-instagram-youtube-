@@ -36,7 +36,7 @@ from delivery_policy import (
     rolling_activity,
     slot_eligible,
 )
-from job_generator import _is_clean_source, model_media_priority
+from job_generator import _is_clean_source, is_model_media, model_media_priority
 from sheets_reader import SheetsReader
 PREFLIGHT_SCAN_LIMIT = 1000
 PER_ACCOUNT_SCAN_LIMIT = 300
@@ -112,19 +112,47 @@ def _rewrite_media_url(url):
     return rewritten
 
 
+def _still_center_fallback(url):
+    """Prefer the product center image when Source Import only has still.jpg."""
+    raw = str(url or "").strip()
+    if not raw:
+        return ""
+    try:
+        parsed = urlparse(raw)
+    except Exception:
+        return ""
+    name = os.path.basename(parsed.path or "")
+    stem, ext = os.path.splitext(name)
+    if stem.lower() != "still":
+        return ""
+    parent = parsed.path[:-len(name)] if name else parsed.path
+    return parsed._replace(path=parent + "center" + (ext or ".jpg")).geturl()
+
+
 def _rewrite_media_urls(urls, include_fallbacks=False):
     rewritten = []
     seen = set()
     for url in urls or []:
         value = _rewrite_media_url(url)
-        if value and value not in seen:
-            seen.add(value)
-            rewritten.append(value)
-        if include_fallbacks and value and value != url:
-            fallback = urlparse(value)._replace(netloc=_LIVE_MEDIA_HOSTS[1]).geturl()
-            if fallback not in seen:
-                seen.add(fallback)
-                rewritten.append(fallback)
+        candidates = [value]
+        if include_fallbacks:
+            center = _still_center_fallback(value)
+            if center:
+                candidates.append(center)
+            extras = []
+            for candidate in candidates:
+                if not candidate:
+                    continue
+                host = (urlparse(candidate).hostname or "").strip().lower()
+                if host == _LIVE_MEDIA_HOSTS[0]:
+                    extras.append(
+                        urlparse(candidate)._replace(netloc=_LIVE_MEDIA_HOSTS[1]).geturl()
+                    )
+            candidates.extend(extras)
+        for candidate in candidates:
+            if candidate and candidate not in seen:
+                seen.add(candidate)
+                rewritten.append(candidate)
     return rewritten
 
 
@@ -166,6 +194,13 @@ _CAPTION_RETRY_MARKERS = (
     "regional caption",
     "refusing english fallback",
     "auto-cleaned: regional caption preflight failed",
+)
+_UNFETCHABLE_MEDIA_RETRY_MARKERS = (
+    "only photo or video can be accepted as media type",
+    "media download has failed",
+    "could not be fetched from this uri",
+    "the media uri doesn't meet our requirements",
+    "doesn't meet our requirements",
 )
 
 
@@ -223,7 +258,14 @@ def _job_sku(job):
 
 
 def _product_account_marker(job):
-    """Stable lock for one product per destination, regardless of post format."""
+    """Stable lock for one product-media post per destination.
+
+    Model video and model photo jobs stay independent. They are always
+    uploaded first and must not be skipped because a product carousel or
+    product video already landed on the same page.
+    """
+    if is_model_media(job):
+        return ""
     sku = _job_sku(job).lower()
     account_id = str(job.get("account_id", "") or "").strip().lower()
     platform = str(job.get("platform", "") or "").strip().lower()
@@ -676,10 +718,52 @@ def _revive_caption_blockers(sheets, accounts):
     return revived
 
 
+def _revive_unfetchable_media_jobs(sheets, accounts):
+    """Requeue Instagram jobs Meta could not fetch by public URL.
 
-def _account_scan_jobs(account_jobs, limit=PER_ACCOUNT_SCAN_LIMIT):
+    Production now uploads original image/video bytes when Graph rejects the
+    remote URI. Jobs parked as needs_review for still.jpg and similar hosts
+    must retry instead of burning Instagram deficit slots.
+    """
+    enabled = {
+        aid for aid, a in accounts.items()
+        if a.get("enabled") and a.get("platform") in ("instagram", "facebook")
+    }
+    if not enabled:
+        return 0
+    records = sheets.queue_ws.get_all_records(head=sheets.queue_header_row)
+    revived = 0
+    for idx, rec in enumerate(records, start=sheets.queue_header_row + 1):
+        if revived >= REVIVE_LIMIT:
+            break
+        status = str(rec.get("status", "")).strip().lower()
+        if status not in (Config.JOB_STATUS_NEEDS_REVIEW, Config.JOB_STATUS_FAILED):
+            continue
+        account_id = str(rec.get("account_id", "") or "").strip()
+        if account_id not in enabled:
+            continue
+        blob = " ".join((
+            str(rec.get("error_message", "") or ""),
+            str(rec.get("notes", "") or ""),
+        )).lower()
+        if not any(marker in blob for marker in _UNFETCHABLE_MEDIA_RETRY_MARKERS):
+            continue
+        sheets.update_job({"row": idx}, {
+            "status": "pending",
+            "attempts": 0,
+            "error_message": "",
+            "notes": "Auto-revived after Instagram byte-upload fallback for unfetchable media URLs",
+        })
+        revived += 1
+    if revived:
+        main.logger.info("Revived %s unfetchable-media job(s)", revived)
+    return revived
+
+
+
+def _sample_account_jobs(jobs, limit):
     """Return a bounded scan that covers both fresh and deep backlog jobs."""
-    jobs = list(account_jobs or ())
+    jobs = list(jobs or ())
     limit = max(1, int(limit))
     if len(jobs) <= limit:
         return jobs
@@ -697,6 +781,21 @@ def _account_scan_jobs(account_jobs, limit=PER_ACCOUNT_SCAN_LIMIT):
     last = len(tail) - 1
     indexes = [round(i * last / (remaining - 1)) for i in range(remaining)]
     selected.extend(tail[index] for index in indexes)
+    return selected
+
+
+def _account_scan_jobs(account_jobs, limit=PER_ACCOUNT_SCAN_LIMIT):
+    """Keep every model photo/video in the scan, then sample the remaining jobs."""
+    jobs = list(account_jobs or ())
+    limit = max(1, int(limit))
+    if len(jobs) <= limit:
+        return jobs
+    model_jobs = [job for job in jobs if is_model_media(job)]
+    other_jobs = [job for job in jobs if not is_model_media(job)]
+    selected = list(model_jobs[:limit])
+    leftover = limit - len(selected)
+    if leftover > 0:
+        selected.extend(_sample_account_jobs(other_jobs, leftover))
     return selected
 
 def _healthy_candidates(
@@ -820,9 +919,10 @@ def _healthy_candidates(
                 )
                 if paired_sku:
                     scan_jobs.sort(
-                        key=lambda job: 0
-                        if _job_sku(job) == paired_sku
-                        else 1
+                        key=lambda job: (
+                            _model_media_priority(job),
+                            0 if _job_sku(job) == paired_sku else 1,
+                        )
                     )
             # YouTube is not Meta-quota bound. Consume leftover run budget with
             # multiple healthy jobs from the same channel instead of leaving
@@ -1058,6 +1158,7 @@ def process_optimized():
 
     _revive_stale_meta_failures(sheets, accounts)
     _revive_caption_blockers(sheets, accounts)
+    _revive_unfetchable_media_jobs(sheets, accounts)
     jobs = sheets.get_pending_jobs()
     if not jobs:
         main.logger.info("No pending jobs")
