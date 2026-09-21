@@ -210,6 +210,7 @@ _SKIPPED_MODEL_RETRY_MARKERS = (
 
 def resolve_media_fixed(job, source):
     selection = job.get("media_selection", "")
+    sku = str((source or {}).get("sku") or (job or {}).get("sku") or "").strip()
     if selection == "carousel" and job.get("platform", "").lower() == "instagram":
         # Product/model videos have their own Reel jobs. Keep carousels image-only
         # so a broken video cannot block the product's image post or publish twice.
@@ -222,7 +223,18 @@ def resolve_media_fixed(job, source):
             media.append(certificate_media)
         media.extend(list(source.get("side_images", [])))
         return _rewrite_media_urls(main._dedupe_media(media)[:10])
-    return _rewrite_media_urls(ORIGINAL_RESOLVE_MEDIA(job, source))
+    media = ORIGINAL_RESOLVE_MEDIA(job, source)
+    if sku and selection.startswith("model_photo:"):
+        media = [
+            SheetsReader._rewrite_model_media_url(url, sku, "image")
+            for url in media
+        ]
+    elif sku and selection.startswith("model_video:"):
+        media = [
+            SheetsReader._rewrite_model_media_url(url, sku, "video")
+            for url in media
+        ]
+    return _rewrite_media_urls(media)
 
 
 def _model_media_priority(job):

@@ -6,7 +6,7 @@ import random
 import re
 import threading
 import time
-from urllib.parse import urlparse
+from urllib.parse import quote, unquote, urlparse
 
 import gspread
 from config import Config
@@ -93,6 +93,27 @@ class SheetsReader:
 
     IMAGE_COLS = ["image1 link", "image2 link", "image3 link", "image4 link",
                   "image5 link", "image6 link", "image7 link", "image8 link"]
+    MODEL_IMAGE_HEADERS = [
+        "model image link 1", "model image link 2", "model image link 3",
+        "multiple model photo link",
+    ]
+    MODEL_VIDEO_HEADERS = [
+        "model video link 1", "model video link 2", "model video link 3",
+        "multiple model video link",
+    ]
+    MODEL_IMAGE_INDEXES = (21, 22, 23, 24)
+    MODEL_VIDEO_INDEXES = (25, 26, 27, 28)
+    MODEL_IMAGE_DEFAULTS = ("1.jpeg", "2.jpeg", "3.jpeg", None)
+    MODEL_VIDEO_DEFAULTS = ("video.mp4", "video-2.mp4", "video-3.mp4", None)
+    MODEL_MEDIA_PREFIX = "https://colourdiam.com/Product/Model%20Photo%20Video/"
+    _COLOURDIAM_HOST_RE = re.compile(r"(^|\.)colourdiam\.com$")
+    _DEAD_MODEL_HOSTS = {
+        "images.colourdiam.com",
+        "videos.colourdiam.com",
+        "cdn.colourdiam.com",
+    }
+    _SHEET_ERROR_CELLS = {"#ref!", "#n/a", "#value!", "#name?", "#div/0!"}
+    _GLUED_URL_RE = re.compile(r"(?i)(?=https?://)")
 
     LANG_CAPTION_COLS = {
         "my": "Burmese Description", "th": "Thai Description",
@@ -261,6 +282,101 @@ class SheetsReader:
                 items.append(line)
         return items
 
+    @classmethod
+    def _split_urls(cls, value):
+        """Split newline, comma, or glued http(s) media cells into one URL each."""
+        text = str(value or "").strip()
+        if not text or text.strip().casefold() in cls._SHEET_ERROR_CELLS:
+            return []
+        chunks = []
+        for line in text.replace("\r", "").replace(",", "\n").split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            pieces = [part.strip() for part in cls._GLUED_URL_RE.split(line) if part.strip()]
+            if pieces:
+                chunks.extend(pieces)
+            else:
+                chunks.append(line)
+        urls = []
+        seen = set()
+        for chunk in chunks:
+            if not chunk.lower().startswith("http"):
+                continue
+            if chunk not in seen:
+                seen.add(chunk)
+                urls.append(chunk)
+        return urls
+
+    @classmethod
+    def _model_media_filename(cls, url, kind):
+        raw = str(url or "").strip()
+        if not raw:
+            return "video.mp4" if kind == "video" else "1.jpeg"
+        name = os.path.basename(unquote(urlparse(raw).path or "").rstrip("/"))
+        if not name or name in (".", ".."):
+            return "video.mp4" if kind == "video" else "1.jpeg"
+        _stem, ext = os.path.splitext(name)
+        if kind == "video":
+            if ext.lower() not in (".mp4", ".mov", ".avi", ".mkv", ".webm"):
+                return "video.mp4"
+            return name
+        if not ext:
+            return name + ".jpeg"
+        return name
+
+    @classmethod
+    def _is_colourdiam_host(cls, url):
+        host = (urlparse(str(url or "")).hostname or "").strip().lower()
+        return bool(host) and bool(cls._COLOURDIAM_HOST_RE.search(host))
+
+    @classmethod
+    def _is_model_photo_video_path(cls, url):
+        path = unquote(urlparse(str(url or "")).path or "").lower()
+        return "/product/model photo video/" in path
+
+    @classmethod
+    def _rewrite_model_media_url(cls, url, sku, kind, filename=None):
+        raw = str(url or "").strip()
+        if not raw or not sku:
+            return raw
+        try:
+            parsed = urlparse(raw)
+        except Exception:
+            return raw
+        host = (parsed.hostname or "").strip().lower()
+        if host and not cls._is_colourdiam_host(raw):
+            return raw
+        if cls._is_model_photo_video_path(raw):
+            name = os.path.basename(unquote(parsed.path or "").rstrip("/"))
+        elif host in cls._DEAD_MODEL_HOSTS:
+            name = filename or cls._model_media_filename(raw, kind)
+        else:
+            name = cls._model_media_filename(raw, kind)
+        if not name:
+            name = filename or ("video.mp4" if kind == "video" else "1.jpeg")
+        sku_path = quote(str(sku).strip(), safe="_-")
+        file_path = quote(str(name).strip(), safe="._-")
+        return f"{cls.MODEL_MEDIA_PREFIX}{sku_path}/{file_path}"
+
+    @classmethod
+    def _collect_model_urls(cls, rec, names, sku, kind, raw_row=None, indexes=(), defaults=()):
+        collected = []
+        seen = set()
+        for i, name in enumerate(names):
+            default = defaults[i] if i < len(defaults) else None
+            value = cls._pick(rec, name)
+            if not value and raw_row is not None and i < len(indexes):
+                index = indexes[i]
+                if 0 <= index < len(raw_row):
+                    value = raw_row[index]
+            for url in cls._split_urls(value):
+                rewritten = cls._rewrite_model_media_url(url, sku, kind, filename=default)
+                if rewritten and rewritten not in seen:
+                    seen.add(rewritten)
+                    collected.append(rewritten)
+        return collected
+
     @staticmethod
     def _normalize_sku(value):
         if value is None:
@@ -423,15 +539,18 @@ class SheetsReader:
                 continue
             seen_headers.add(header)
             columns.append((col_index, header))
+        data_rows = values[header_index + 1:]
         records = [
             {
                 header: (row[col_index] if col_index < len(row) else "")
                 for col_index, header in columns
             }
-            for row in values[header_index + 1:]
+            for row in data_rows
         ]
         sources = {}
-        for idx, rec in enumerate(records, start=self.SOURCE_HEADER_ROW + 1):
+        for idx, (rec, raw_row) in enumerate(
+            zip(records, data_rows), start=self.SOURCE_HEADER_ROW + 1
+        ):
             sku = self._normalize_sku(rec.get("STK", ""))
             if not sku:
                 continue
@@ -441,7 +560,7 @@ class SheetsReader:
                 (u for u in images if self._is_center(u)),
                 images[0] if images else "",
             )
-            side_images = self._split_lines(rec.get("multiple side image link", ""))
+            side_images = self._split_urls(rec.get("multiple side image link", ""))
             if not side_images:
                 side_images = [
                     u for u in images
@@ -452,19 +571,16 @@ class SheetsReader:
                     u for u in side_images
                     if u != main_image and not self._is_center(u)
                 ]
-            model_images = []
-            for c in ["model image link 1", "model image link 2", "model image link 3", "multiple model photo link"]:
-                for u in self._split_lines(rec.get(c, "")):
-                    if u not in model_images:
-                        model_images.append(u)
-            model_videos = []
-            for c in ["model video link 1", "model video link 2", "model video link 3"]:
-                for u in self._split_lines(rec.get(c, "")):
-                    if u not in model_videos:
-                        model_videos.append(u)
-            for u in self._split_lines(rec.get("multiple model video link", "")):
-                if u not in model_videos:
-                    model_videos.append(u)
+            model_images = self._collect_model_urls(
+                rec, self.MODEL_IMAGE_HEADERS, sku, "image",
+                raw_row=raw_row, indexes=self.MODEL_IMAGE_INDEXES,
+                defaults=self.MODEL_IMAGE_DEFAULTS,
+            )
+            model_videos = self._collect_model_urls(
+                rec, self.MODEL_VIDEO_HEADERS, sku, "video",
+                raw_row=raw_row, indexes=self.MODEL_VIDEO_INDEXES,
+                defaults=self.MODEL_VIDEO_DEFAULTS,
+            )
             certificate_media_url = self._pick(
                 rec,
                 "CERTIFICATE IMAGE LINK", "Certificate Image Link", "certificate image link",

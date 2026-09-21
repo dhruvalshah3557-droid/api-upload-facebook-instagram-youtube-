@@ -803,6 +803,69 @@ def test_compound_sku_product_links_are_not_false_mismatches():
     print("OK test_compound_sku_product_links_are_not_false_mismatches")
 
 
+def test_glued_model_photo_and_video_links_use_model_photo_video_origin():
+    from sheets_reader import SheetsReader
+
+    assert SheetsReader._split_urls(
+        "https://colourdiam.com/Product/Model%20Photo%20Video/415/1.jpeg"
+        "https://colourdiam.com/Product/Model%20Photo%20Video/415/2.jpeg"
+    ) == [
+        "https://colourdiam.com/Product/Model%20Photo%20Video/415/1.jpeg",
+        "https://colourdiam.com/Product/Model%20Photo%20Video/415/2.jpeg",
+    ]
+    assert SheetsReader._rewrite_model_media_url(
+        "https://images.colourdiam.com/products/STK298-1.jpg", "298", "image",
+        filename="1.jpeg",
+    ) == "https://colourdiam.com/Product/Model%20Photo%20Video/298/1.jpeg"
+    assert SheetsReader._rewrite_model_media_url(
+        "https://images.colourdiam.com/videos/STK298/model-video.mp4",
+        "298",
+        "video",
+        filename="video.mp4",
+    ) == "https://colourdiam.com/Product/Model%20Photo%20Video/298/video.mp4"
+    assert SheetsReader._rewrite_model_media_url(
+        "https://colourdiam.com/Product/Model%20Photo%20Video/414/video.mp4",
+        "414",
+        "video",
+    ) == "https://colourdiam.com/Product/Model%20Photo%20Video/414/video.mp4"
+    assert SheetsReader._rewrite_model_media_url(
+        "https://cdn.shopify.com/s/files/1/0651/4135/1614/files/1996_6379_1.mp4",
+        "1996_6379",
+        "video",
+    ) == "https://cdn.shopify.com/s/files/1/0651/4135/1614/files/1996_6379_1.mp4"
+
+    reader = SheetsReader.__new__(SheetsReader)
+    reader.SOURCE_HEADER_ROW = 1
+    reader.source_ws = types.SimpleNamespace(get_all_values=lambda: [
+        [
+            "STK", "image1 link",
+            "model image link 1", "model image link 2", "model image link 3",
+            "multiple model photo link", "model video link 1",
+        ],
+        [
+            "298",
+            "https://colourdiam.com/Product/Jewellery/298/white45/center.jpg",
+            "https://images.colourdiam.com/products/STK298-1.jpg",
+            "https://images.colourdiam.com/products/STK298-2.jpg",
+            "https://images.colourdiam.com/products/STK298-3.jpg",
+            "https://colourdiam.com/Product/Model%20Photo%20Video/298/1.jpeg"
+            "https://colourdiam.com/Product/Model%20Photo%20Video/298/center.jpeg",
+            "https://images.colourdiam.com/videos/STK298/model-video.mp4",
+        ],
+    ])
+    sources = reader.get_source_rows()
+    assert sources["298"]["model_images"] == [
+        "https://colourdiam.com/Product/Model%20Photo%20Video/298/1.jpeg",
+        "https://colourdiam.com/Product/Model%20Photo%20Video/298/2.jpeg",
+        "https://colourdiam.com/Product/Model%20Photo%20Video/298/3.jpeg",
+        "https://colourdiam.com/Product/Model%20Photo%20Video/298/center.jpeg",
+    ]
+    assert sources["298"]["model_videos"] == [
+        "https://colourdiam.com/Product/Model%20Photo%20Video/298/video.mp4",
+    ]
+    print("OK test_glued_model_photo_and_video_links_use_model_photo_video_origin")
+
+
 def test_dead_cdn_hosts_are_rewritten_onto_live_origin():
     import optimized_runner
 
@@ -858,6 +921,7 @@ if __name__ == "__main__":
     test_source_import_duplicate_headers_do_not_abort_uploads()
     test_source_import_builds_product_name_from_details()
     test_compound_sku_product_links_are_not_false_mismatches()
+    test_glued_model_photo_and_video_links_use_model_photo_video_origin()
     test_dead_cdn_hosts_are_rewritten_onto_live_origin()
     test_dns_and_integrity_preflight_failures_are_retried()
     print("All pipeline tests passed.")
