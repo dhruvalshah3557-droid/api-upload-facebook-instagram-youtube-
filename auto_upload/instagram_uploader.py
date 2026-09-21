@@ -598,6 +598,7 @@ class InstagramUploader:
             return self.upload(media_urls[0], caption, product_id)
 
         child_ids = []
+        child_urls = []
         for media_url in media_urls[:10]:
             try:
                 child_id = self._create_media_container(
@@ -615,8 +616,15 @@ class InstagramUploader:
                 )
                 continue
             child_ids.append(child_id)
+            child_urls.append(media_url)
             time.sleep(max(5, int(os.getenv("IG_CAROUSEL_ITEM_DELAY_SECONDS", "8"))))
 
+        if len(child_ids) == 1:
+            logger.warning(
+                f"[{self.page_name}] Carousel collapsed to one usable child; "
+                "publishing as a single post"
+            )
+            return self.upload(child_urls[0], caption, product_id)
         container_id = self._create_carousel_container(child_ids, caption, product_id)
         time.sleep(15)
         return self._publish_container(container_id)

@@ -714,6 +714,93 @@ class FullRepairTests(unittest.TestCase):
         sampled = optimized_runner._account_scan_jobs(jobs, limit=300)
         self.assertIn("model-late", [job["job_id"] for job in sampled])
 
+    def test_account_scan_does_not_let_broken_model_backlog_hide_product_jobs(self):
+        jobs = [
+            {"job_id": "model-%s" % i, "media_selection": "model_video:0"}
+            for i in range(400)
+        ]
+        jobs.append({
+            "job_id": "product-healthy",
+            "media_selection": "carousel",
+        })
+        sampled = optimized_runner._account_scan_jobs(jobs, limit=300)
+        self.assertIn("product-healthy", [job["job_id"] for job in sampled])
+        self.assertLessEqual(len(sampled), 300)
+        model_count = sum(
+            1 for job in sampled if str(job.get("media_selection", "")).startswith("model_")
+        )
+        self.assertGreater(model_count, 0)
+        self.assertLess(model_count, 300)
+
+    def test_healthy_candidates_select_product_when_model_backlog_fails_preflight(self):
+        jobs = [
+            {
+                "job_id": "model-%s-FB-BKK-model_video-0" % i,
+                "sku": "bad-%s" % i,
+                "account_id": "FB-BKK",
+                "platform": "facebook",
+                "format": "video",
+                "media_selection": "model_video:0",
+                "row": i,
+                "attempts": 0,
+                "notes": "",
+            }
+            for i in range(1, 301)
+        ]
+        jobs.append({
+            "job_id": "good-FB-BKK-carousel",
+            "sku": "good",
+            "account_id": "FB-BKK",
+            "platform": "facebook",
+            "format": "carousel",
+            "media_selection": "carousel",
+            "row": 999,
+            "attempts": 0,
+            "notes": "",
+        })
+        accounts = {
+            "FB-BKK": {"enabled": True, "platform": "facebook", "timezone": "Asia/Bangkok"},
+        }
+        sources = {job["sku"]: {"sku": job["sku"]} for job in jobs}
+        sheets = types.SimpleNamespace(update_job=lambda *args, **kwargs: None)
+
+        def preflight(media, force_video=False):
+            url = str((media or [""])[0])
+            if "good" in url:
+                return ""
+            return "video failed validation"
+
+        with patch("optimized_runner._platform_limits", return_value={"facebook": 1, "instagram": 0, "youtube": 0, "line": 0}), \
+             patch("optimized_runner._local_slot_due", return_value=True), \
+             patch("optimized_runner._rotation_rank", return_value=0), \
+             patch("optimized_runner._is_clean_source", return_value=(True, "")), \
+             patch("optimized_runner.resolve_media_fixed", side_effect=lambda job, source: ["https://media.example/%s.mp4" % job["sku"]]), \
+             patch("optimized_runner._media_preflight_reason", side_effect=preflight), \
+             patch("optimized_runner.main.build_caption", return_value="ok"):
+            selected = optimized_runner._healthy_candidates(
+                jobs, accounts, sources, sheets, limit=1
+            )
+        self.assertEqual([job["sku"] for job in selected], ["good"])
+
+    def test_skipped_model_jobs_are_revived_after_product_duplicate_lock(self):
+        updates = []
+        records = [{
+            "status": "skipped",
+            "account_id": "FB-TURKEY",
+            "media_selection": "model_video:0",
+            "notes": "Duplicate product already uploaded to this account in another media format",
+        }]
+        sheets = types.SimpleNamespace(
+            queue_header_row=1,
+            queue_ws=types.SimpleNamespace(get_all_records=lambda head=1: records),
+            update_job=lambda job, payload: updates.append((job, payload)),
+        )
+        accounts = {"FB-TURKEY": {"enabled": True, "platform": "facebook"}}
+        revived = optimized_runner._revive_skipped_model_jobs(sheets, accounts)
+        self.assertEqual(revived, 1)
+        self.assertEqual(updates[0][1]["status"], "pending")
+        self.assertIn("model media", updates[0][1]["notes"].lower())
+
     def test_still_jpg_preflight_also_tries_center_image(self):
         urls = optimized_runner._rewrite_media_urls(
             ["https://www.colourdiam.com/Product/Diamond/9542/still.jpg"],

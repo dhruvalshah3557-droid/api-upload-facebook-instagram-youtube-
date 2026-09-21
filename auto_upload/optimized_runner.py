@@ -201,6 +201,10 @@ _UNFETCHABLE_MEDIA_RETRY_MARKERS = (
     "could not be fetched from this uri",
     "the media uri doesn't meet our requirements",
     "doesn't meet our requirements",
+    "instagram carousel requires at least two child containers",
+)
+_SKIPPED_MODEL_RETRY_MARKERS = (
+    "duplicate product already uploaded to this account in another media format",
 )
 
 
@@ -760,6 +764,49 @@ def _revive_unfetchable_media_jobs(sheets, accounts):
     return revived
 
 
+def _revive_skipped_model_jobs(sheets, accounts):
+    """Requeue model photo/video jobs skipped by a product-media duplicate lock.
+
+    Model media is independent of product carousel/video posts. An earlier
+    housekeeping pass marked those jobs skipped once any product format had
+    already landed on the same account.
+    """
+    enabled = {
+        aid for aid, a in accounts.items()
+        if a.get("enabled")
+    }
+    if not enabled:
+        return 0
+    records = sheets.queue_ws.get_all_records(head=sheets.queue_header_row)
+    revived = 0
+    for idx, rec in enumerate(records, start=sheets.queue_header_row + 1):
+        if revived >= REVIVE_LIMIT:
+            break
+        status = str(rec.get("status", "")).strip().lower()
+        if status != Config.JOB_STATUS_SKIPPED:
+            continue
+        if not is_model_media(rec):
+            continue
+        account_id = str(rec.get("account_id", "") or "").strip()
+        if account_id not in enabled:
+            continue
+        blob = " ".join((
+            str(rec.get("error_message", "") or ""),
+            str(rec.get("notes", "") or ""),
+        )).lower()
+        if not any(marker in blob for marker in _SKIPPED_MODEL_RETRY_MARKERS):
+            continue
+        sheets.update_job({"row": idx}, {
+            "status": "pending",
+            "attempts": 0,
+            "error_message": "",
+            "notes": "Auto-revived model media after incorrect product duplicate skip",
+        })
+        revived += 1
+    if revived:
+        main.logger.info("Revived %s incorrectly skipped model-media job(s)", revived)
+    return revived
+
 
 def _sample_account_jobs(jobs, limit):
     """Return a bounded scan that covers both fresh and deep backlog jobs."""
@@ -785,14 +832,24 @@ def _sample_account_jobs(jobs, limit):
 
 
 def _account_scan_jobs(account_jobs, limit=PER_ACCOUNT_SCAN_LIMIT):
-    """Keep every model photo/video in the scan, then sample the remaining jobs."""
+    """Prefer model photo/video, but always leave room for product media.
+
+    A large broken model-video backlog previously filled the entire 300-job
+    scan window, so healthy product carousels/videos never got a look and the
+    account selected zero jobs.
+    """
     jobs = list(account_jobs or ())
     limit = max(1, int(limit))
     if len(jobs) <= limit:
         return jobs
     model_jobs = [job for job in jobs if is_model_media(job)]
     other_jobs = [job for job in jobs if not is_model_media(job)]
-    selected = list(model_jobs[:limit])
+    if not other_jobs:
+        return _sample_account_jobs(model_jobs, limit)
+    if not model_jobs:
+        return _sample_account_jobs(other_jobs, limit)
+    model_budget = min(len(model_jobs), max(1, (2 * limit) // 3))
+    selected = list(_sample_account_jobs(model_jobs, model_budget))
     leftover = limit - len(selected)
     if leftover > 0:
         selected.extend(_sample_account_jobs(other_jobs, leftover))
@@ -1159,6 +1216,7 @@ def process_optimized():
     _revive_stale_meta_failures(sheets, accounts)
     _revive_caption_blockers(sheets, accounts)
     _revive_unfetchable_media_jobs(sheets, accounts)
+    _revive_skipped_model_jobs(sheets, accounts)
     jobs = sheets.get_pending_jobs()
     if not jobs:
         main.logger.info("No pending jobs")

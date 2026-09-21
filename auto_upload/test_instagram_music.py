@@ -209,6 +209,32 @@ class InstagramMusicRotationTests(unittest.TestCase):
         self.assertEqual(container, "byte-container")
         byte_upload.assert_called_once()
 
+    def test_carousel_with_one_usable_child_publishes_as_single_post(self):
+        uploader = InstagramUploader.__new__(InstagramUploader)
+        uploader.ig_user_id = "123"
+        uploader.access_token = "token"
+        uploader.page_name = "Colour Diam Italy"
+        uploader._ensure_not_rate_limited = lambda: None
+        with mock.patch.object(
+            uploader, "_create_media_container",
+            side_effect=["child-1", Exception("unusable")],
+        ), mock.patch.object(
+            uploader, "upload", return_value={"id": "single-post"}
+        ) as upload, mock.patch(
+            "instagram_uploader.time.sleep"
+        ):
+            result = uploader.upload_carousel(
+                [
+                    "https://media.example/a.jpg",
+                    "https://media.example/b.jpg",
+                ],
+                "caption",
+            )
+        self.assertEqual(result, {"id": "single-post"})
+        upload.assert_called_once_with(
+            "https://media.example/a.jpg", "caption", ""
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
