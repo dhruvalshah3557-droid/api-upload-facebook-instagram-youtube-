@@ -9,7 +9,7 @@ try:
 except ImportError:
     sys.modules["requests"] = types.SimpleNamespace(get=lambda *args, **kwargs: None)
 
-from instagram_uploader import InstagramRateLimitError, InstagramUploader
+from instagram_uploader import InstagramRateLimitError, InstagramUploader, _COVER_PROBE_CACHE
 
 
 class _Response:
@@ -55,6 +55,7 @@ class InstagramMusicRotationTests(unittest.TestCase):
     def setUp(self):
         InstagramUploader._LAST_AUDIO_BY_ACCOUNT.clear()
         InstagramUploader._RATE_LIMIT_UNTIL = 0.0
+        _COVER_PROBE_CACHE.clear()
 
     def test_catalog_results_rotate_instead_of_always_first(self):
         uploader = InstagramUploader.__new__(InstagramUploader)
@@ -107,6 +108,7 @@ class InstagramMusicRotationTests(unittest.TestCase):
         uploader._ensure_not_rate_limited = lambda: None
         cover = "https://media.example/8732/center.jpg"
         with mock.patch.dict("os.environ", {"IG_AUTO_TRENDING_AUDIO": "false"}, clear=True), \
+             mock.patch("instagram_uploader._cover_is_publicly_fetchable", return_value=True), \
              mock.patch("instagram_uploader.requests.post", return_value=_ContainerResponse()) as post:
             container = uploader._create_media_container(
                 "https://media.example/8732/video.mp4",
@@ -119,6 +121,25 @@ class InstagramMusicRotationTests(unittest.TestCase):
         self.assertEqual(params["media_type"], "REELS")
         self.assertEqual(params["cover_url"], cover)
         self.assertNotIn("thumb_offset", params)
+
+    def test_unfetchable_cover_uses_thumb_offset(self):
+        uploader = InstagramUploader.__new__(InstagramUploader)
+        uploader.ig_user_id = "123"
+        uploader.access_token = "token"
+        uploader.page_name = "Colour Diam Russia"
+        uploader._ensure_not_rate_limited = lambda: None
+        with mock.patch.dict("os.environ", {"IG_AUTO_TRENDING_AUDIO": "false"}, clear=True), \
+             mock.patch("instagram_uploader._cover_is_publicly_fetchable", return_value=False), \
+             mock.patch("instagram_uploader.requests.post", return_value=_ContainerResponse()) as post:
+            uploader._create_media_container(
+                "https://media.example/2556/vid.mp4",
+                "caption",
+                is_video=True,
+                cover_url="https://www.colourdiam.com/Product/Jewellery/2556/white45/center.jpg",
+            )
+        params = post.call_args.kwargs["data"]
+        self.assertEqual(params["thumb_offset"], 1000)
+        self.assertNotIn("cover_url", params)
 
     def test_reel_without_image_avoids_black_first_frame(self):
         uploader = InstagramUploader.__new__(InstagramUploader)
@@ -177,6 +198,65 @@ class InstagramMusicRotationTests(unittest.TestCase):
             prepare.call_args.kwargs["selection_key"],
             "instagram|123|https://example.com/reel.mp4",
         )
+
+    def test_resumable_reel_skips_404_cover(self):
+        uploader = InstagramUploader.__new__(InstagramUploader)
+        uploader.ig_user_id = "123"
+        uploader.access_token = "token"
+        uploader.page_name = "Colour Diam Japan"
+        with mock.patch(
+            "instagram_uploader.prepare_video",
+            return_value=("reel.mp4", b"video", "video/mp4"),
+        ), mock.patch(
+            "instagram_uploader._cover_is_publicly_fetchable", return_value=False
+        ), mock.patch(
+            "instagram_uploader.requests.post",
+            side_effect=[_ContainerResponse(), _UploadResponse()],
+        ) as post:
+            uploader._create_resumable_reel(
+                "https://example.com/reel.mp4",
+                "caption",
+                cover_url="https://www.colourdiam.com/Product/Jewellery/1135/white45/center.jpg",
+            )
+        params = post.call_args_list[0].kwargs["data"]
+        self.assertEqual(params["thumb_offset"], 1000)
+        self.assertNotIn("cover_url", params)
+
+    def test_resumable_reel_retries_without_cover_after_meta_reject(self):
+        class _CoverFailResponse:
+            status_code = 400
+            ok = False
+
+            def json(self):
+                return {"error": {
+                    "message": "Only photo or video can be accepted as media type.",
+                    "code": 9004,
+                    "error_subcode": 2207052,
+                }}
+
+        uploader = InstagramUploader.__new__(InstagramUploader)
+        uploader.ig_user_id = "123"
+        uploader.access_token = "token"
+        uploader.page_name = "Colour Diam Spain"
+        with mock.patch(
+            "instagram_uploader.prepare_video",
+            return_value=("reel.mp4", b"video", "video/mp4"),
+        ), mock.patch(
+            "instagram_uploader._cover_is_publicly_fetchable", return_value=True
+        ), mock.patch(
+            "instagram_uploader.requests.post",
+            side_effect=[_CoverFailResponse(), _ContainerResponse(), _UploadResponse()],
+        ) as post:
+            container = uploader._create_resumable_reel(
+                "https://example.com/reel.mp4",
+                "caption",
+                cover_url="https://media.example/center.jpg",
+            )
+        self.assertEqual(container, "container-1")
+        self.assertEqual(len(post.call_args_list), 3)
+        retry_params = post.call_args_list[1].kwargs["data"]
+        self.assertNotIn("cover_url", retry_params)
+        self.assertEqual(retry_params["thumb_offset"], 1000)
 
     def test_unfetchable_image_falls_back_to_byte_upload(self):
         class _FetchFailResponse:

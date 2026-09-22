@@ -57,6 +57,57 @@ def _is_cover_image_url(url):
     )
 
 
+_COVER_PROBE_CACHE = {}
+_COVER_PROBE_HEADERS = {"User-Agent": "facebookexternalhit/1.1"}
+
+
+def _cover_is_publicly_fetchable(url):
+    """True when Meta's crawler can fetch the Reel cover as an image."""
+    clean = str(url or "").strip()
+    if clean in _COVER_PROBE_CACHE:
+        return _COVER_PROBE_CACHE[clean]
+    ok = False
+    try:
+        resp = requests.head(
+            clean,
+            headers=_COVER_PROBE_HEADERS,
+            timeout=15,
+            allow_redirects=True,
+        )
+        content_type = (resp.headers.get("Content-Type") or "").lower().split(";", 1)[0]
+        ok = resp.status_code in (200, 206) and content_type.startswith("image/")
+        if not ok and resp.status_code in (403, 405, 501):
+            resp = requests.get(
+                clean,
+                headers=_COVER_PROBE_HEADERS,
+                timeout=15,
+                stream=True,
+                allow_redirects=True,
+            )
+            content_type = (resp.headers.get("Content-Type") or "").lower().split(";", 1)[0]
+            ok = resp.status_code in (200, 206) and content_type.startswith("image/")
+            resp.close()
+    except requests.RequestException:
+        ok = False
+    _COVER_PROBE_CACHE[clean] = ok
+    return ok
+
+
+def _usable_cover_url(url):
+    """Return a public image URL Meta can fetch, else empty.
+
+    A 404/HTML cover on a Reel container is rejected with
+    'Only photo or video can be accepted as media type.' and parks the job.
+    """
+    clean = str(url or "").strip()
+    if not _is_cover_image_url(clean):
+        return ""
+    if not _cover_is_publicly_fetchable(clean):
+        logger.warning("Skipping unfetchable Instagram Reel cover: %s", clean)
+        return ""
+    return clean
+
+
 _IMAGE_MAGIC = (
     b"\xff\xd8\xff",
     b"\x89PNG\r\n\x1a\n",
@@ -369,10 +420,10 @@ class InstagramUploader:
             "caption": caption,
             "access_token": self.access_token,
         }
-        if _is_cover_image_url(cover_url):
-            params["cover_url"] = str(cover_url).strip()
+        cover = _usable_cover_url(cover_url)
+        if cover:
+            params["cover_url"] = cover
         else:
-            # Avoid selecting frame zero, which is black on many source videos.
             params["thumb_offset"] = 1000
         if product_id:
             params["product_tags"] = f'[{{"product_id":"{product_id}"}}]'
@@ -383,6 +434,23 @@ class InstagramUploader:
         )
         session = self._json_or_error(response)
         container_id = str(session.get("id", "") or "").strip()
+        if not container_id:
+            error = session.get("error", {})
+            if params.get("cover_url") and _is_unfetchable_media_error(error, session):
+                logger.warning(
+                    f"[{self.page_name}] Reel cover {params['cover_url']} was "
+                    "rejected by Meta; retrying with thumb_offset"
+                )
+                params.pop("cover_url", None)
+                params["thumb_offset"] = 1000
+                response = requests.post(
+                    f"{FB_GRAPH_URL}/{self.ig_user_id}/media",
+                    data=params,
+                    timeout=60,
+                )
+                session = self._json_or_error(response)
+                container_id = str(session.get("id", "") or "").strip()
+                error = session.get("error", {})
         if not container_id:
             error = session.get("error", {})
             if error.get("code") == 4 or error.get("error_subcode") == 2207051:
@@ -447,8 +515,9 @@ class InstagramUploader:
             params["media_type"] = "VIDEO" if carousel_item else "REELS"
             params["video_url"] = media_url
             if not carousel_item:
-                if _is_cover_image_url(cover_url):
-                    params["cover_url"] = str(cover_url).strip()
+                cover = _usable_cover_url(cover_url)
+                if cover:
+                    params["cover_url"] = cover
                 else:
                     params["thumb_offset"] = 1000
             if not carousel_item and os.getenv("IG_AUTO_TRENDING_AUDIO", "true").lower() in ("1", "true", "yes", "on"):
@@ -500,13 +569,26 @@ class InstagramUploader:
                     f"META_RATE_LIMIT code=4 subcode=2207051; retry after {cooldown}s"
                 )
             if _is_unfetchable_media_error(error, result):
+                if is_video and not carousel_item and params.get("cover_url"):
+                    logger.warning(
+                        f"[{self.page_name}] Reel cover {params['cover_url']} was "
+                        "rejected by Meta; retrying with thumb_offset"
+                    )
+                    params.pop("cover_url", None)
+                    params["thumb_offset"] = 1000
+                    resp = requests.post(url, data=params, timeout=60)
+                    result = self._json_or_error(resp)
+                    if "id" in result:
+                        logger.info(f"[{self.page_name}] Container created: {result['id']}")
+                        return result["id"]
+                    error = result.get("error", {})
                 logger.warning(
                     f"[{self.page_name}] Meta could not fetch {media_url}; "
                     "uploading original bytes instead"
                 )
                 if is_video:
                     return self._create_resumable_reel(
-                        media_url, caption, product_id, cover_url
+                        media_url, caption, product_id, cover_url=""
                     )
                 return self._create_resumable_image(
                     media_url, caption, product_id, carousel_item
