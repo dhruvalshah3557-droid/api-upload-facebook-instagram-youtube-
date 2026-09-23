@@ -1106,7 +1106,7 @@ def process_pending(sheets=None):
                 log_buffer.append(sheets.log_entry(job, "failed", message, api_code))
                 logger.error(f"Job {job_id}: failed ({status}): {message}")
 
-            time.sleep(10)
+            time.sleep(max(10, int(os.getenv("UPLOAD_INTERVAL_SECONDS", "10"))))
     finally:
         if log_buffer:
             insert_logs_newest_first(sheets, log_buffer)
