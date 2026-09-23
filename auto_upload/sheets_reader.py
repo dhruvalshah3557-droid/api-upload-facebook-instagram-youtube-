@@ -105,7 +105,7 @@ class SheetsReader:
     MODEL_VIDEO_INDEXES = (25, 26, 27, 28)
     MODEL_IMAGE_DEFAULTS = ("1.jpeg", "2.jpeg", "3.jpeg", None)
     MODEL_VIDEO_DEFAULTS = ("video.mp4", "video-2.mp4", "video-3.mp4", None)
-    MODEL_MEDIA_PREFIX = "https://colourdiam.com/Product/Model%20Photo%20Video/"
+    MODEL_MEDIA_PREFIX = "https://colourdiam.com/Product/Jewellery/Model%20images/"
     _COLOURDIAM_HOST_RE = re.compile(r"(^|\.)colourdiam\.com$")
     _DEAD_MODEL_HOSTS = {
         "images.colourdiam.com",
