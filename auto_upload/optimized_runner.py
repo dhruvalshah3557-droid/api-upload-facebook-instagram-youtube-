@@ -612,6 +612,25 @@ def _platform_limits(limit, accounts=None, activity=None):
 
     instagram_cap = _instagram_run_cap()
     ready = _ready_platform_counts(accounts) if accounts is not None else None
+    if remaining <= 3 and ready is not None:
+        # Rotate small batches across platforms instead of reserving one slot
+        # for every platform and starving the last platform in the publish loop.
+        demand = _demand_platform_counts(accounts, activity)
+        order = ["facebook", "instagram", "youtube", "tiktok"]
+        offset = int(time.time() // 600) % len(order)
+        order = order[offset:] + order[:offset]
+        slots = dict(empty)
+        for platform in order:
+            if sum(slots.values()) >= int(limit):
+                break
+            if not demand.get(platform, 0):
+                continue
+            if platform == "instagram" and instagram_cap <= 0:
+                continue
+            if platform == "youtube" and _youtube_run_cap(remaining) <= 0:
+                continue
+            slots[platform] = 1
+        return slots
     if ready is not None:
         alloc = _demand_platform_counts(accounts, activity)
         return _assign_platform_slots(empty, remaining, alloc, instagram_cap, ready)
