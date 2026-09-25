@@ -1,1 +1,1 @@
-2026-09-25T11:54:00Z - start expanded model video/photo batch; preserve original sound when audible
+2026-09-25T15:27:00Z - guarded recovery after no production run for over 90 minutes
