@@ -1,1 +1,1 @@
-2026-09-25T11:36:00Z - restart production uploads after scheduled runs stopped; verify delivery backlog
+2026-09-25T11:54:00Z - start expanded model video/photo batch; preserve original sound when audible
