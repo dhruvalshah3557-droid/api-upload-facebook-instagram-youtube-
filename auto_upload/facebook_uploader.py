@@ -73,11 +73,11 @@ class FacebookUploader:
         if product_id:
             data["product_tags"] = json.dumps([{"product_id": product_id}])
         logger.info(
-            f"[{self.page_name}] Posting Facebook video/Reel in normalized 9:16 format"
+            f"[{self.page_name}] Posting Facebook video/Reel fitted to 9:16 without cropping"
             + (" with product tag" if product_id else "")
         )
         # All Facebook video uploads are normalized to a full-screen 1080x1920
-        # vertical canvas with a centred crop (no blur or black borders), and also
+        # vertical canvas while preserving the complete source frame, and also
         # guarantees silent/muted videos receive licensed/trending audio when
         # configured, otherwise an original instrumental fallback.
         prepared = prepare_video(

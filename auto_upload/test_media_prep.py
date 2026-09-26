@@ -56,16 +56,24 @@ class MusicRotationTests(unittest.TestCase):
         ):
             self.assertEqual(media_prep._configured_music_urls(), [])
 
-    def test_facebook_reel_fill_uses_crop_without_blur_or_padding(self):
+    def test_reel_fit_preserves_complete_video_with_blurred_edge_fill(self):
         completed = mock.Mock(returncode=0)
         with mock.patch("media_prep.shutil.which", return_value="/usr/bin/ffmpeg"), \
              mock.patch("media_prep.subprocess.run", return_value=completed) as run:
             self.assertTrue(media_prep._to_9x16_fill("input.mp4", "output.mp4"))
         command = " ".join(run.call_args.args[0])
         self.assertIn("force_original_aspect_ratio=increase", command)
+        self.assertIn("force_original_aspect_ratio=decrease", command)
         self.assertIn("crop=1080:1920", command)
+        self.assertIn("boxblur=24:8", command)
+        self.assertIn("overlay=(W-w)/2:(H-h)/2", command)
         self.assertNotIn("pad=", command)
-        self.assertNotIn("blur", command)
+
+    def test_quiet_original_audio_is_not_classified_as_silent(self):
+        completed = mock.Mock(stdout="audio", stderr="max_volume: -55.0 dB")
+        with mock.patch("media_prep.shutil.which", side_effect=lambda name: f"/usr/bin/{name}"), \
+             mock.patch("media_prep.subprocess.run", return_value=completed):
+            self.assertEqual(media_prep.audio_state("quiet-original.mp4"), "audible")
 
 
 if __name__ == "__main__":

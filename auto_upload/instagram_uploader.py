@@ -510,8 +510,8 @@ class InstagramUploader:
             params["caption"] = caption
 
         if is_video:
-            # Instagram Graph API publishing is URL based. Do not replace
-            # video_url with a multipart local file; Meta requires video_url.
+            # Carousel children remain URL-based VIDEO containers. Standalone
+            # Reels are routed through the resumable no-crop path by upload().
             params["media_type"] = "VIDEO" if carousel_item else "REELS"
             params["video_url"] = media_url
             if not carousel_item:
@@ -520,35 +520,6 @@ class InstagramUploader:
                     params["cover_url"] = cover
                 else:
                     params["thumb_offset"] = 1000
-            if not carousel_item and os.getenv("IG_AUTO_TRENDING_AUDIO", "true").lower() in ("1", "true", "yes", "on"):
-                state = self._remote_audio_state(media_url)
-                logger.info(f"[{self.page_name}] Reel audio state: {state}")
-                if state in ("missing", "silent"):
-                    use_catalog = os.getenv("IG_USE_AUDIO_CATALOG", "false").lower() in (
-                        "1", "true", "yes", "on"
-                    )
-                    if use_catalog:
-                        try:
-                            catalog_key = f"instagram|{self.ig_user_id}|{media_url}"
-                            params["audio_configuration"] = self._trending_audio_configuration(catalog_key)
-                        except Exception as exc:
-                            logger.warning(
-                                f"[{self.page_name}] Instagram audio catalog unavailable "
-                                f"({exc}); mixing verified music into the video instead"
-                            )
-                            return self._create_resumable_reel(
-                                media_url, caption, product_id, cover_url
-                            )
-                    else:
-                        logger.info(
-                            f"[{self.page_name}] Mixing verified licensed/CC0 music "
-                            "into silent Reel"
-                        )
-                        return self._create_resumable_reel(
-                            media_url, caption, product_id, cover_url
-                        )
-                elif state == "unknown":
-                    raise Exception("Could not verify Reel audio; refusing a potentially silent upload")
         else:
             params["image_url"] = media_url
 
@@ -716,6 +687,17 @@ class InstagramUploader:
         # authoritative media type after preflight, so let the caller force a
         # video job to remain a Reel instead of accidentally creating an image.
         is_video = _is_video_url(media_url) if force_video is None else bool(force_video)
+        if is_video:
+            logger.info(
+                f"[{self.page_name}] Fitting complete Reel to 9:16 and "
+                "preserving original audio"
+            )
+            container_id = self._create_resumable_reel(
+                media_url, caption, product_id, cover_url
+            )
+            logger.info(f"[{self.page_name}] Waiting 30s for media processing...")
+            time.sleep(30)
+            return self._publish_container(container_id)
         container_id = self._create_media_container(
             media_url, caption, is_video, product_id, cover_url=cover_url
         )

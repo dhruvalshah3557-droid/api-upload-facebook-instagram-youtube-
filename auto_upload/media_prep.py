@@ -40,7 +40,10 @@ _VIDEO_TYPES = (
 )
 
 REELS_WIDTH, REELS_HEIGHT = 1080, 1920
-SILENCE_THRESHOLD_DB = -45.0
+# Only replace a soundtrack when it is genuinely inaudible.  The previous
+# -45 dB cutoff treated quiet camera/ambient audio as silence and replaced the
+# model video's original sound.
+SILENCE_THRESHOLD_DB = -80.0
 _AUDIO_EXTS = (".mp3", ".m4a", ".aac", ".wav", ".flac", ".ogg")
 _CC0_SOURCE = (
     "https://raw.githubusercontent.com/effacestudios/"
@@ -219,19 +222,22 @@ def _mix_music(video_path, music_path, out_path, media_key, volume=0.72):
 
 
 def _to_9x16_fill(video_path, out_path):
-    """Fill a 1080x1920 Reel frame without blur or letterbox borders.
+    """Fit the complete source into a 1080x1920 Reel without cropping it.
 
-    Jewellery source media is centre-framed, so a centred crop gives Facebook
-    a true full-screen 9:16 video instead of the former small image surrounded
-    by black padding.
+    A softly blurred copy fills the background while the uncut source remains
+    centred in front.  This keeps models, jewellery and on-screen text visible
+    for landscape, square and portrait inputs.
     """
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         logger.error("ffmpeg not found; skipping 9:16 conversion")
         return False
     filter_complex = (
-        f"[0:v]scale={REELS_WIDTH}:{REELS_HEIGHT}:force_original_aspect_ratio=increase,"
-        f"crop={REELS_WIDTH}:{REELS_HEIGHT}:(iw-ow)/2:(ih-oh)/2[v]"
+        "[0:v]split=2[bgsrc][fgsrc];"
+        f"[bgsrc]scale={REELS_WIDTH}:{REELS_HEIGHT}:force_original_aspect_ratio=increase,"
+        f"crop={REELS_WIDTH}:{REELS_HEIGHT},boxblur=24:8[bg];"
+        f"[fgsrc]scale={REELS_WIDTH}:{REELS_HEIGHT}:force_original_aspect_ratio=decrease[fg];"
+        "[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1[v]"
     )
     cmd = [
         ffmpeg, "-y", "-i", video_path,
@@ -243,7 +249,10 @@ def _to_9x16_fill(video_path, out_path):
     ]
     try:
         subprocess.run(cmd, check=True, capture_output=True)
-        logger.info(f"Filled 9:16 frame ({REELS_WIDTH}x{REELS_HEIGHT}) with centred crop and no blur")
+        logger.info(
+            f"Fitted complete video into 9:16 ({REELS_WIDTH}x{REELS_HEIGHT}) "
+            "with a blurred edge-fill background"
+        )
         return True
     except subprocess.CalledProcessError as e:
         detail = (e.stderr or b"").decode(errors="ignore")[:500]
