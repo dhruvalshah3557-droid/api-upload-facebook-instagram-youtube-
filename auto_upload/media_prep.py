@@ -6,13 +6,20 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import requests
 
 logger = logging.getLogger(__name__)
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+DOWNLOAD_HEADERS = {
+    "User-Agent": USER_AGENT,
+    "Cache-Control": "no-cache, no-store, max-age=0",
+    "Pragma": "no-cache",
+}
 
 _VIDEO_EXTS = (".mp4", ".mov", ".avi", ".mkv", ".webm")
 
@@ -69,9 +76,17 @@ def _env_true(key, default="true"):
     return _env(key, default).lower() in ("true", "1", "yes", "on")
 
 
+def _fresh_media_url(media_url, token=None):
+    """Return a one-use URL so replaced source files cannot be served from stale CDN cache."""
+    parts = urlsplit(media_url)
+    query = parse_qsl(parts.query, keep_blank_values=True)
+    query.append(("_cd_refresh", str(token if token is not None else time.time_ns())))
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+
+
 def _download_bytes(media_url):
-    """Download the original file bytes."""
-    resp = requests.get(media_url, timeout=180, headers={"User-Agent": USER_AGENT})
+    """Download fresh original file bytes, bypassing stale URL/CDN cache entries."""
+    resp = requests.get(_fresh_media_url(media_url), timeout=180, headers=DOWNLOAD_HEADERS)
     resp.raise_for_status()
     name = media_url.split("?")[0].rsplit("/", 1)[-1] or "media"
     content_type = resp.headers.get("Content-Type", "application/octet-stream")
@@ -251,7 +266,7 @@ def _to_9x16_fill(video_path, out_path):
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         raise RuntimeError("ffmpeg is required for Reel normalization")
-    source_audio = audio_state(video_path)
+    input_audio = audio_state(video_path)
     filter_complex = (
         "[0:v]split=2[bgsrc][fgsrc];"
         f"[bgsrc]scale={REELS_WIDTH}:{REELS_HEIGHT}:force_original_aspect_ratio=increase,"
@@ -280,15 +295,15 @@ def _to_9x16_fill(video_path, out_path):
             f"expected {REELS_WIDTH}x{REELS_HEIGHT}"
         )
     output_audio = audio_state(out_path)
-    if source_audio in ("audible", "silent") and output_audio == "missing":
+    if input_audio in ("audible", "silent") and output_audio == "missing":
         raise RuntimeError("Reel conversion dropped the original audio stream")
-    if source_audio == "audible" and output_audio != "audible":
+    if input_audio == "audible" and output_audio != "audible":
         raise RuntimeError(
             f"Reel conversion did not preserve audible original audio (output={output_audio})"
         )
     logger.info(
-        "Verified Reel output: %dx%d, original audio=%s, output audio=%s",
-        REELS_WIDTH, REELS_HEIGHT, source_audio, output_audio,
+        "Verified Reel output: %dx%d, conversion input audio=%s, output audio=%s",
+        REELS_WIDTH, REELS_HEIGHT, input_audio, output_audio,
     )
     return True
 
@@ -307,7 +322,8 @@ def prepare_video(media_url, fill_9x16=False, selection_key=""):
     os.close(fd)
     temp_paths = [tmp_path]
     try:
-        resp = requests.get(media_url, timeout=180, headers={"User-Agent": USER_AGENT})
+        download_url = _fresh_media_url(media_url)
+        resp = requests.get(download_url, timeout=180, headers=DOWNLOAD_HEADERS)
         resp.raise_for_status()
         with open(tmp_path, "wb") as f:
             f.write(resp.content)
@@ -315,8 +331,12 @@ def prepare_video(media_url, fill_9x16=False, selection_key=""):
         name = media_url.split("?")[0].rsplit("/", 1)[-1] or "video.mp4"
         current = tmp_path
 
+        source_digest = hashlib.sha256(Path(tmp_path).read_bytes()).hexdigest()[:16]
         state = audio_state(tmp_path)
-        logger.info(f"Video audio state: {state}")
+        logger.info(
+            "Downloaded fresh source: sha256=%s bytes=%d source audio=%s",
+            source_digest, Path(tmp_path).stat().st_size, state,
+        )
         if auto_audio and state in ("missing", "silent"):
             music_key = selection_key or media_url
             music_path = _resolve_music(music_key, temp_paths)
@@ -389,10 +409,10 @@ def validate_media_url(media_url, kind=None, ffprobe=True):
     if not kind:
         return "cannot determine media kind"
 
-    resp = requests.get(
-        media_url, timeout=180,
-        headers={"User-Agent": USER_AGENT, "Range": "bytes=0-65535"},
-    )
+    fresh_url = _fresh_media_url(media_url)
+    headers = dict(DOWNLOAD_HEADERS)
+    headers["Range"] = "bytes=0-65535"
+    resp = requests.get(fresh_url, timeout=180, headers=headers)
     try:
         resp.raise_for_status()
     except Exception:
@@ -407,5 +427,5 @@ def validate_media_url(media_url, kind=None, ffprobe=True):
         return f"magic bytes do not match {kind} media"
 
     if kind == "video" and ffprobe:
-        return _probe_video(media_url)
+        return _probe_video(fresh_url)
     return ""
