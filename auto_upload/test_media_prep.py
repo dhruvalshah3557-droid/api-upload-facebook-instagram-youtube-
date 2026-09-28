@@ -13,6 +13,37 @@ import media_prep
 
 
 class MusicRotationTests(unittest.TestCase):
+    def test_fresh_media_url_preserves_query_and_adds_refresh_token(self):
+        fresh = media_prep._fresh_media_url(
+            "https://media.example/video.mp4?download=1", token="fixed"
+        )
+        parts = media_prep.urlsplit(fresh)
+        query = dict(media_prep.parse_qsl(parts.query))
+        self.assertEqual(parts.path, "/video.mp4")
+        self.assertEqual(query["download"], "1")
+        self.assertEqual(query["_cd_refresh"], "fixed")
+
+    def test_prepare_video_bypasses_cache_and_audits_fresh_source(self):
+        response = mock.Mock(
+            content=b"updated-video-with-audio",
+            headers={"Content-Type": "video/mp4"},
+        )
+        response.raise_for_status.return_value = None
+        with mock.patch("media_prep.requests.get", return_value=response) as get, \
+             mock.patch("media_prep.audio_state", return_value="audible"), \
+             mock.patch.dict(media_prep.os.environ, {"AUTO_ADD_AUDIO": "true"}, clear=True):
+            name, content, content_type = media_prep.prepare_video(
+                "https://media.example/video.mp4?download=1"
+            )
+        requested_url = get.call_args.args[0]
+        headers = get.call_args.kwargs["headers"]
+        self.assertIn("_cd_refresh=", requested_url)
+        self.assertIn("download=1", requested_url)
+        self.assertIn("no-cache", headers["Cache-Control"])
+        self.assertEqual(name, "video.mp4")
+        self.assertEqual(content, b"updated-video-with-audio")
+        self.assertEqual(content_type, "video/mp4")
+
     def test_bundled_library_contains_pinned_real_tracks(self):
         tracks = media_prep.BUNDLED_CC0_MUSIC_URLS
         self.assertGreaterEqual(len(tracks), 6)
