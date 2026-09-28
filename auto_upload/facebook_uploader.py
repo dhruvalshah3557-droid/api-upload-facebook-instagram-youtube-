@@ -67,30 +67,93 @@ class FacebookUploader:
         logger.error(f"[{self.page_name}] Photo failed: {result}")
         raise Exception(result.get("error", {}).get("message", str(result)))
 
+    @staticmethod
+    def _json_or_error(response):
+        try:
+            return response.json()
+        except Exception:
+            return {
+                "error": {
+                    "message": (
+                        f"Facebook API returned HTTP {response.status_code}: "
+                        f"{response.text[:500]}"
+                    )
+                }
+            }
+
     def upload_video(self, media_url, caption, product_id=""):
-        url = f"{FB_GRAPH_URL}/{self.page_id}/videos"
-        data = {"description": caption, "access_token": self.access_token}
-        if product_id:
-            data["product_tags"] = json.dumps([{"product_id": product_id}])
+        """Publish a real Facebook Page Reel through the resumable Reels API."""
         logger.info(
-            f"[{self.page_name}] Posting Facebook video/Reel fitted to 9:16 without cropping"
-            + (" with product tag" if product_id else "")
+            f"[{self.page_name}] Publishing Facebook Reel fitted to 9:16 "
+            "with verified audio"
         )
-        # All Facebook video uploads are normalized to a full-screen 1080x1920
-        # vertical canvas while preserving the complete source frame, and also
-        # guarantees silent/muted videos receive licensed/trending audio when
-        # configured, otherwise an original instrumental fallback.
-        prepared = prepare_video(
+        name, content, content_type = prepare_video(
             media_url,
             fill_9x16=True,
             selection_key=f"facebook|{self.page_id}|{media_url}",
         )
-        resp = requests.post(url, data=data, files={"source": prepared}, timeout=600)
-        result = resp.json()
-        if "id" in result:
-            logger.info(f"[{self.page_name}] Video posted: {result['id']}")
+
+        reels_url = f"{FB_GRAPH_URL}/{self.page_id}/video_reels"
+        start = requests.post(
+            reels_url,
+            data={
+                "upload_phase": "start",
+                "access_token": self.access_token,
+            },
+            timeout=60,
+        )
+        session = self._json_or_error(start)
+        video_id = str(session.get("video_id") or session.get("id") or "").strip()
+        upload_url = str(session.get("upload_url") or "").strip()
+        if not video_id or not upload_url:
+            logger.error(f"[{self.page_name}] Reel session failed: {session}")
+            raise Exception(session.get("error", {}).get("message", str(session)))
+
+        upload = requests.post(
+            upload_url,
+            headers={
+                "Authorization": f"OAuth {self.access_token}",
+                "Content-Type": content_type or "video/mp4",
+                "file_size": str(len(content)),
+                "offset": "0",
+                "file_name": name,
+            },
+            data=content,
+            timeout=600,
+        )
+        upload_result = self._json_or_error(upload)
+        if not upload.ok or not (
+            upload_result.get("success")
+            or upload_result.get("video_id")
+            or upload.status_code < 300
+        ):
+            logger.error(f"[{self.page_name}] Reel byte upload failed: {upload_result}")
+            raise Exception(
+                upload_result.get("error", {}).get("message", str(upload_result))
+            )
+
+        finish_data = {
+            "upload_phase": "finish",
+            "video_id": video_id,
+            "video_state": "PUBLISHED",
+            "description": caption,
+            "access_token": self.access_token,
+        }
+        # The Page Reels endpoint does not consistently support product_tags.
+        # Keep the verified website link in the caption and never fall back to a
+        # standard video post merely to attach a product tag.
+        if product_id:
+            logger.info(
+                f"[{self.page_name}] Product {product_id} retained in Reel caption; "
+                "native product tag is not supported by this publishing flow"
+            )
+        finish = requests.post(reels_url, data=finish_data, timeout=120)
+        result = self._json_or_error(finish)
+        if finish.ok and result.get("success"):
+            result.setdefault("id", video_id)
+            logger.info(f"[{self.page_name}] Facebook Reel published: {video_id}")
             return result
-        logger.error(f"[{self.page_name}] Video failed: {result}")
+        logger.error(f"[{self.page_name}] Reel publish failed: {result}")
         raise Exception(result.get("error", {}).get("message", str(result)))
 
     def upload_carousel(self, image_urls, caption, product_id=""):
