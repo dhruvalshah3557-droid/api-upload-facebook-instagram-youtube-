@@ -61,13 +61,29 @@ class MusicRotationTests(unittest.TestCase):
         with mock.patch("media_prep.shutil.which", return_value="/usr/bin/ffmpeg"), \
              mock.patch("media_prep.subprocess.run", return_value=completed) as run:
             self.assertTrue(media_prep._to_9x16_fill("input.mp4", "output.mp4"))
-        command = " ".join(run.call_args.args[0])
+        commands = [" ".join(call.args[0]) for call in run.call_args_list]
+        command = next(cmd for cmd in commands if "-filter_complex" in cmd)
         self.assertIn("force_original_aspect_ratio=increase", command)
         self.assertIn("force_original_aspect_ratio=decrease", command)
         self.assertIn("crop=1080:1920", command)
         self.assertIn("boxblur=24:8", command)
         self.assertIn("overlay=(W-w)/2:(H-h)/2", command)
+        self.assertIn("setdar=9/16", command)
+        self.assertIn("-map [v] -map 0:a:0?", command)
+        self.assertIn("-ar 48000 -ac 2", command)
+        self.assertNotIn("-shortest", command)
         self.assertNotIn("pad=", command)
+
+    def test_reel_fit_rejects_dropped_original_audio(self):
+        with mock.patch("media_prep.shutil.which", return_value="/usr/bin/tool"), \
+             mock.patch("media_prep._probe_dimensions", return_value=(1080, 1920)), \
+             mock.patch("media_prep.audio_state", side_effect=["audible", "missing"]), \
+             mock.patch(
+                 "media_prep.subprocess.run",
+                 return_value=mock.Mock(returncode=0, stdout="", stderr=b""),
+             ):
+            with self.assertRaisesRegex(RuntimeError, "dropped the original audio"):
+                media_prep._to_9x16_fill("input.mp4", "output.mp4")
 
     def test_quiet_original_audio_is_not_classified_as_silent(self):
         completed = mock.Mock(stdout="audio", stderr="max_volume: -55.0 dB")
