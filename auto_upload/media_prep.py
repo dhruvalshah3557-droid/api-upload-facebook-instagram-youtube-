@@ -1,4 +1,5 @@
 import logging
+import json
 import hashlib
 import os
 import re
@@ -221,43 +222,75 @@ def _mix_music(video_path, music_path, out_path, media_key, volume=0.72):
     return out_path
 
 
-def _to_9x16_fill(video_path, out_path):
-    """Fit the complete source into a 1080x1920 Reel without cropping it.
+def _probe_dimensions(video_path):
+    """Return the first video stream's display dimensions, accounting for rotation."""
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        return None
+    try:
+        probe = subprocess.run(
+            [
+                ffprobe, "-v", "error", "-select_streams", "v:0",
+                "-show_entries", "stream=width,height:stream_tags=rotate",
+                "-of", "json", video_path,
+            ],
+            check=False, capture_output=True, text=True, timeout=60,
+        )
+        data = json.loads(probe.stdout or "{}")
+        stream = (data.get("streams") or [{}])[0]
+        width, height = int(stream.get("width", 0)), int(stream.get("height", 0))
+        rotation = abs(int((stream.get("tags") or {}).get("rotate", 0))) % 180
+        return (height, width) if rotation == 90 else (width, height)
+    except Exception as exc:
+        logger.warning("Video dimension probe failed: %s", exc)
+        return None
 
-    A softly blurred copy fills the background while the uncut source remains
-    centred in front.  This keeps models, jewellery and on-screen text visible
-    for landscape, square and portrait inputs.
-    """
+
+def _to_9x16_fill(video_path, out_path):
+    """Fit the complete source into a verified 1080x1920 Reel without cropping."""
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
-        logger.error("ffmpeg not found; skipping 9:16 conversion")
-        return False
+        raise RuntimeError("ffmpeg is required for Reel normalization")
+    source_audio = audio_state(video_path)
     filter_complex = (
         "[0:v]split=2[bgsrc][fgsrc];"
         f"[bgsrc]scale={REELS_WIDTH}:{REELS_HEIGHT}:force_original_aspect_ratio=increase,"
         f"crop={REELS_WIDTH}:{REELS_HEIGHT},boxblur=24:8[bg];"
         f"[fgsrc]scale={REELS_WIDTH}:{REELS_HEIGHT}:force_original_aspect_ratio=decrease[fg];"
-        "[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1[v]"
+        "[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1,setdar=9/16[v]"
     )
     cmd = [
         ffmpeg, "-y", "-i", video_path,
         "-filter_complex", filter_complex,
-        "-map", "[v]", "-map", "0:a?",
+        "-map", "[v]", "-map", "0:a:0?",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
-        "-pix_fmt", "yuv420p", "-movflags", "+faststart",
-        "-c:a", "aac", "-b:a", "192k", "-shortest", out_path,
+        "-pix_fmt", "yuv420p", "-r", "30", "-movflags", "+faststart",
+        "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
+        "-metadata:s:v:0", "rotate=0", out_path,
     ]
-    try:
-        subprocess.run(cmd, check=True, capture_output=True)
-        logger.info(
-            f"Fitted complete video into 9:16 ({REELS_WIDTH}x{REELS_HEIGHT}) "
-            "with a blurred edge-fill background"
+    proc = subprocess.run(cmd, check=False, capture_output=True)
+    if proc.returncode != 0:
+        detail = (proc.stderr or b"").decode(errors="ignore")[-800:]
+        raise RuntimeError(f"9:16 conversion failed: {detail}")
+
+    dimensions = _probe_dimensions(out_path)
+    if dimensions and dimensions != (REELS_WIDTH, REELS_HEIGHT):
+        raise RuntimeError(
+            f"Reel conversion produced {dimensions[0]}x{dimensions[1]}, "
+            f"expected {REELS_WIDTH}x{REELS_HEIGHT}"
         )
-        return True
-    except subprocess.CalledProcessError as e:
-        detail = (e.stderr or b"").decode(errors="ignore")[:500]
-        logger.error(f"9:16 conversion failed ({detail}); uploading current processed video")
-        return False
+    output_audio = audio_state(out_path)
+    if source_audio in ("audible", "silent") and output_audio == "missing":
+        raise RuntimeError("Reel conversion dropped the original audio stream")
+    if source_audio == "audible" and output_audio != "audible":
+        raise RuntimeError(
+            f"Reel conversion did not preserve audible original audio (output={output_audio})"
+        )
+    logger.info(
+        "Verified Reel output: %dx%d, original audio=%s, output audio=%s",
+        REELS_WIDTH, REELS_HEIGHT, source_audio, output_audio,
+    )
+    return True
 
 
 def prepare_video(media_url, fill_9x16=False, selection_key=""):
@@ -301,11 +334,12 @@ def prepare_video(media_url, fill_9x16=False, selection_key=""):
         if fill_9x16:
             out_path = current + ".9x16.mp4"
             temp_paths.append(out_path)
-            if _to_9x16_fill(current, out_path):
-                current = out_path
+            _to_9x16_fill(current, out_path)
+            current = out_path
 
         content = Path(current).read_bytes()
-        return name, content, "video/mp4"
+        output_name = f"{Path(name).stem}.mp4"
+        return output_name, content, "video/mp4"
     finally:
         for path in temp_paths:
             try:
