@@ -172,6 +172,7 @@ class InstagramMusicRotationTests(unittest.TestCase):
         uploader.page_name = "Colour Diam"
         with mock.patch.dict("os.environ", {"IG_RATE_LIMIT_COOLDOWN_SECONDS": "3600"}), \
              mock.patch("instagram_uploader.prepare_video", return_value=("reel.mp4", b"video", "video/mp4")), \
+             mock.patch("instagram_uploader.video_layout_from_bytes", return_value="vertical"), \
              mock.patch("instagram_uploader.requests.post", return_value=_RateLimitResponse()):
             with self.assertRaisesRegex(InstagramRateLimitError, "2207051"):
                 uploader._create_resumable_reel("https://example.com/reel.mp4", "caption")
@@ -186,14 +187,17 @@ class InstagramMusicRotationTests(unittest.TestCase):
             "instagram_uploader.prepare_video",
             return_value=("reel.mp4", b"video", "video/mp4"),
         ) as prepare, mock.patch(
+            "instagram_uploader.video_layout_from_bytes", return_value="vertical",
+        ), mock.patch(
             "instagram_uploader.requests.post",
             side_effect=[_ContainerResponse(), _UploadResponse()],
-        ):
+        ) as post:
             uploader._create_resumable_reel(
                 "https://example.com/reel.mp4", "caption"
             )
 
         self.assertTrue(prepare.call_args.kwargs["fill_9x16"])
+        self.assertEqual(post.call_args_list[0].kwargs["data"]["media_type"], "REELS")
         self.assertEqual(
             prepare.call_args.kwargs["selection_key"],
             "instagram|123|https://example.com/reel.mp4",
@@ -207,6 +211,8 @@ class InstagramMusicRotationTests(unittest.TestCase):
         with mock.patch(
             "instagram_uploader.prepare_video",
             return_value=("reel.mp4", b"video", "video/mp4"),
+        ), mock.patch(
+            "instagram_uploader.video_layout_from_bytes", return_value="vertical",
         ), mock.patch(
             "instagram_uploader._cover_is_publicly_fetchable", return_value=False
         ), mock.patch(
@@ -241,6 +247,8 @@ class InstagramMusicRotationTests(unittest.TestCase):
         with mock.patch(
             "instagram_uploader.prepare_video",
             return_value=("reel.mp4", b"video", "video/mp4"),
+        ), mock.patch(
+            "instagram_uploader.video_layout_from_bytes", return_value="vertical",
         ), mock.patch(
             "instagram_uploader._cover_is_publicly_fetchable", return_value=True
         ), mock.patch(
@@ -288,6 +296,54 @@ class InstagramMusicRotationTests(unittest.TestCase):
             )
         self.assertEqual(container, "byte-container")
         byte_upload.assert_called_once()
+
+    def test_missing_image_url_parameter_falls_back_to_byte_upload(self):
+        class _MissingUrlResponse:
+            status_code = 400
+            ok = False
+
+            def json(self):
+                return {"error": {
+                    "message": "(#100) The parameter image_url is required",
+                    "code": 100,
+                }}
+
+        uploader = InstagramUploader.__new__(InstagramUploader)
+        uploader.ig_user_id = "123"
+        uploader.access_token = "token"
+        uploader.page_name = "Colour Diam Vietnam"
+        uploader._ensure_not_rate_limited = lambda: None
+        with mock.patch.object(
+            uploader, "_create_resumable_image", return_value="byte-container"
+        ) as byte_upload, mock.patch(
+            "instagram_uploader.requests.post", return_value=_MissingUrlResponse()
+        ):
+            container = uploader._create_media_container(
+                "https://media.example/model.jpg",
+                "caption",
+            )
+        self.assertEqual(container, "byte-container")
+        byte_upload.assert_called_once()
+
+    def test_landscape_resumable_video_uses_feed_video_not_reel(self):
+        uploader = InstagramUploader.__new__(InstagramUploader)
+        uploader.ig_user_id = "123"
+        uploader.access_token = "token"
+        uploader.page_name = "Colour Diam Dubai"
+        with mock.patch(
+            "instagram_uploader.prepare_video",
+            return_value=("wide.mp4", b"video", "video/mp4"),
+        ), mock.patch(
+            "instagram_uploader.video_layout_from_bytes", return_value="landscape",
+        ), mock.patch(
+            "instagram_uploader.requests.post",
+            side_effect=[_ContainerResponse(), _UploadResponse()],
+        ) as post:
+            uploader._create_resumable_reel(
+                "https://example.com/wide.mp4", "caption"
+            )
+        self.assertEqual(post.call_args_list[0].kwargs["data"]["media_type"], "VIDEO")
+        self.assertNotIn("cover_url", post.call_args_list[0].kwargs["data"])
 
     def test_carousel_with_one_usable_child_publishes_as_single_post(self):
         uploader = InstagramUploader.__new__(InstagramUploader)

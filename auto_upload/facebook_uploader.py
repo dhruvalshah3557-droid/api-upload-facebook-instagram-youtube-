@@ -3,7 +3,7 @@ import logging
 
 import requests
 
-from media_prep import prepare_video
+from media_prep import prepare_video, video_layout_from_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -82,17 +82,23 @@ class FacebookUploader:
             }
 
     def upload_video(self, media_url, caption, product_id=""):
-        """Publish a real Facebook Page Reel through the resumable Reels API."""
+        """Publish original video bytes. Vertical uses Reels; landscape/square use Page video."""
         logger.info(
-            f"[{self.page_name}] Publishing Facebook Reel fitted to 9:16 "
-            "with verified audio"
+            f"[{self.page_name}] Preparing Facebook video with original size and sound"
         )
         name, content, content_type = prepare_video(
             media_url,
             fill_9x16=True,
             selection_key=f"facebook|{self.page_id}|{media_url}",
         )
+        layout = video_layout_from_bytes(content)
+        if layout != "vertical":
+            logger.info(
+                f"[{self.page_name}] Publishing original {layout} video as a Page video"
+            )
+            return self._upload_page_video(name, content, content_type, caption, product_id)
 
+        logger.info(f"[{self.page_name}] Publishing original vertical video as a Reel")
         reels_url = f"{FB_GRAPH_URL}/{self.page_id}/video_reels"
         start = requests.post(
             reels_url,
@@ -154,6 +160,27 @@ class FacebookUploader:
             logger.info(f"[{self.page_name}] Facebook Reel published: {video_id}")
             return result
         logger.error(f"[{self.page_name}] Reel publish failed: {result}")
+        raise Exception(result.get("error", {}).get("message", str(result)))
+
+    def _upload_page_video(self, name, content, content_type, caption, product_id=""):
+        """Keep landscape/square videos at original size on the Page /videos endpoint."""
+        data = {
+            "description": caption,
+            "access_token": self.access_token,
+        }
+        if product_id:
+            data["product_tags"] = json.dumps([{"product_id": product_id}])
+        resp = requests.post(
+            f"{FB_GRAPH_URL}/{self.page_id}/videos",
+            data=data,
+            files={"source": (name, content, content_type or "video/mp4")},
+            timeout=600,
+        )
+        result = self._json_or_error(resp)
+        if "id" in result:
+            logger.info(f"[{self.page_name}] Facebook video posted: {result['id']}")
+            return result
+        logger.error(f"[{self.page_name}] Page video failed: {result}")
         raise Exception(result.get("error", {}).get("message", str(result)))
 
     def upload_carousel(self, image_urls, caption, product_id=""):

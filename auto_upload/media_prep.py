@@ -237,6 +237,26 @@ def _mix_music(video_path, music_path, out_path, media_key, volume=0.72):
     return out_path
 
 
+def _stream_rotation(stream):
+    """Return display rotation in degrees from tags or side data."""
+    tags = stream.get("tags") or {}
+    raw = tags.get("rotate")
+    if raw not in (None, ""):
+        try:
+            return abs(int(float(raw))) % 180
+        except (TypeError, ValueError):
+            pass
+    for item in stream.get("side_data_list") or []:
+        raw = item.get("rotation")
+        if raw in (None, ""):
+            continue
+        try:
+            return abs(int(float(raw))) % 180
+        except (TypeError, ValueError):
+            continue
+    return 0
+
+
 def _probe_dimensions(video_path):
     """Return the first video stream's display dimensions, accounting for rotation."""
     ffprobe = shutil.which("ffprobe")
@@ -246,7 +266,8 @@ def _probe_dimensions(video_path):
         probe = subprocess.run(
             [
                 ffprobe, "-v", "error", "-select_streams", "v:0",
-                "-show_entries", "stream=width,height:stream_tags=rotate",
+                "-show_entries",
+                "stream=width,height:stream_tags=rotate:stream_side_data",
                 "-of", "json", video_path,
             ],
             check=False, capture_output=True, text=True, timeout=60,
@@ -254,15 +275,57 @@ def _probe_dimensions(video_path):
         data = json.loads(probe.stdout or "{}")
         stream = (data.get("streams") or [{}])[0]
         width, height = int(stream.get("width", 0)), int(stream.get("height", 0))
-        rotation = abs(int((stream.get("tags") or {}).get("rotate", 0))) % 180
+        rotation = _stream_rotation(stream)
         return (height, width) if rotation == 90 else (width, height)
     except Exception as exc:
         logger.warning("Video dimension probe failed: %s", exc)
         return None
 
 
+def video_layout(video_path):
+    """Return vertical, landscape, square, or unknown for a local video."""
+    dims = _probe_dimensions(video_path)
+    if not dims or dims[0] <= 0 or dims[1] <= 0:
+        return "unknown"
+    width, height = dims
+    if height > width:
+        return "vertical"
+    if width == height:
+        return "square"
+    return "landscape"
+
+
+def video_layout_from_bytes(content, suffix=".mp4"):
+    """Inspect uploaded bytes so callers can choose Reels vs feed video."""
+    if not content:
+        return "unknown"
+    fd, path = tempfile.mkstemp(suffix=suffix or ".mp4")
+    os.close(fd)
+    try:
+        Path(path).write_bytes(content)
+        return video_layout(path)
+    except Exception as exc:
+        logger.warning("Video layout probe failed: %s", exc)
+        return "unknown"
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def _audio_encode_args(copy_original):
+    if copy_original:
+        return ["-c:a", "copy"]
+    return ["-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2"]
+
+
 def _to_9x16_fill(video_path, out_path):
-    """Fit the complete source into a verified 1080x1920 Reel without cropping."""
+    """Fit the complete source into a verified 1080x1920 Reel without cropping.
+
+    Audible original sound is stream-copied. Music/silent sources are encoded
+    to AAC. This path is only used when a Reel truly requires 9:16 output.
+    """
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         raise RuntimeError("ffmpeg is required for Reel normalization")
@@ -274,16 +337,25 @@ def _to_9x16_fill(video_path, out_path):
         f"[fgsrc]scale={REELS_WIDTH}:{REELS_HEIGHT}:force_original_aspect_ratio=decrease[fg];"
         "[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1,setdar=9/16[v]"
     )
-    cmd = [
-        ffmpeg, "-y", "-i", video_path,
-        "-filter_complex", filter_complex,
-        "-map", "[v]", "-map", "0:a:0?",
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
-        "-pix_fmt", "yuv420p", "-r", "30", "-movflags", "+faststart",
-        "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
-        "-metadata:s:v:0", "rotate=0", out_path,
-    ]
-    proc = subprocess.run(cmd, check=False, capture_output=True)
+
+    def _run(copy_original):
+        cmd = [
+            ffmpeg, "-y", "-i", video_path,
+            "-filter_complex", filter_complex,
+            "-map", "[v]", "-map", "0:a:0?",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
+            "-pix_fmt", "yuv420p", "-r", "30", "-movflags", "+faststart",
+            *_audio_encode_args(copy_original),
+            "-metadata:s:v:0", "rotate=0", out_path,
+        ]
+        return subprocess.run(cmd, check=False, capture_output=True)
+
+    copy_original = input_audio == "audible"
+    proc = _run(copy_original)
+    if proc.returncode != 0 and copy_original:
+        logger.warning("Original-audio copy failed during 9:16 fit; retrying with AAC")
+        proc = _run(False)
+        copy_original = False
     if proc.returncode != 0:
         detail = (proc.stderr or b"").decode(errors="ignore")[-800:]
         raise RuntimeError(f"9:16 conversion failed: {detail}")
@@ -302,8 +374,8 @@ def _to_9x16_fill(video_path, out_path):
             f"Reel conversion did not preserve audible original audio (output={output_audio})"
         )
     logger.info(
-        "Verified Reel output: %dx%d, conversion input audio=%s, output audio=%s",
-        REELS_WIDTH, REELS_HEIGHT, input_audio, output_audio,
+        "Verified Reel output: %dx%d, conversion input audio=%s, output audio=%s, audio_copy=%s",
+        REELS_WIDTH, REELS_HEIGHT, input_audio, output_audio, copy_original,
     )
     return True
 
@@ -312,9 +384,10 @@ def prepare_video(media_url, fill_9x16=False, selection_key=""):
     """Return (name, bytes, content_type) for a video upload.
 
     Production rule: silent/muted videos MUST receive audio automatically.
-    Audible videos preserve their original soundtrack. Priority for silent
-    videos is BACKGROUND_MUSIC_URLS (licensed tracks), then
-    BACKGROUND_MUSIC_PATH (file/directory), then six pinned CC0 music tracks.
+    Audible videos keep their original soundtrack and original pixel size.
+    9:16 padding is only applied to vertical sources that are not already
+    1080x1920. Landscape/square sources are never stretched onto a Reel
+    canvas here — callers must publish those as feed/video posts instead.
     """
     auto_audio = _env_true("AUTO_ADD_AUDIO", "true")
     suffix = Path(media_url.split("?")[0]).suffix or ".mp4"
@@ -333,9 +406,15 @@ def prepare_video(media_url, fill_9x16=False, selection_key=""):
 
         source_digest = hashlib.sha256(Path(tmp_path).read_bytes()).hexdigest()[:16]
         state = audio_state(tmp_path)
+        dims = _probe_dimensions(tmp_path)
+        layout = video_layout(tmp_path)
         logger.info(
-            "Downloaded fresh source: sha256=%s bytes=%d source audio=%s",
-            source_digest, Path(tmp_path).stat().st_size, state,
+            "Downloaded fresh source: sha256=%s bytes=%d source audio=%s layout=%s size=%s",
+            source_digest,
+            Path(tmp_path).stat().st_size,
+            state,
+            layout,
+            f"{dims[0]}x{dims[1]}" if dims else "unknown",
         )
         if auto_audio and state in ("missing", "silent"):
             music_key = selection_key or media_url
@@ -352,10 +431,13 @@ def prepare_video(media_url, fill_9x16=False, selection_key=""):
             raise RuntimeError("Could not verify video audio; refusing silent-risk upload")
 
         if fill_9x16:
-            out_path = current + ".9x16.mp4"
-            temp_paths.append(out_path)
-            _to_9x16_fill(current, out_path)
-            current = out_path
+            current_dims = _probe_dimensions(current) or dims
+            current_layout = video_layout(current) if current != tmp_path else layout
+            logger.info(
+                "Keeping original %s size %s and soundtrack; not stretching onto 1080x1920",
+                current_layout,
+                f"{current_dims[0]}x{current_dims[1]}" if current_dims else "unknown",
+            )
 
         content = Path(current).read_bytes()
         output_name = f"{Path(name).stem}.mp4"

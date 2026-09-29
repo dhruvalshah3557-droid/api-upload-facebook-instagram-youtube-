@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 import requests
-from media_prep import audio_state, prepare_video
+from media_prep import audio_state, prepare_video, video_layout_from_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +122,10 @@ _UNFETCHABLE_MEDIA_MARKERS = (
     "doesn't meet our requirements",
     "does not meet our requirements",
     "the media uri",
+    "image_url is required",
+    "video_url is required",
+    "the parameter image_url",
+    "the parameter video_url",
 )
 _IMAGE_DOWNLOAD_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -409,18 +413,20 @@ class InstagramUploader:
         return container_id
 
     def _create_resumable_reel(self, media_url, caption, product_id="", cover_url=""):
-        """Mix audio into a silent Reel and upload the resulting bytes to Meta."""
+        """Upload original video bytes. Vertical stays a Reel; landscape/square stay feed VIDEO."""
         selection_key = f"instagram|{self.ig_user_id}|{media_url}"
         name, content, content_type = prepare_video(
             media_url, fill_9x16=True, selection_key=selection_key
         )
+        layout = video_layout_from_bytes(content)
+        media_type = "REELS" if layout == "vertical" else "VIDEO"
         params = {
-            "media_type": "REELS",
+            "media_type": media_type,
             "upload_type": "resumable",
             "caption": caption,
             "access_token": self.access_token,
         }
-        cover = _usable_cover_url(cover_url)
+        cover = _usable_cover_url(cover_url) if media_type == "REELS" else ""
         if cover:
             params["cover_url"] = cover
         else:
@@ -491,7 +497,7 @@ class InstagramUploader:
                 or str(upload_result)
             )
         logger.info(
-            f"[{self.page_name}] Uploaded processed Reel with background audio: {name}"
+            f"[{self.page_name}] Uploaded {media_type} ({layout}) with original size/sound: {name}"
         )
         return container_id
 
@@ -511,7 +517,7 @@ class InstagramUploader:
 
         if is_video:
             # Carousel children remain URL-based VIDEO containers. Standalone
-            # Reels are routed through the resumable no-crop path by upload().
+            # videos use the resumable original-size path in upload().
             params["media_type"] = "VIDEO" if carousel_item else "REELS"
             params["video_url"] = media_url
             if not carousel_item:
@@ -689,8 +695,8 @@ class InstagramUploader:
         is_video = _is_video_url(media_url) if force_video is None else bool(force_video)
         if is_video:
             logger.info(
-                f"[{self.page_name}] Fitting complete Reel to 9:16 and "
-                "preserving original audio"
+                f"[{self.page_name}] Uploading original video bytes; "
+                "preserve sound and size, Reels only when vertical"
             )
             container_id = self._create_resumable_reel(
                 media_url, caption, product_id, cover_url

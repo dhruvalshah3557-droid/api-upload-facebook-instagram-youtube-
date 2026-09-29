@@ -59,4 +59,25 @@ class TikTokTests(unittest.TestCase):
         self.assertEqual(optimized_runner._platform_limits(50,accounts)['tiktok'],1)
         self.assertTrue(optimized_runner._is_ambiguous_delivery_error(optimized_runner.main.DeliveryUncertainError('pending')))
 
+    def test_tiktok_401_does_not_consume_a_production_slot(self):
+        jobs=[{
+            'job_id':'137-TIKTOK-CD-carousel',
+            'account_id':'TIKTOK-CD',
+            'platform':'tiktok',
+            'sku':'137',
+            'row':3,
+            'attempts':1,
+            'notes':'',
+            'error_message':'401 Client Error: Unauthorized for url: https://zernio.com/api/v1/accounts/x/tiktok/creator-info?mediaType=photo',
+        }]
+        accounts={'TIKTOK-CD':{'enabled':True,'platform':'tiktok','platform_account_id':'6aae50288d284ffb211a67e9'}}
+        sources={'137':{'sku':'137'}}
+        sheets=type('Sheets', (), {'update_job': staticmethod(lambda *a, **k: None)})()
+        with patch('optimized_runner._local_slot_due', return_value=True), \
+             patch('optimized_runner._platform_limits', return_value={'facebook':0,'instagram':0,'youtube':0,'tiktok':1,'line':0}):
+            selected=optimized_runner._healthy_candidates(
+                jobs, accounts, sources, sheets, limit=3,
+            )
+        self.assertEqual(selected, [])
+
 if __name__=='__main__': unittest.main()

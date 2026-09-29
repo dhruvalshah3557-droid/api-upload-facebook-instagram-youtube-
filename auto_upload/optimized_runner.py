@@ -908,6 +908,16 @@ def _healthy_candidates(
         remaining = max(0, int(limit) - int(slots.get("line", 0) or 0))
         ready = _ready_platform_counts(accounts) if accounts is not None else None
         slots = _fill_youtube_leftover(slots, remaining, ready)
+    if any(
+        str(job.get("platform", "") or "").lower() == "tiktok"
+        and _known_unusable_pending(job)
+        for job in jobs
+    ):
+        slots["tiktok"] = 0
+        main.logger.warning(
+            "TikTok selection skipped: Zernio returned unauthorized/401; "
+            "not consuming a production slot until the token is repaired"
+        )
     seen_fingerprints = set()
     reserved_fingerprints = set(reserved_fingerprints or ())
     paired_sku_by_market = {}

@@ -90,6 +90,8 @@ class MusicRotationTests(unittest.TestCase):
     def test_reel_fit_preserves_complete_video_with_blurred_edge_fill(self):
         completed = mock.Mock(returncode=0)
         with mock.patch("media_prep.shutil.which", return_value="/usr/bin/ffmpeg"), \
+             mock.patch("media_prep.audio_state", return_value="missing"), \
+             mock.patch("media_prep._probe_dimensions", return_value=(1080, 1920)), \
              mock.patch("media_prep.subprocess.run", return_value=completed) as run:
             self.assertTrue(media_prep._to_9x16_fill("input.mp4", "output.mp4"))
         commands = [" ".join(call.args[0]) for call in run.call_args_list]
@@ -104,6 +106,17 @@ class MusicRotationTests(unittest.TestCase):
         self.assertIn("-ar 48000 -ac 2", command)
         self.assertNotIn("-shortest", command)
         self.assertNotIn("pad=", command)
+
+    def test_reel_fit_copies_audible_original_audio(self):
+        completed = mock.Mock(returncode=0)
+        with mock.patch("media_prep.shutil.which", return_value="/usr/bin/ffmpeg"), \
+             mock.patch("media_prep.audio_state", return_value="audible"), \
+             mock.patch("media_prep._probe_dimensions", return_value=(1080, 1920)), \
+             mock.patch("media_prep.subprocess.run", return_value=completed) as run:
+            self.assertTrue(media_prep._to_9x16_fill("input.mp4", "output.mp4"))
+        command = " ".join(run.call_args.args[0])
+        self.assertIn("-c:a copy", command)
+        self.assertNotIn("-ar 48000", command)
 
     def test_reel_fit_rejects_dropped_original_audio(self):
         with mock.patch("media_prep.shutil.which", return_value="/usr/bin/tool"), \
@@ -121,6 +134,53 @@ class MusicRotationTests(unittest.TestCase):
         with mock.patch("media_prep.shutil.which", side_effect=lambda name: f"/usr/bin/{name}"), \
              mock.patch("media_prep.subprocess.run", return_value=completed):
             self.assertEqual(media_prep.audio_state("quiet-original.mp4"), "audible")
+
+    def test_prepare_video_keeps_original_landscape_pixels(self):
+        response = mock.Mock(
+            content=b"landscape-original-bytes",
+            headers={"Content-Type": "video/mp4"},
+        )
+        response.raise_for_status.return_value = None
+        with mock.patch("media_prep.requests.get", return_value=response), \
+             mock.patch("media_prep.audio_state", return_value="audible"), \
+             mock.patch("media_prep._probe_dimensions", return_value=(1920, 1080)), \
+             mock.patch("media_prep.video_layout", return_value="landscape"), \
+             mock.patch("media_prep._to_9x16_fill") as convert, \
+             mock.patch.dict(media_prep.os.environ, {"AUTO_ADD_AUDIO": "true"}, clear=True):
+            name, content, content_type = media_prep.prepare_video(
+                "https://media.example/wide.mp4", fill_9x16=True
+            )
+        convert.assert_not_called()
+        self.assertEqual(content, b"landscape-original-bytes")
+        self.assertEqual(name, "wide.mp4")
+        self.assertEqual(content_type, "video/mp4")
+
+    def test_prepare_video_keeps_original_vertical_pixels(self):
+        response = mock.Mock(
+            content=b"vertical-original-bytes",
+            headers={"Content-Type": "video/mp4"},
+        )
+        response.raise_for_status.return_value = None
+        with mock.patch("media_prep.requests.get", return_value=response), \
+             mock.patch("media_prep.audio_state", return_value="audible"), \
+             mock.patch("media_prep._probe_dimensions", return_value=(720, 1280)), \
+             mock.patch("media_prep.video_layout", return_value="vertical"), \
+             mock.patch("media_prep._to_9x16_fill") as convert, \
+             mock.patch.dict(media_prep.os.environ, {"AUTO_ADD_AUDIO": "true"}, clear=True):
+            _, content, _ = media_prep.prepare_video(
+                "https://media.example/model.mp4", fill_9x16=True
+            )
+        convert.assert_not_called()
+        self.assertEqual(content, b"vertical-original-bytes")
+
+    def test_display_rotation_uses_side_data(self):
+        stream = {
+            "width": 1920,
+            "height": 1080,
+            "tags": {},
+            "side_data_list": [{"rotation": -90}],
+        }
+        self.assertEqual(media_prep._stream_rotation(stream), 90)
 
 
 if __name__ == "__main__":
