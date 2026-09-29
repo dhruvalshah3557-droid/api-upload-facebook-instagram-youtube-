@@ -876,6 +876,105 @@ class FullRepairTests(unittest.TestCase):
         self.assertEqual(updates[0][1]["status"], "pending")
         self.assertIn("byte-upload", updates[0][1]["notes"])
 
+    def test_recent_youtube_oauth_failure_does_not_block_other_channel(self):
+        now = datetime(2026, 9, 29, 14, 0, tzinfo=timezone.utc)
+        jobs = [
+            {
+                "job_id": "2281-YT-JIYA-model_video-0",
+                "account_id": "YT-JIYA",
+                "platform": "youtube",
+                "sku": "2281",
+                "media_selection": "model_video:0",
+                "format": "video",
+                "row": 1,
+                "attempts": 1,
+                "notes": "",
+                "error_message": "invalid_grant: Bad Request",
+                "last_attempt_at": "2026-09-29T13:55:25Z",
+            },
+            {
+                "job_id": "2281-YT-JIYA-model_video-1",
+                "account_id": "YT-JIYA",
+                "platform": "youtube",
+                "sku": "2281",
+                "media_selection": "model_video:1",
+                "format": "video",
+                "row": 2,
+                "attempts": 0,
+                "notes": "",
+                "error_message": "",
+            },
+            {
+                "job_id": "2056-YT-CD-model_video-0",
+                "account_id": "YT-CD",
+                "platform": "youtube",
+                "sku": "2056",
+                "media_selection": "model_video:0",
+                "format": "video",
+                "row": 3,
+                "attempts": 0,
+                "notes": "",
+                "error_message": "",
+            },
+        ]
+        accounts = {
+            "YT-JIYA": {
+                "enabled": True,
+                "platform": "youtube",
+                "platform_account_id": "UCDFzWfIRvLu1LXq3mQrkj6Q",
+                "timezone": "Asia/Bangkok",
+            },
+            "YT-CD": {
+                "enabled": True,
+                "platform": "youtube",
+                "platform_account_id": "UCTWbcY-YtvAx2QUZKXt230A",
+                "timezone": "Asia/Bangkok",
+            },
+        }
+        sources = {
+            "2281": {"sku": "2281", "model_videos": ["https://media.example/jiya.mp4"]},
+            "2056": {"sku": "2056", "model_videos": ["https://media.example/cd.mp4"]},
+        }
+        sheets = types.SimpleNamespace(update_job=lambda *args, **kwargs: None)
+        with patch("optimized_runner._youtube_auth_dead_accounts", return_value={"YT-JIYA"}), \
+             patch("optimized_runner._platform_limits", return_value={"facebook": 0, "instagram": 0, "youtube": 1, "line": 0}), \
+             patch("optimized_runner._local_slot_due", return_value=True), \
+             patch("optimized_runner._rotation_rank", side_effect=lambda aid, *a, **k: 0 if aid == "YT-JIYA" else 1), \
+             patch("optimized_runner._is_clean_source", return_value=(True, "")), \
+             patch("optimized_runner.resolve_media_fixed", side_effect=lambda job, source: source.get("model_videos") or []), \
+             patch("optimized_runner._dns_resolves", return_value=True), \
+             patch("optimized_runner.main._classify_media_url", return_value="video"), \
+             patch("optimized_runner._video_validation_reason", return_value=""):
+            selected = optimized_runner._healthy_candidates(
+                jobs, accounts, sources, sheets, limit=1,
+            )
+        self.assertEqual([job["account_id"] for job in selected], ["YT-CD"])
+        self.assertEqual(
+            optimized_runner._youtube_auth_dead_accounts(jobs, now=now),
+            {"YT-JIYA"},
+        )
+
+    def test_stale_youtube_oauth_error_does_not_quarantine_channel(self):
+        now = datetime(2026, 9, 29, 14, 0, tzinfo=timezone.utc)
+        jobs = [{
+            "account_id": "YT-CD",
+            "platform": "youtube",
+            "error_message": "invalid_grant: Bad Request",
+            "last_attempt_at": "2026-09-22T23:35:38Z",
+        }]
+        self.assertEqual(
+            optimized_runner._youtube_auth_dead_accounts(jobs, now=now),
+            set(),
+        )
+
+    def test_youtube_token_cache_is_isolated_per_client(self):
+        from youtube_uploader import token_cache_path
+        colour = token_cache_path("colour-client", "colour-refresh")
+        jiya = token_cache_path("shared-client", "jiya-refresh")
+        self.assertNotEqual(colour, jiya)
+        self.assertTrue(str(colour).endswith(".pickle"))
+        self.assertIn("youtube_token_", colour.name)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,3 +1,4 @@
+import hashlib
 import pickle
 import json
 import logging
@@ -29,6 +30,18 @@ def _env(key, default=""):
     return value.strip() if value is not None and value.strip() else default
 
 
+def token_cache_path(client_id="", refresh_token=""):
+    """Keep ColourDiamondss and JIYA OAuth pickles from overwriting each other."""
+    client_id = (client_id or "").strip()
+    refresh_token = (refresh_token or "").strip()
+    if not client_id and not refresh_token:
+        return TOKEN_FILE
+    digest = hashlib.sha256(
+        f"{client_id}\n{refresh_token}".encode("utf-8")
+    ).hexdigest()[:20]
+    return CRED_DIR / f"youtube_token_{digest}.pickle"
+
+
 def _extract_code(value):
     """Extract the auth code from a pasted value (raw code or full redirect URL)."""
     value = value.strip()
@@ -55,6 +68,9 @@ class YouTubeUploader:
             client_id = client_id or _installed.get("client_id", "")
             client_secret = client_secret or _installed.get("client_secret", "")
 
+        token_file = token_cache_path(client_id, refresh_token)
+        CRED_DIR.mkdir(parents=True, exist_ok=True)
+
         if refresh_token and client_id and client_secret:
             logger.info("Authenticating YouTube with OAuth refresh token")
             creds = Credentials(
@@ -66,13 +82,13 @@ class YouTubeUploader:
                 scopes=SCOPES,
             )
             creds.refresh(Request())
-            with open(TOKEN_FILE, "wb") as f:
+            with open(token_file, "wb") as f:
                 pickle.dump(creds, f)
             return build("youtube", "v3", credentials=creds)
 
         creds = None
-        if TOKEN_FILE.exists():
-            with open(TOKEN_FILE, "rb") as f:
+        if token_file.exists():
+            with open(token_file, "rb") as f:
                 creds = pickle.load(f)
 
         if not creds or not creds.valid:
@@ -114,7 +130,7 @@ class YouTubeUploader:
                 creds = flow.fetch_token(code=code)
                 creds = flow.credentials
                 AUTH_CODE_FILE.unlink(missing_ok=True)
-            with open(TOKEN_FILE, "wb") as f:
+            with open(token_file, "wb") as f:
                 pickle.dump(creds, f)
 
         return build("youtube", "v3", credentials=creds)

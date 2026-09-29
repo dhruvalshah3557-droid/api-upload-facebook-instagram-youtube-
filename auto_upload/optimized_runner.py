@@ -61,6 +61,7 @@ _UNUSABLE_PENDING_MARKERS = (
     "unauthorized for url",
     "token has been expired or revoked",
 )
+YOUTUBE_AUTH_DEAD_HOURS = 12
 _RETRIABLE_PREFLIGHT_MARKERS = (
     "media preflight failed",
     "all media urls are unavailable",
@@ -91,6 +92,30 @@ def _known_unusable_pending(job):
     if any(marker in blob for marker in _RETRIABLE_PREFLIGHT_MARKERS):
         return False
     return any(marker in blob for marker in _UNUSABLE_PENDING_MARKERS)
+
+
+def _youtube_auth_dead_accounts(jobs, now=None):
+    """YouTube accounts whose latest OAuth error is still fresh.
+
+    One invalid_grant on YT-JIYA used to burn the only YouTube slot every run
+    while @colourdiamondss (YT-CD) never got a turn. Skip the dead channel
+    until its token is repaired; older historical errors do not quarantine.
+    """
+    now = now or datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=YOUTUBE_AUTH_DEAD_HOURS)
+    dead = set()
+    for job in jobs or ():
+        if str(job.get("platform", "") or "").strip().lower() != "youtube":
+            continue
+        if not _known_unusable_pending(job):
+            continue
+        attempted = parse_queue_time(job.get("last_attempt_at"))
+        if attempted is None or attempted < cutoff or attempted > now:
+            continue
+        account_id = str(job.get("account_id", "") or "").strip()
+        if account_id:
+            dead.add(account_id)
+    return dead
 
 
 def _rewrite_media_url(url):
@@ -918,6 +943,12 @@ def _healthy_candidates(
             "TikTok selection skipped: Zernio returned unauthorized/401; "
             "not consuming a production slot until the token is repaired"
         )
+    youtube_auth_dead = _youtube_auth_dead_accounts(jobs)
+    if youtube_auth_dead:
+        main.logger.warning(
+            "YouTube account(s) skipped until OAuth is repaired: %s",
+            ", ".join(sorted(youtube_auth_dead)),
+        )
     seen_fingerprints = set()
     reserved_fingerprints = set(reserved_fingerprints or ())
     paired_sku_by_market = {}
@@ -996,6 +1027,8 @@ def _healthy_candidates(
             if not account or not account.get("enabled"):
                 continue
             if not _account_publish_ready(account):
+                continue
+            if platform == "youtube" and account_id in youtube_auth_dead:
                 continue
 
             account_jobs = [
