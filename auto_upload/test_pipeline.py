@@ -882,6 +882,40 @@ def test_dead_cdn_hosts_are_rewritten_onto_live_origin():
     print("OK test_dead_cdn_hosts_are_rewritten_onto_live_origin")
 
 
+def test_youtube_jobs_are_queued_when_only_product_images_mismatch():
+    from job_generator import generate_jobs, _is_clean_source
+
+    source = _source("4403")
+    source["integrity_error"] = (
+        "main image belongs to another SKU "
+        "(https://www.colourdiam.com/Product/Jewellery/4377/white45/center.jpg)"
+    )
+    source["main_image"] = "https://www.colourdiam.com/Product/Jewellery/4377/white45/center.jpg"
+    source["images"] = [source["main_image"]]
+    source["video_url"] = "https://colourdiam.com/Product/Jewellery/4403/white45/vid.mp4"
+    source["model_videos"] = [
+        "https://colourdiam.com/Product/Jewellery/4403/model.mp4",
+        "https://colourdiam.com/Product/Jewellery/4377/model.mp4",
+    ]
+    accounts = [
+        _account("FB-CD", "facebook"),
+        _account("YT-CD", "youtube"),
+    ]
+    jobs = generate_jobs({"4403": source}, accounts)
+    selections = {
+        (job["account_id"], job["media_selection"])
+        for job in jobs
+        if job["status"] != "needs_review"
+    }
+    assert ("YT-CD", "product_video") in selections, jobs
+    assert ("YT-CD", "model_video:0") in selections, jobs
+    assert ("YT-CD", "model_video:1") not in selections, jobs
+    assert not any(job["account_id"] == "FB-CD" and job["status"] != "needs_review" for job in jobs)
+    assert _is_clean_source(source)[0] is False
+    assert _is_clean_source(source, {"media_selection": "product_video", "platform": "youtube"})[0] is True
+    print("OK test_youtube_jobs_are_queued_when_only_product_images_mismatch")
+
+
 def test_dns_and_integrity_preflight_failures_are_retried():
     import optimized_runner
 
@@ -923,5 +957,6 @@ if __name__ == "__main__":
     test_compound_sku_product_links_are_not_false_mismatches()
     test_glued_model_photo_and_video_links_use_model_photo_video_origin()
     test_dead_cdn_hosts_are_rewritten_onto_live_origin()
+    test_youtube_jobs_are_queued_when_only_product_images_mismatch()
     test_dns_and_integrity_preflight_failures_are_retried()
     print("All pipeline tests passed.")

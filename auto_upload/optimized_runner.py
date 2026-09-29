@@ -1073,7 +1073,7 @@ def _healthy_candidates(
                             housekeeping += 1
                         continue
 
-                    clean_source, source_reason = _is_clean_source(source)
+                    clean_source, source_reason = _is_clean_source(source, job)
                     if not clean_source:
                         if housekeeping < HOUSEKEEPING_LIMIT:
                             sheets.update_job(job, {

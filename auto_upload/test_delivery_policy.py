@@ -353,7 +353,7 @@ class DeliveryPolicyTests(unittest.TestCase):
         sheets = type("Sheets", (), {"update_job": staticmethod(lambda *a, **k: None)})()
         activity = {account_id: {"count": 0, "last": None, "success_times": []}}
 
-        def clean_source(source):
+        def clean_source(source, job=None):
             return (source["sku"] == "good", "invalid test source")
 
         with patch("optimized_runner._is_clean_source", side_effect=clean_source), \

@@ -19,10 +19,7 @@ def _account_can_receive_jobs(account):
     return True
 
 
-def _is_clean_source(source):
-    integrity_error = str(source.get("integrity_error", "") or "").strip()
-    if integrity_error:
-        return False, f"Source row integrity mismatch - {integrity_error}"
+def _hard_source_block(source):
     lab = source.get("lab", "").upper()
     if lab == "NON CERTIFIED":
         return False, "NON CERTIFIED - requires manual review"
@@ -30,6 +27,53 @@ def _is_clean_source(source):
     if "error" in status or "429" in status or "api" in status:
         return False, "Source Status indicates API error - content may be incomplete"
     return True, ""
+
+
+def _image_integrity_error(source):
+    return str((source or {}).get("integrity_error", "") or "").strip()
+
+
+def _video_url_matches_sku(source, url=""):
+    from sheets_reader import SheetsReader
+
+    sku = str((source or {}).get("sku") or "").strip()
+    url = str(url or (source or {}).get("video_url") or "").strip()
+    if not sku or not url:
+        return False
+    return SheetsReader._url_matches_sku(url, sku)
+
+
+def _job_is_video_only(job):
+    platform = str((job or {}).get("platform", "") or "").strip().lower()
+    if platform not in ("youtube", "twitch"):
+        return False
+    selection = str((job or {}).get("media_selection", "") or "")
+    return selection.startswith("model_video:") or selection == "product_video"
+
+
+def _video_job_media_matches(job, source):
+    selection = str((job or {}).get("media_selection", "") or "")
+    if selection.startswith("model_video:"):
+        try:
+            idx = int(selection.split(":", 1)[1])
+        except ValueError:
+            idx = -1
+        videos = list((source or {}).get("model_videos") or [])
+        url = videos[idx] if 0 <= idx < len(videos) else ""
+        return _video_url_matches_sku(source, url)
+    return _video_url_matches_sku(source)
+
+
+def _is_clean_source(source, job=None):
+    clean, reason = _hard_source_block(source)
+    if not clean:
+        return False, reason
+    integrity_error = _image_integrity_error(source)
+    if not integrity_error:
+        return True, ""
+    if job and _job_is_video_only(job) and _video_job_media_matches(job, source):
+        return True, ""
+    return False, f"Source row integrity mismatch - {integrity_error}"
 
 
 def _job_id(sku, account_id, media_selection):
@@ -121,11 +165,12 @@ def generate_jobs(sources, accounts):
     Model video + model photo first, then product Reel/video, then product
     carousel, per the UPLOAD GUIDE format rules. Unclean rows (NON CERTIFIED,
     API error) are blocked from auto-publish and surfaced as a needs_review
-    queue entry.
+    queue entry. Product-image SKU mismatches still allow YouTube/Twitch
+    video jobs when the video URL itself belongs to the same SKU.
     """
     jobs = []
     for sku, source in sources.items():
-        clean, reason = _is_clean_source(source)
+        clean, reason = _hard_source_block(source)
         if not clean:
             logger.warning(f"SKU {sku}: blocked for auto-publish ({reason})")
             for account in accounts:
@@ -134,6 +179,19 @@ def generate_jobs(sources, accounts):
                     break
             continue
 
+        integrity_error = _image_integrity_error(source)
+        if integrity_error:
+            logger.warning(
+                f"SKU {sku}: blocked for auto-publish (Source row integrity mismatch - {integrity_error})"
+            )
+            for account in accounts:
+                if _account_can_receive_jobs(account):
+                    jobs.append(_make_review_job(
+                        sku, account,
+                        f"Source row integrity mismatch - {integrity_error}",
+                    ))
+                    break
+
         has_carousel_media = bool(source["images"])
 
         for account in accounts:
@@ -141,6 +199,8 @@ def generate_jobs(sources, accounts):
                 continue
             platform = account.get("platform", "")
             account_id = account.get("account_id", "")
+            if integrity_error and platform not in ("youtube", "twitch"):
+                continue
 
             if platform in ("facebook", "instagram", "line", "wechat", "pinterest", "x", "linkedin", "tiktok"):
                 _append_model_jobs(jobs, sku, account_id, platform, account, source)
@@ -149,10 +209,15 @@ def generate_jobs(sources, accounts):
                 if has_carousel_media:
                     jobs.append(_make_job(sku, account_id, platform, "carousel", "carousel", account))
             elif platform in ("youtube", "twitch"):
-                _append_model_jobs(
-                    jobs, sku, account_id, platform, account, source, photos=False
-                )
-                if source["video_url"]:
+                for i, url in enumerate(source.get("model_videos") or []):
+                    if not integrity_error or _video_url_matches_sku(source, url):
+                        jobs.append(_make_job(
+                            sku, account_id, platform, "video",
+                            f"model_video:{i}", account,
+                        ))
+                if source["video_url"] and (
+                    not integrity_error or _video_url_matches_sku(source)
+                ):
                     jobs.append(_make_job(sku, account_id, platform, "video", "product_video", account))
             elif platform in ("shopee", "lazada"):
                 if has_carousel_media:

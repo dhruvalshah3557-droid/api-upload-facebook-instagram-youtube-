@@ -615,6 +615,51 @@ class FullRepairTests(unittest.TestCase):
             )
         self.assertEqual([job["sku"] for job in selected], ["good"])
 
+    def test_youtube_video_jobs_survive_product_image_integrity_mismatch(self):
+        job = {
+            "job_id": "4403-YT-CD-product_video",
+            "account_id": "YT-CD",
+            "platform": "youtube",
+            "sku": "4403",
+            "media_selection": "product_video",
+            "format": "video",
+            "row": 1,
+            "attempts": 0,
+            "notes": "",
+        }
+        accounts = {
+            "YT-CD": {
+                "enabled": True,
+                "platform": "youtube",
+                "platform_account_id": "UCTWbcY-YtvAx2QUZKXt230A",
+                "timezone": "Asia/Bangkok",
+            }
+        }
+        sources = {
+            "4403": {
+                "sku": "4403",
+                "integrity_error": (
+                    "main image belongs to another SKU "
+                    "(https://www.colourdiam.com/Product/Jewellery/4377/white45/center.jpg)"
+                ),
+                "video_url": "https://colourdiam.com/Product/Jewellery/4403/white45/vid.mp4",
+            }
+        }
+        sheets = types.SimpleNamespace(update_job=lambda *args, **kwargs: None)
+        with patch("optimized_runner._local_slot_due", return_value=True), \
+             patch("optimized_runner._rotation_rank", return_value=0), \
+             patch(
+                 "optimized_runner.resolve_media_fixed",
+                 return_value=["https://colourdiam.com/Product/Jewellery/4403/white45/vid.mp4"],
+             ), \
+             patch("optimized_runner._dns_resolves", return_value=True), \
+             patch("optimized_runner.main._classify_media_url", return_value="video"), \
+             patch("optimized_runner._video_validation_reason", return_value=""):
+            selected = optimized_runner._healthy_candidates(
+                [job], accounts, sources, sheets, limit=1,
+            )
+        self.assertEqual([item["sku"] for item in selected], ["4403"])
+
     def test_model_media_is_not_blocked_by_product_account_lock(self):
         records = [{
             "job_id": "298-IG-KUWAIT-carousel",
