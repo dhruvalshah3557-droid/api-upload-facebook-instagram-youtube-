@@ -416,7 +416,10 @@ class InstagramUploader:
         """Upload original video bytes. Vertical stays a Reel; landscape/square stay feed VIDEO."""
         selection_key = f"instagram|{self.ig_user_id}|{media_url}"
         name, content, content_type = prepare_video(
-            media_url, fill_9x16=True, selection_key=selection_key
+            media_url,
+            fill_9x16=True,
+            selection_key=selection_key,
+            platform="instagram",
         )
         layout = video_layout_from_bytes(content)
         media_type = "REELS" if layout == "vertical" else "VIDEO"

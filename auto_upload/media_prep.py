@@ -125,7 +125,7 @@ def audio_state(video_path):
         if not (probe.stdout or "").strip():
             return "missing"
         if not ffmpeg:
-            return "unknown"
+            return "audible"
 
         detect = subprocess.run(
             [ffmpeg, "-hide_banner", "-nostats", "-t", "30", "-i", video_path, "-vn", "-af", "volumedetect", "-f", "null", "-"],
@@ -134,7 +134,7 @@ def audio_state(video_path):
         text = (detect.stderr or "") + "\n" + (detect.stdout or "")
         match = re.search(r"max_volume:\s*(-?inf|-?\d+(?:\.\d+)?)\s*dB", text, flags=re.I)
         if not match:
-            return "unknown"
+            return "audible"
         raw = match.group(1).lower()
         if raw in ("-inf", "inf"):
             return "silent"
@@ -314,48 +314,46 @@ def video_layout_from_bytes(content, suffix=".mp4"):
             pass
 
 
-def _audio_encode_args(copy_original):
-    if copy_original:
-        return ["-c:a", "copy"]
+def _audio_encode_args():
     return ["-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2"]
 
 
-def _to_9x16_fill(video_path, out_path):
+def _foreground_canvas(platform):
+    """Instagram Reels UI covers more of the frame than Facebook Reels."""
+    if str(platform or "").strip().lower() == "instagram":
+        return 928, 1498
+    return REELS_WIDTH, REELS_HEIGHT
+
+
+def _to_9x16_fill(video_path, out_path, platform=""):
     """Fit the complete source into a verified 1080x1920 Reel without cropping.
 
-    Audible original sound is stream-copied. Music/silent sources are encoded
-    to AAC. This path is only used when a Reel truly requires 9:16 output.
+    Facebook uses the full 1080x1920 foreground. Instagram leaves extra margin
+    so username/caption chrome does not cover the model or jewellery. Original
+    sound is re-encoded to AAC so Meta actually plays it; it is never replaced.
     """
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         raise RuntimeError("ffmpeg is required for Reel normalization")
     input_audio = audio_state(video_path)
+    fg_w, fg_h = _foreground_canvas(platform)
     filter_complex = (
         "[0:v]split=2[bgsrc][fgsrc];"
         f"[bgsrc]scale={REELS_WIDTH}:{REELS_HEIGHT}:force_original_aspect_ratio=increase,"
         f"crop={REELS_WIDTH}:{REELS_HEIGHT},boxblur=24:8[bg];"
-        f"[fgsrc]scale={REELS_WIDTH}:{REELS_HEIGHT}:force_original_aspect_ratio=decrease[fg];"
+        f"[fgsrc]scale={fg_w}:{fg_h}:force_original_aspect_ratio=decrease[fg];"
         "[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1,setdar=9/16[v]"
     )
-
-    def _run(copy_original):
-        cmd = [
-            ffmpeg, "-y", "-i", video_path,
-            "-filter_complex", filter_complex,
-            "-map", "[v]", "-map", "0:a:0?",
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
-            "-pix_fmt", "yuv420p", "-r", "30", "-movflags", "+faststart",
-            *_audio_encode_args(copy_original),
-            "-metadata:s:v:0", "rotate=0", out_path,
-        ]
-        return subprocess.run(cmd, check=False, capture_output=True)
-
-    copy_original = input_audio == "audible"
-    proc = _run(copy_original)
-    if proc.returncode != 0 and copy_original:
-        logger.warning("Original-audio copy failed during 9:16 fit; retrying with AAC")
-        proc = _run(False)
-        copy_original = False
+    cmd = [
+        ffmpeg, "-y", "-i", video_path,
+        "-filter_complex", filter_complex,
+        "-map", "[v]", "-map", "0:a:0?",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
+        "-pix_fmt", "yuv420p", "-r", "30", "-movflags", "+faststart",
+        *_audio_encode_args(),
+        "-metadata:s:v:0", "rotate=0", out_path,
+    ]
+    proc = subprocess.run(cmd, check=False, capture_output=True)
     if proc.returncode != 0:
         detail = (proc.stderr or b"").decode(errors="ignore")[-800:]
         raise RuntimeError(f"9:16 conversion failed: {detail}")
@@ -374,20 +372,57 @@ def _to_9x16_fill(video_path, out_path):
             f"Reel conversion did not preserve audible original audio (output={output_audio})"
         )
     logger.info(
-        "Verified Reel output: %dx%d, conversion input audio=%s, output audio=%s, audio_copy=%s",
-        REELS_WIDTH, REELS_HEIGHT, input_audio, output_audio, copy_original,
+        "Verified %s Reel output: %dx%d fg=%sx%s input audio=%s output audio=%s",
+        platform or "facebook", REELS_WIDTH, REELS_HEIGHT, fg_w, fg_h,
+        input_audio, output_audio,
     )
     return True
 
 
-def prepare_video(media_url, fill_9x16=False, selection_key=""):
+def _ensure_playable_audio(video_path, out_path):
+    """Re-encode original soundtrack to AAC so Facebook/Instagram play it."""
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return False
+    cmd = [
+        ffmpeg, "-y", "-i", video_path,
+        "-map", "0:v:0", "-map", "0:a:0",
+        "-c:v", "copy",
+        *_audio_encode_args(),
+        "-movflags", "+faststart",
+        out_path,
+    ]
+    proc = subprocess.run(cmd, check=False, capture_output=True)
+    if proc.returncode != 0:
+        cmd = [
+            ffmpeg, "-y", "-i", video_path,
+            "-map", "0:v:0", "-map", "0:a:0",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
+            "-pix_fmt", "yuv420p",
+            *_audio_encode_args(),
+            "-movflags", "+faststart",
+            out_path,
+        ]
+        proc = subprocess.run(cmd, check=False, capture_output=True)
+    if proc.returncode != 0:
+        detail = (proc.stderr or b"").decode(errors="ignore")[-400:]
+        logger.warning("Could not remux original audio to AAC: %s", detail)
+        return False
+    if audio_state(out_path) != "audible":
+        logger.warning("AAC remux lost original audio; keeping source bytes")
+        return False
+    logger.info("Remuxed original soundtrack to AAC so Meta will play it")
+    return True
+
+
+def prepare_video(media_url, fill_9x16=False, selection_key="", platform=""):
     """Return (name, bytes, content_type) for a video upload.
 
     Production rule: silent/muted videos MUST receive audio automatically.
-    Audible videos keep their original soundtrack and original pixel size.
-    9:16 padding is only applied to vertical sources that are not already
-    1080x1920. Landscape/square sources are never stretched onto a Reel
-    canvas here — callers must publish those as feed/video posts instead.
+    Audible videos keep their original soundtrack. Vertical Reels that are not
+    already 1080x1920 are padded with a blurred edge-fill; Facebook uses the
+    full canvas and Instagram leaves extra UI margin. Landscape/square sources
+    stay original size and are published as feed/Page video.
     """
     auto_audio = _env_true("AUTO_ADD_AUDIO", "true")
     suffix = Path(media_url.split("?")[0]).suffix or ".mp4"
@@ -430,14 +465,33 @@ def prepare_video(media_url, fill_9x16=False, selection_key=""):
         elif auto_audio and state == "unknown":
             raise RuntimeError("Could not verify video audio; refusing silent-risk upload")
 
-        if fill_9x16:
-            current_dims = _probe_dimensions(current) or dims
-            current_layout = video_layout(current) if current != tmp_path else layout
+        current_dims = _probe_dimensions(current) or dims
+        current_layout = video_layout(current) if current != tmp_path else layout
+        dest = str(platform or "").strip().lower()
+        if fill_9x16 and current_layout == "vertical":
+            already_reel = current_dims == (REELS_WIDTH, REELS_HEIGHT)
+            if already_reel and dest != "instagram":
+                logger.info(
+                    "Vertical source already %dx%d; keeping pixels and original soundtrack",
+                    REELS_WIDTH, REELS_HEIGHT,
+                )
+            else:
+                fitted = current + ".9x16.mp4"
+                temp_paths.append(fitted)
+                _to_9x16_fill(current, fitted, platform=dest)
+                current = fitted
+        elif fill_9x16:
             logger.info(
                 "Keeping original %s size %s and soundtrack; not stretching onto 1080x1920",
                 current_layout,
                 f"{current_dims[0]}x{current_dims[1]}" if current_dims else "unknown",
             )
+
+        if audio_state(current) == "audible" and current == tmp_path:
+            remuxed = current + ".aac.mp4"
+            temp_paths.append(remuxed)
+            if _ensure_playable_audio(current, remuxed):
+                current = remuxed
 
         content = Path(current).read_bytes()
         output_name = f"{Path(name).stem}.mp4"

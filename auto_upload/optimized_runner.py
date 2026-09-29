@@ -904,7 +904,7 @@ def _account_scan_jobs(account_jobs, limit=PER_ACCOUNT_SCAN_LIMIT):
         return _sample_account_jobs(model_jobs, limit)
     if not model_jobs:
         return _sample_account_jobs(other_jobs, limit)
-    model_budget = min(len(model_jobs), max(1, (2 * limit) // 3))
+    model_budget = min(len(model_jobs), max(1, (5 * limit) // 6))
     selected = list(_sample_account_jobs(model_jobs, model_budget))
     leftover = limit - len(selected)
     if leftover > 0:
@@ -1055,13 +1055,13 @@ def _healthy_candidates(
                             0 if _job_sku(job) == paired_sku else 1,
                         )
                     )
-            # YouTube is not Meta-quota bound. Consume leftover run budget with
-            # multiple healthy jobs from the same channel instead of leaving
-            # slots idle after one video.
+            # First job is one per account. Leftover slots stay on model
+            # photo/video so product carousels cannot consume the extra budget.
             jobs_for_account = 1
-            if platform == "youtube":
+            if any(is_model_media(job) for job in scan_jobs):
                 jobs_for_account = max(1, wanted - platform_selected)
             account_selected = 0
+            already_ids = {id(job) for job in selected}
             while (
                 account_selected < jobs_for_account
                 and platform_selected < wanted
@@ -1069,11 +1069,15 @@ def _healthy_candidates(
             ):
                 chosen = None
                 for job in scan_jobs:
+                    if id(job) in already_ids:
+                        continue
                     if _is_locked(job):
                         continue
                     if str(job.get("platform", "") or "").lower() != platform:
                         continue
                     if _known_unusable_pending(job):
+                        continue
+                    if account_selected > 0 and not is_model_media(job):
                         continue
 
                     job_marker = _job_id_marker(job)
@@ -1197,6 +1201,7 @@ def _healthy_candidates(
                     break
 
                 selected.append(chosen)
+                already_ids.add(id(chosen))
                 platform_selected += 1
                 account_selected += 1
                 if platform == "facebook":

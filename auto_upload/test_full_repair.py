@@ -45,6 +45,7 @@ if "dotenv" not in sys.modules:
     _install("googleapiclient.http", {"MediaIoBaseUpload": lambda *a, **k: None})
 
 import optimized_runner
+from job_generator import is_model_media
 
 
 class FullRepairTests(unittest.TestCase):
@@ -758,6 +759,37 @@ class FullRepairTests(unittest.TestCase):
         })
         sampled = optimized_runner._account_scan_jobs(jobs, limit=300)
         self.assertIn("model-late", [job["job_id"] for job in sampled])
+
+    def test_leftover_slots_stay_on_model_photo_video(self):
+        jobs = [
+            {"job_id": "1-FB-CD-carousel", "sku": "1", "account_id": "FB-CD", "platform": "facebook", "format": "carousel", "media_selection": "carousel", "row": 40, "attempts": 0, "notes": ""},
+            {"job_id": "1-FB-CD-model_photo-0", "sku": "1", "account_id": "FB-CD", "platform": "facebook", "format": "carousel", "media_selection": "model_photo:0", "row": 20, "attempts": 0, "notes": ""},
+            {"job_id": "1-FB-CD-model_video-0", "sku": "1", "account_id": "FB-CD", "platform": "facebook", "format": "video", "media_selection": "model_video:0", "row": 10, "attempts": 0, "notes": ""},
+            {"job_id": "1-FB-CD-model_video-1", "sku": "1", "account_id": "FB-CD", "platform": "facebook", "format": "video", "media_selection": "model_video:1", "row": 11, "attempts": 0, "notes": ""},
+        ]
+        accounts = {"FB-CD": {"enabled": True, "platform": "facebook", "timezone": "Asia/Bangkok"}}
+        sources = {
+            "1": {
+                "main_image": "https://media.example/product.jpg",
+                "side_images": [],
+                "model_images": ["https://media.example/model.jpg"],
+                "model_videos": ["https://media.example/model0.mp4", "https://media.example/model1.mp4"],
+            },
+        }
+        sheets = types.SimpleNamespace(update_job=lambda *args: None)
+        with patch("optimized_runner._platform_limits", return_value={"facebook": 3, "instagram": 0, "youtube": 0, "line": 0}), \
+             patch("optimized_runner._local_slot_due", return_value=True), \
+             patch("optimized_runner._rotation_rank", return_value=0), \
+             patch("optimized_runner._is_clean_source", return_value=(True, "")), \
+             patch("optimized_runner._media_preflight_reason", return_value=""):
+            selected = optimized_runner._healthy_candidates(
+                jobs, accounts, sources, sheets, limit=3
+            )
+        self.assertEqual(
+            {job["media_selection"] for job in selected},
+            {"model_video:0", "model_video:1", "model_photo:0"},
+        )
+        self.assertTrue(all(is_model_media(job) for job in selected))
 
     def test_account_scan_does_not_let_broken_model_backlog_hide_product_jobs(self):
         jobs = [

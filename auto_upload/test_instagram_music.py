@@ -197,6 +197,7 @@ class InstagramMusicRotationTests(unittest.TestCase):
             )
 
         self.assertTrue(prepare.call_args.kwargs["fill_9x16"])
+        self.assertEqual(prepare.call_args.kwargs["platform"], "instagram")
         self.assertEqual(post.call_args_list[0].kwargs["data"]["media_type"], "REELS")
         self.assertEqual(
             prepare.call_args.kwargs["selection_key"],

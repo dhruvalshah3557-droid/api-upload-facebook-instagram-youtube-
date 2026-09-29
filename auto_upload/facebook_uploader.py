@@ -90,6 +90,7 @@ class FacebookUploader:
             media_url,
             fill_9x16=True,
             selection_key=f"facebook|{self.page_id}|{media_url}",
+            platform="facebook",
         )
         layout = video_layout_from_bytes(content)
         if layout != "vertical":

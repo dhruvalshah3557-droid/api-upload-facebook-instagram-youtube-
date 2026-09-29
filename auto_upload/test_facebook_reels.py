@@ -37,7 +37,7 @@ class FacebookReelsTests(unittest.TestCase):
         with mock.patch(
             "facebook_uploader.prepare_video",
             return_value=("source.mp4", b"video-with-audio", "video/mp4"),
-        ), mock.patch(
+        ) as prepare, mock.patch(
             "facebook_uploader.video_layout_from_bytes", return_value="vertical",
         ), mock.patch(
             "facebook_uploader.requests.post", side_effect=responses
@@ -47,6 +47,8 @@ class FacebookReelsTests(unittest.TestCase):
             )
 
         self.assertEqual(result["id"], "reel-456")
+        self.assertEqual(prepare.call_args.kwargs.get("platform"), "facebook")
+        self.assertTrue(prepare.call_args.kwargs.get("fill_9x16"))
         self.assertEqual(post.call_count, 3)
 
         start = post.call_args_list[0]
