@@ -1,4 +1,1 @@
-Model photo and video upload verification requested on 2026-09-30.
-Source: Model Media Lookup from Main Data Model Media FTP.
-Include single-video Instagram REELS fix 46b71ea8.
-Request marker: 1790770285886
+2026-09-30T15:13:00Z - guarded recovery after no production run for over 90 minutes
