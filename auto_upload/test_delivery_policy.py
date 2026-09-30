@@ -386,7 +386,9 @@ class DeliveryPolicyTests(unittest.TestCase):
             sku = "yt-%s" % idx
             sources[sku] = {"sku": sku}
             jobs.append({
-                "job_id": "%s-YT-CD-product_video" % sku,
+                "job_id": "%s-YT-CD-model_video-1" % sku,
+                "media_selection": "model_video:1",
+                "format": "video",
                 "account_id": "YT-CD",
                 "platform": "youtube",
                 "sku": sku,
