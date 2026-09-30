@@ -828,6 +828,11 @@ def test_glued_model_photo_and_video_links_use_model_photo_video_origin():
         "414",
         "video",
     ) == "https://colourdiam.com/Product/Model%20Photo%20Video/414/video.mp4"
+    # Preserve exact FTP folder aliases and filenames; never rebuild canonical URLs.
+    alias = "https://colourdiam.com/Product/Model%20Photo%20Video/1333_6674/model%20video.mp4"
+    assert SheetsReader._rewrite_model_media_url(
+        alias, "1333_6674_6673", "video", filename="video.mp4"
+    ) == alias
     assert SheetsReader._rewrite_model_media_url(
         "https://cdn.shopify.com/s/files/1/0651/4135/1614/files/1996_6379_1.mp4",
         "1996_6379",
@@ -960,3 +965,4 @@ if __name__ == "__main__":
     test_youtube_jobs_are_queued_when_only_product_images_mismatch()
     test_dns_and_integrity_preflight_failures_are_retried()
     print("All pipeline tests passed.")
+

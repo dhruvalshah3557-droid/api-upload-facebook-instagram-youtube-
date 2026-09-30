@@ -105,7 +105,7 @@ class SheetsReader:
     MODEL_VIDEO_INDEXES = (25, 26, 27, 28)
     MODEL_IMAGE_DEFAULTS = ("1.jpeg", "2.jpeg", "3.jpeg", None)
     MODEL_VIDEO_DEFAULTS = ("video.mp4", "video-2.mp4", "video-3.mp4", None)
-    MODEL_MEDIA_PREFIX = "https://colourdiam.com/Product/Jewellery/Model%20images/"
+    MODEL_MEDIA_PREFIX = "https://colourdiam.com/Product/Model%20Photo%20Video/"
     _COLOURDIAM_HOST_RE = re.compile(r"(^|\.)colourdiam\.com$")
     _DEAD_MODEL_HOSTS = {
         "images.colourdiam.com",
@@ -348,7 +348,9 @@ class SheetsReader:
         if host and not cls._is_colourdiam_host(raw):
             return raw
         if cls._is_model_photo_video_path(raw):
-            name = os.path.basename(unquote(parsed.path or "").rstrip("/"))
+            # The FTP lookup supplies exact folder/file names, including known
+            # compound-SKU folder aliases. Preserve this authoritative URL.
+            return raw
         elif host in cls._DEAD_MODEL_HOSTS:
             name = filename or cls._model_media_filename(raw, kind)
         else:
