@@ -326,7 +326,7 @@ class InstagramMusicRotationTests(unittest.TestCase):
         self.assertEqual(container, "byte-container")
         byte_upload.assert_called_once()
 
-    def test_landscape_resumable_video_uses_feed_video_not_reel(self):
+    def test_landscape_resumable_video_uses_reel_and_shares_to_feed(self):
         uploader = InstagramUploader.__new__(InstagramUploader)
         uploader.ig_user_id = "123"
         uploader.access_token = "token"
@@ -343,7 +343,8 @@ class InstagramMusicRotationTests(unittest.TestCase):
             uploader._create_resumable_reel(
                 "https://example.com/wide.mp4", "caption"
             )
-        self.assertEqual(post.call_args_list[0].kwargs["data"]["media_type"], "VIDEO")
+        self.assertEqual(post.call_args_list[0].kwargs["data"]["media_type"], "REELS")
+        self.assertEqual(post.call_args_list[0].kwargs["data"]["share_to_feed"], "true")
         self.assertNotIn("cover_url", post.call_args_list[0].kwargs["data"])
 
     def test_carousel_with_one_usable_child_publishes_as_single_post(self):

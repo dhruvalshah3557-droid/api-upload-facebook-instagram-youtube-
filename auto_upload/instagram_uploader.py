@@ -413,7 +413,7 @@ class InstagramUploader:
         return container_id
 
     def _create_resumable_reel(self, media_url, caption, product_id="", cover_url=""):
-        """Upload original video bytes. Vertical stays a Reel; landscape/square stay feed VIDEO."""
+        """Upload single videos as Reels, retaining the prepared size and soundtrack."""
         selection_key = f"instagram|{self.ig_user_id}|{media_url}"
         name, content, content_type = prepare_video(
             media_url,
@@ -422,10 +422,13 @@ class InstagramUploader:
             platform="instagram",
         )
         layout = video_layout_from_bytes(content)
-        media_type = "REELS" if layout == "vertical" else "VIDEO"
+        # Single-video resumable publishing uses REELS. VIDEO is reserved for
+        # carousel children; sending it here rejects square/landscape sources.
+        media_type = "REELS"
         params = {
             "media_type": media_type,
             "upload_type": "resumable",
+            "share_to_feed": "true",
             "caption": caption,
             "access_token": self.access_token,
         }
