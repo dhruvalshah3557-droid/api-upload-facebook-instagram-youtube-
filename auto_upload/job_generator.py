@@ -51,17 +51,29 @@ def _job_is_video_only(job):
     return selection.startswith("model_video:") or selection == "product_video"
 
 
+def _indexed_source_url(source, field, selection):
+    try:
+        idx = int(str(selection).split(":", 1)[1])
+    except (ValueError, IndexError):
+        return ""
+    items = list((source or {}).get(field) or [])
+    return items[idx] if 0 <= idx < len(items) else ""
+
+
 def _video_job_media_matches(job, source):
     selection = str((job or {}).get("media_selection", "") or "")
     if selection.startswith("model_video:"):
-        try:
-            idx = int(selection.split(":", 1)[1])
-        except ValueError:
-            idx = -1
-        videos = list((source or {}).get("model_videos") or [])
-        url = videos[idx] if 0 <= idx < len(videos) else ""
-        return _video_url_matches_sku(source, url)
+        return _video_url_matches_sku(source, _indexed_source_url(source, "model_videos", selection))
     return _video_url_matches_sku(source)
+
+
+def _model_job_media_matches(job, source):
+    selection = str((job or {}).get("media_selection", "") or "")
+    if selection.startswith("model_video:"):
+        return _video_url_matches_sku(source, _indexed_source_url(source, "model_videos", selection))
+    if selection.startswith("model_photo:"):
+        return _video_url_matches_sku(source, _indexed_source_url(source, "model_images", selection))
+    return False
 
 
 def _is_clean_source(source, job=None):
@@ -72,6 +84,8 @@ def _is_clean_source(source, job=None):
     if not integrity_error:
         return True, ""
     if job and _job_is_video_only(job) and _video_job_media_matches(job, source):
+        return True, ""
+    if job and _model_job_media_matches(job, source):
         return True, ""
     return False, f"Source row integrity mismatch - {integrity_error}"
 
@@ -165,8 +179,9 @@ def generate_jobs(sources, accounts):
     Model video + model photo first, then product Reel/video, then product
     carousel, per the UPLOAD GUIDE format rules. Unclean rows (NON CERTIFIED,
     API error) are blocked from auto-publish and surfaced as a needs_review
-    queue entry. Product-image SKU mismatches still allow YouTube/Twitch
-    video jobs when the video URL itself belongs to the same SKU.
+    queue entry. Product-image SKU mismatches still allow model photo/video
+    jobs, plus YouTube/Twitch video jobs, when that media URL belongs to
+    the same SKU.
     """
     jobs = []
     for sku, source in sources.items():
@@ -200,6 +215,19 @@ def generate_jobs(sources, accounts):
             platform = account.get("platform", "")
             account_id = account.get("account_id", "")
             if integrity_error and platform not in ("youtube", "twitch"):
+                if platform in ("facebook", "instagram", "line", "wechat", "pinterest", "x", "linkedin", "tiktok"):
+                    for i, url in enumerate(source.get("model_videos") or []):
+                        if _video_url_matches_sku(source, url):
+                            jobs.append(_make_job(
+                                sku, account_id, platform, "video",
+                                f"model_video:{i}", account,
+                            ))
+                    for i, url in enumerate(source.get("model_images") or []):
+                        if _video_url_matches_sku(source, url):
+                            jobs.append(_make_job(
+                                sku, account_id, platform, "carousel",
+                                f"model_photo:{i}", account,
+                            ))
                 continue
 
             if platform in ("facebook", "instagram", "line", "wechat", "pinterest", "x", "linkedin", "tiktok"):

@@ -915,9 +915,14 @@ def test_youtube_jobs_are_queued_when_only_product_images_mismatch():
     assert ("YT-CD", "product_video") in selections, jobs
     assert ("YT-CD", "model_video:0") in selections, jobs
     assert ("YT-CD", "model_video:1") not in selections, jobs
-    assert not any(job["account_id"] == "FB-CD" and job["status"] != "needs_review" for job in jobs)
+    assert ("FB-CD", "model_video:0") in selections, jobs
+    assert ("FB-CD", "model_video:1") not in selections, jobs
+    assert ("FB-CD", "carousel") not in selections, jobs
+    assert ("FB-CD", "product_video") not in selections, jobs
     assert _is_clean_source(source)[0] is False
     assert _is_clean_source(source, {"media_selection": "product_video", "platform": "youtube"})[0] is True
+    assert _is_clean_source(source, {"media_selection": "model_video:0", "platform": "facebook"})[0] is True
+    assert _is_clean_source(source, {"media_selection": "model_video:1", "platform": "facebook"})[0] is False
     print("OK test_youtube_jobs_are_queued_when_only_product_images_mismatch")
 
 

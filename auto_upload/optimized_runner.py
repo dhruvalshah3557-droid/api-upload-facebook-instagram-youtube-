@@ -888,27 +888,74 @@ def _sample_account_jobs(jobs, limit):
 
 
 def _account_scan_jobs(account_jobs, limit=PER_ACCOUNT_SCAN_LIMIT):
-    """Prefer model photo/video, but always leave room for product media.
+    """Prefer model video, then model photo, without hiding either.
 
     A large broken model-video backlog previously filled the entire 300-job
-    scan window, so healthy product carousels/videos never got a look and the
-    account selected zero jobs.
+    scan window, so healthy model photos never got a look and the account
+    fell through to a product carousel. Keep a reserved seat for photos and
+    a smaller fallback seat for product media.
     """
     jobs = list(account_jobs or ())
     limit = max(1, int(limit))
     if len(jobs) <= limit:
         return jobs
-    model_jobs = [job for job in jobs if is_model_media(job)]
+    video_jobs = [
+        job for job in jobs
+        if str(job.get("media_selection", "") or "").startswith("model_video:")
+    ]
+    photo_jobs = [
+        job for job in jobs
+        if str(job.get("media_selection", "") or "").startswith("model_photo:")
+    ]
     other_jobs = [job for job in jobs if not is_model_media(job)]
-    if not other_jobs:
-        return _sample_account_jobs(model_jobs, limit)
-    if not model_jobs:
+    if not video_jobs and not photo_jobs:
         return _sample_account_jobs(other_jobs, limit)
-    model_budget = min(len(model_jobs), max(1, (5 * limit) // 6))
-    selected = list(_sample_account_jobs(model_jobs, model_budget))
-    leftover = limit - len(selected)
-    if leftover > 0:
-        selected.extend(_sample_account_jobs(other_jobs, leftover))
+    if not photo_jobs and not other_jobs:
+        return _sample_account_jobs(video_jobs, limit)
+    if not video_jobs and not other_jobs:
+        return _sample_account_jobs(photo_jobs, limit)
+    selected = []
+    seen = set()
+
+    def take_sample(pool, budget):
+        if budget <= 0 or not pool or len(selected) >= limit:
+            return
+        for job in _sample_account_jobs(pool, min(int(budget), limit - len(selected))):
+            marker = id(job)
+            if marker in seen or len(selected) >= limit:
+                continue
+            seen.add(marker)
+            selected.append(job)
+
+    def take_rest(pool):
+        for job in pool:
+            if len(selected) >= limit:
+                return
+            marker = id(job)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            selected.append(job)
+
+    photo_budget = min(len(photo_jobs), max(1, limit // 6)) if photo_jobs else 0
+    other_budget = min(len(other_jobs), max(1, limit // 6)) if other_jobs else 0
+    video_budget = max(0, limit - photo_budget - other_budget)
+    if video_jobs:
+        video_budget = min(len(video_jobs), max(video_budget, 1))
+        overflow = photo_budget + other_budget + video_budget - limit
+        if overflow > 0 and other_budget > 1:
+            cut = min(overflow, other_budget - 1)
+            other_budget -= cut
+            overflow -= cut
+        if overflow > 0 and photo_budget > 1:
+            photo_budget -= min(overflow, photo_budget - 1)
+
+    take_sample(video_jobs, video_budget)
+    take_sample(photo_jobs, photo_budget)
+    take_sample(other_jobs, other_budget)
+    take_rest(video_jobs)
+    take_rest(photo_jobs)
+    take_rest(other_jobs)
     return selected
 
 def _healthy_candidates(
@@ -1062,6 +1109,7 @@ def _healthy_candidates(
                 jobs_for_account = max(1, wanted - platform_selected)
             account_selected = 0
             already_ids = {id(job) for job in selected}
+            tried_ids = set()
             while (
                 account_selected < jobs_for_account
                 and platform_selected < wanted
@@ -1072,13 +1120,24 @@ def _healthy_candidates(
                     if id(job) in already_ids:
                         continue
                     if _is_locked(job):
+                        tried_ids.add(id(job))
                         continue
                     if str(job.get("platform", "") or "").lower() != platform:
                         continue
                     if _known_unusable_pending(job):
+                        tried_ids.add(id(job))
                         continue
-                    if account_selected > 0 and not is_model_media(job):
-                        continue
+                    if not is_model_media(job):
+                        if account_selected > 0:
+                            continue
+                        if any(
+                            is_model_media(other)
+                            and id(other) not in already_ids
+                            and id(other) not in tried_ids
+                            for other in scan_jobs
+                        ):
+                            continue
+                    tried_ids.add(id(job))
 
                     job_marker = _job_id_marker(job)
                     if job_marker and job_marker in reserved_fingerprints:
