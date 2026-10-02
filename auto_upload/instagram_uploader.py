@@ -28,6 +28,7 @@ _REGIONAL_AUDIO_QUERIES = (
     (("dubai",), ("Dubai trending", "Arabic luxury", "Arabic instrumental")),
     (("kuwait",), ("Kuwait trending", "Khaleeji", "Arabic luxury")),
     (("pakistan",), ("Pakistan trending", "Pakistani pop", "South Asian instrumental")),
+    (("singapore",), ("Singapore trending", "Singapore pop", "Asian luxury instrumental")),
     (("israel",), ("Israel trending", "Hebrew pop", "Hebrew instrumental")),
     (("spain",), ("Spain trending", "Spanish pop", "Latin luxury")),
     (("italy",), ("Italy trending", "Italian pop", "Italian luxury instrumental")),
