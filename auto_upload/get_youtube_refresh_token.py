@@ -6,11 +6,16 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
 
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
 DEFAULT_CLIENT_SECRET = Path(__file__).parent / "credentials" / "youtube_client_secret.json"
 DEFAULT_AUTH_CODE_FILE = Path(__file__).parent / "credentials" / "youtube_auth_code.txt"
 LOOPBACK_REDIRECT_URI = "http://127.0.0.1:8080/"
+EXPECTED_CHANNEL_IDS = {
+    "COLOURDIAMONDSS": "UCTWbcY-YtvAx2QUZKXt230A",
+    "JIYA": "UCDFzWfIRvLu1LXq3mQrkj6Q",
+}
 
 
 def extract_code(value):
@@ -22,7 +27,26 @@ def extract_code(value):
     return value
 
 
-def print_secrets(creds, client_secret, refresh_key):
+def verify_channel(creds, suffix):
+    """Refuse to emit a token for the wrong signed-in YouTube channel."""
+    service = build("youtube", "v3", credentials=creds)
+    response = service.channels().list(part="id,snippet", mine=True).execute()
+    items = response.get("items", [])
+    if not items:
+        sys.exit("No YouTube channel was found for the authorized Google account.")
+    channel = items[0]
+    channel_id = channel.get("id", "")
+    channel_title = channel.get("snippet", {}).get("title", "")
+    expected = EXPECTED_CHANNEL_IDS.get(suffix.upper())
+    if expected and channel_id != expected:
+        sys.exit(
+            f"Wrong YouTube channel authorized: {channel_title} ({channel_id}). "
+            f"Expected {expected} for suffix {suffix}. Re-run with the correct Google account."
+        )
+    print(f"Verified YouTube channel: {channel_title} ({channel_id})")
+
+
+def print_secrets(creds, client_secret, refresh_key, suffix=""):
     if not creds.refresh_token:
         sys.exit(
             "No refresh token returned. Re-run and re-authorize, ensuring the app "
@@ -38,8 +62,15 @@ def print_secrets(creds, client_secret, refresh_key):
     print("\n" + "=" * 60)
     print("PASTE THESE INTO GITHUB SECRETS (exact KEY=VALUE pairs)")
     print("=" * 60)
-    print(f"YOUTUBE_CLIENT_ID={client_id}")
-    print(f"YOUTUBE_CLIENT_SECRET={client_secret_value}")
+    if suffix.upper() == "COLOURDIAMONDSS":
+        client_id_key = "YOUTUBE_CLIENT_ID_COLOURDIAMONDSS"
+        client_secret_key = "YOUTUBE_CLIENT_SECRET_COLOURDIAMONDSS"
+    else:
+        # YT-JIYA intentionally uses the shared/default OAuth client pair.
+        client_id_key = "YOUTUBE_CLIENT_ID"
+        client_secret_key = "YOUTUBE_CLIENT_SECRET"
+    print(f"{client_id_key}={client_id}")
+    print(f"{client_secret_key}={client_secret_value}")
     print(f"{refresh_key}={creds.refresh_token}")
     print("=" * 60)
     print(
@@ -108,7 +139,8 @@ def main():
             authorization_prompt_message="Please visit this URL to authorize:",
             success_message="Authorization successful. You may close this window.",
         )
-        print_secrets(creds, client_secret, refresh_key)
+        verify_channel(creds, args.suffix)
+        print_secrets(creds, client_secret, refresh_key, args.suffix)
         return
 
     flow.redirect_uri = LOOPBACK_REDIRECT_URI
@@ -131,7 +163,8 @@ def main():
         code = extract_code(input("code> "))
 
     flow.fetch_token(code=code)
-    print_secrets(flow.credentials, client_secret, refresh_key)
+    verify_channel(flow.credentials, args.suffix)
+    print_secrets(flow.credentials, client_secret, refresh_key, args.suffix)
 
 
 if __name__ == "__main__":
