@@ -235,6 +235,7 @@ PAGE_LANG_MAP = {
     "colour diam germany": "de",
     "colour diam poland": "pl",
     "colour diam denmark": "da",
+    "colour diam singapore": "en",
     "colour diam france": "fr",
     "colour diam italy": "it",
     "colour diam vietnam": "vi",
