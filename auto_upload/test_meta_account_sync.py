@@ -85,6 +85,7 @@ class MetaAccountSyncTests(unittest.TestCase):
     def test_new_markets_have_regional_language_and_timezone(self):
         self.assertEqual(market_settings("Colour Diam Germany"), ("GERMANY", "de-DE", "Europe/Berlin"))
         self.assertEqual(market_settings("colourdiamchina"), ("CHINA", "zh-CN", "Asia/Shanghai"))
+        self.assertEqual(market_settings("Colour Diam Singapore"), ("SINGAPORE", "en-SG", "Asia/Singapore"))
         self.assertEqual(market_settings("Colour Diam Greece"), ("GREECE", "el-GR", "Europe/Athens"))
         self.assertEqual(market_settings("Colour Diam Lebanon"), ("LEBANON", "lb-LB", "Asia/Beirut"))
         self.assertEqual(market_settings("colourdiamlebanon"), ("LEBANON", "lb-LB", "Asia/Beirut"))
