@@ -29,6 +29,7 @@ MARKETS = {
     "dubai": ("DUBAI", "ar-AE", "Asia/Dubai"),
     "kuwait": ("KUWAIT", "ar-KW", "Asia/Kuwait"),
     "pakistan": ("PAK", "en-GB", "Asia/Karachi"),
+    "singapore": ("SINGAPORE", "en-SG", "Asia/Singapore"),
     "bangkok": ("BKK", "th-TH", "Asia/Bangkok"),
     "sweden": ("SWEDEN", "sv-SE", "Europe/Stockholm"),
     "germany": ("GERMANY", "de-DE", "Europe/Berlin"),
