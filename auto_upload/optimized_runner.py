@@ -41,6 +41,7 @@ from sheets_reader import SheetsReader
 PREFLIGHT_SCAN_LIMIT = 1000
 PER_ACCOUNT_SCAN_LIMIT = 300
 HOUSEKEEPING_LIMIT = 24
+MODEL_VIDEO_PREFLIGHT_BUDGET = 3
 REVIVE_LIMIT = 12
 LOCK_PREFIX = "IDEMPOTENCY_LOCK"
 FINGERPRINT_PREFIX = "MEDIA_FINGERPRINT"
@@ -892,8 +893,8 @@ def _account_scan_jobs(account_jobs, limit=PER_ACCOUNT_SCAN_LIMIT):
 
     A large broken model-video backlog previously filled the entire 300-job
     scan window, so healthy model photos never got a look and the account
-    fell through to a product carousel. Keep a reserved seat for photos and
-    a smaller fallback seat for product media.
+    fell through to a product carousel. Keep a large reserved seat for
+    photos and only a tiny fallback seat for product media.
     """
     jobs = list(account_jobs or ())
     limit = max(1, int(limit))
@@ -937,8 +938,8 @@ def _account_scan_jobs(account_jobs, limit=PER_ACCOUNT_SCAN_LIMIT):
             seen.add(marker)
             selected.append(job)
 
-    photo_budget = min(len(photo_jobs), max(1, limit // 6)) if photo_jobs else 0
-    other_budget = min(len(other_jobs), max(1, limit // 6)) if other_jobs else 0
+    photo_budget = min(len(photo_jobs), max(1, limit // 3)) if photo_jobs else 0
+    other_budget = min(len(other_jobs), max(1, min(8, limit // 20))) if other_jobs else 0
     video_budget = max(0, limit - photo_budget - other_budget)
     if video_jobs:
         video_budget = min(len(video_jobs), max(video_budget, 1))
@@ -1110,6 +1111,7 @@ def _healthy_candidates(
             account_selected = 0
             already_ids = {id(job) for job in selected}
             tried_ids = set()
+            model_video_failures = 0
             while (
                 account_selected < jobs_for_account
                 and platform_selected < wanted
@@ -1125,6 +1127,13 @@ def _healthy_candidates(
                     if str(job.get("platform", "") or "").lower() != platform:
                         continue
                     if _known_unusable_pending(job):
+                        tried_ids.add(id(job))
+                        continue
+                    selection = str(job.get("media_selection", "") or "")
+                    if (
+                        selection.startswith("model_video:")
+                        and model_video_failures >= MODEL_VIDEO_PREFLIGHT_BUDGET
+                    ):
                         tried_ids.add(id(job))
                         continue
                     if not is_model_media(job):
@@ -1200,6 +1209,8 @@ def _healthy_candidates(
                         media, force_video=force_video
                     )
                     if media_problem:
+                        if selection.startswith("model_video:"):
+                            model_video_failures += 1
                         if housekeeping < HOUSEKEEPING_LIMIT:
                             sheets.update_job(job, {
                                 "status": Config.JOB_STATUS_NEEDS_REVIEW,

@@ -889,6 +889,82 @@ class FullRepairTests(unittest.TestCase):
             )
         self.assertEqual([job["media_selection"] for job in selected], ["model_photo:0"])
 
+    def test_leftover_slots_prefer_model_photos_after_dead_model_videos(self):
+        jobs = [
+            {
+                "job_id": "bad-%s-FB-CD-model_video-0" % i,
+                "sku": "bad-%s" % i,
+                "account_id": "FB-CD",
+                "platform": "facebook",
+                "format": "video",
+                "media_selection": "model_video:0",
+                "row": i,
+                "attempts": 0,
+                "notes": "",
+            }
+            for i in range(1, 12)
+        ]
+        jobs.extend([
+            {
+                "job_id": "good-FB-CD-model_photo-0",
+                "sku": "good-photo",
+                "account_id": "FB-CD",
+                "platform": "facebook",
+                "format": "carousel",
+                "media_selection": "model_photo:0",
+                "row": 20,
+                "attempts": 0,
+                "notes": "",
+            },
+            {
+                "job_id": "good-FB-CD-model_photo-1",
+                "sku": "good-photo-2",
+                "account_id": "FB-CD",
+                "platform": "facebook",
+                "format": "carousel",
+                "media_selection": "model_photo:1",
+                "row": 21,
+                "attempts": 0,
+                "notes": "",
+            },
+            {
+                "job_id": "good-FB-CD-carousel",
+                "sku": "good-product",
+                "account_id": "FB-CD",
+                "platform": "facebook",
+                "format": "carousel",
+                "media_selection": "carousel",
+                "row": 99,
+                "attempts": 0,
+                "notes": "",
+            },
+        ])
+        accounts = {"FB-CD": {"enabled": True, "platform": "facebook", "timezone": "Asia/Bangkok"}}
+        sources = {job["sku"]: {"sku": job["sku"]} for job in jobs}
+        sheets = types.SimpleNamespace(update_job=lambda *args, **kwargs: None)
+
+        def preflight(media, force_video=False):
+            url = str((media or [""])[0])
+            if "good" in url:
+                return ""
+            return "video failed validation"
+
+        with patch("optimized_runner._platform_limits", return_value={"facebook": 2, "instagram": 0, "youtube": 0, "line": 0}), \
+             patch("optimized_runner._local_slot_due", return_value=True), \
+             patch("optimized_runner._rotation_rank", return_value=0), \
+             patch("optimized_runner._is_clean_source", return_value=(True, "")), \
+             patch("optimized_runner.resolve_media_fixed", side_effect=lambda job, source: ["https://media.example/%s.jpg" % job["sku"]]), \
+             patch("optimized_runner._media_preflight_reason", side_effect=preflight), \
+             patch("optimized_runner.main.build_caption", return_value="ok"):
+            selected = optimized_runner._healthy_candidates(
+                jobs, accounts, sources, sheets, limit=2
+            )
+        self.assertEqual(
+            {job["media_selection"] for job in selected},
+            {"model_photo:0", "model_photo:1"},
+        )
+        self.assertTrue(all(is_model_media(job) for job in selected))
+
     def test_healthy_candidates_select_product_when_model_backlog_fails_preflight(self):
         jobs = [
             {
