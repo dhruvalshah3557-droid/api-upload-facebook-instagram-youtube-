@@ -9,9 +9,11 @@ Quota budget: production is tuned for up to 50 publish attempts/run so every
 publish-ready Facebook, Instagram and YouTube account can receive a turn.
 Instagram and Facebook both get one slot per due account; Instagram keeps a
 configurable per-run cap so the shared Meta app quota is not burst. Unused
-Facebook budget is given to Instagram before YouTube. LINE is excluded while
-its monthly Messaging API quota is exhausted.
-Maintenance writes remain capped so Google Sheets quota has comfortable headroom.
+Facebook budget is given to Instagram before YouTube. Unused YouTube/TikTok
+slots (dead OAuth, missing jobs) stay on Facebook/Instagram model photo/video
+instead of product carousels. LINE is excluded while its monthly Messaging
+API quota is exhausted. Maintenance writes remain capped so Google Sheets
+quota has comfortable headroom.
 """
 import hashlib
 import os
@@ -962,6 +964,128 @@ def _account_scan_jobs(account_jobs, limit=PER_ACCOUNT_SCAN_LIMIT):
     take_rest(other_jobs)
     return selected
 
+
+def _accept_healthy_job(
+    job, account, sources, sheets, reserved_fingerprints, seen_fingerprints,
+    housekeeping,
+):
+    """Return (job, housekeeping) when the candidate is publishable, else (None, housekeeping)."""
+    if job is None or not account:
+        return None, housekeeping, ""
+    if _is_locked(job) or _known_unusable_pending(job):
+        return None, housekeeping, ""
+
+    job_marker = _job_id_marker(job)
+    if job_marker and job_marker in reserved_fingerprints:
+        if housekeeping < HOUSEKEEPING_LIMIT:
+            sheets.update_job(job, {
+                "status": Config.JOB_STATUS_SKIPPED,
+                "notes": "Duplicate stable job ID already uploaded or protected by idempotency lock",
+            })
+            housekeeping += 1
+        return None, housekeeping, ""
+
+    product_marker = _product_account_marker(job)
+    if product_marker and product_marker in reserved_fingerprints:
+        if housekeeping < HOUSEKEEPING_LIMIT:
+            sheets.update_job(job, {
+                "status": Config.JOB_STATUS_SKIPPED,
+                "notes": "Duplicate product already uploaded to this account in another media format",
+            })
+            housekeeping += 1
+        return None, housekeeping, ""
+
+    source = sources.get(_job_sku(job))
+    if not source:
+        if housekeeping < HOUSEKEEPING_LIMIT:
+            sheets.update_job(job, {
+                "status": Config.JOB_STATUS_SKIPPED,
+                "notes": "Auto-cleaned: SKU missing from Source Import",
+            })
+            housekeeping += 1
+        return None, housekeeping, ""
+
+    clean_source, source_reason = _is_clean_source(source, job)
+    if not clean_source:
+        if housekeeping < HOUSEKEEPING_LIMIT:
+            sheets.update_job(job, {
+                "status": Config.JOB_STATUS_NEEDS_REVIEW,
+                "notes": "Auto-blocked: source row integrity mismatch",
+                "error_message": source_reason,
+            })
+            housekeeping += 1
+        return None, housekeeping, ""
+
+    media = resolve_media_fixed(job, source)
+    if not media:
+        if housekeeping < HOUSEKEEPING_LIMIT:
+            sheets.update_job(job, {
+                "status": Config.JOB_STATUS_NEEDS_REVIEW,
+                "notes": "Auto-cleaned: no media resolved",
+            })
+            housekeeping += 1
+        return None, housekeeping, ""
+
+    selection = str(job.get("media_selection", "") or "")
+    force_video = (
+        str(job.get("format", "") or "").strip().lower() == "video"
+        or selection == "product_video"
+        or selection.startswith("model_video:")
+    )
+    media_problem = _media_preflight_reason(media, force_video=force_video)
+    if media_problem:
+        fail_kind = "model_video" if selection.startswith("model_video:") else "media"
+        if housekeeping < HOUSEKEEPING_LIMIT:
+            sheets.update_job(job, {
+                "status": Config.JOB_STATUS_NEEDS_REVIEW,
+                "notes": "Auto-cleaned: media failed production preflight",
+                "error_message": f"Media preflight failed: {media_problem}",
+            })
+            housekeeping += 1
+        return None, housekeeping, fail_kind
+
+    try:
+        main.build_caption(job, source, account)
+    except ValueError as exc:
+        caption_error = str(exc)
+        if housekeeping < HOUSEKEEPING_LIMIT:
+            sheets.update_job(job, {
+                "status": Config.JOB_STATUS_NEEDS_REVIEW,
+                "notes": "Auto-cleaned: regional caption preflight failed",
+                "error_message": caption_error,
+            })
+            housekeeping += 1
+        else:
+            main.logger.warning(
+                "Skipping %s for %s: %s",
+                job.get("job_id", ""),
+                account.get("account_id", ""),
+                caption_error,
+            )
+        return None, housekeeping, ""
+
+    fingerprint = _media_fingerprint(job, source)
+    marker = _fingerprint_marker(job, source)
+    if marker in reserved_fingerprints:
+        if housekeeping < HOUSEKEEPING_LIMIT:
+            sheets.update_job(job, {
+                "status": Config.JOB_STATUS_SKIPPED,
+                "notes": "Duplicate media already uploaded or protected by idempotency lock",
+            })
+            housekeeping += 1
+        return None, housekeeping, ""
+    if fingerprint in seen_fingerprints:
+        return None, housekeeping, ""
+
+    seen_fingerprints.add(fingerprint)
+    reserved_fingerprints.add(marker)
+    if job_marker:
+        reserved_fingerprints.add(job_marker)
+    if product_marker:
+        reserved_fingerprints.add(product_marker)
+    return job, housekeeping, "accepted"
+
+
 def _healthy_candidates(
     jobs, accounts, sources, sheets, limit, reserved_fingerprints=None,
     recent_upload_activity=None,
@@ -1106,8 +1230,9 @@ def _healthy_candidates(
                             0 if _job_sku(job) == paired_sku else 1,
                         )
                     )
-            # First job is one per account. Leftover slots stay on model
-            # photo/video so product carousels cannot consume the extra budget.
+            # First job is one per account. Extra platform budget stays on
+            # model photo/video so product carousels cannot consume leftover
+            # slots. Unused YouTube/TikTok capacity is filled later.
             jobs_for_account = 1
             if any(is_model_media(job) for job in scan_jobs):
                 jobs_for_account = max(1, wanted - platform_selected)
@@ -1122,15 +1247,9 @@ def _healthy_candidates(
             ):
                 chosen = None
                 for job in scan_jobs:
-                    if id(job) in already_ids:
-                        continue
-                    if _is_locked(job):
-                        tried_ids.add(id(job))
+                    if id(job) in already_ids or id(job) in tried_ids:
                         continue
                     if str(job.get("platform", "") or "").lower() != platform:
-                        continue
-                    if _known_unusable_pending(job):
-                        tried_ids.add(id(job))
                         continue
                     selection = str(job.get("media_selection", "") or "")
                     if (
@@ -1150,120 +1269,14 @@ def _healthy_candidates(
                         ):
                             continue
                     tried_ids.add(id(job))
-
-                    job_marker = _job_id_marker(job)
-                    if job_marker and job_marker in reserved_fingerprints:
-                        if housekeeping < HOUSEKEEPING_LIMIT:
-                            sheets.update_job(job, {
-                                "status": Config.JOB_STATUS_SKIPPED,
-                                "notes": "Duplicate stable job ID already uploaded or protected by idempotency lock",
-                            })
-                            housekeeping += 1
-                        continue
-
-                    product_marker = _product_account_marker(job)
-                    if product_marker and product_marker in reserved_fingerprints:
-                        if housekeeping < HOUSEKEEPING_LIMIT:
-                            sheets.update_job(job, {
-                                "status": Config.JOB_STATUS_SKIPPED,
-                                "notes": "Duplicate product already uploaded to this account in another media format",
-                            })
-                            housekeeping += 1
-                        continue
-
-                    source = sources.get(_job_sku(job))
-                    if not source:
-                        if housekeeping < HOUSEKEEPING_LIMIT:
-                            sheets.update_job(job, {
-                                "status": Config.JOB_STATUS_SKIPPED,
-                                "notes": "Auto-cleaned: SKU missing from Source Import",
-                            })
-                            housekeeping += 1
-                        continue
-
-                    clean_source, source_reason = _is_clean_source(source, job)
-                    if not clean_source:
-                        if housekeeping < HOUSEKEEPING_LIMIT:
-                            sheets.update_job(job, {
-                                "status": Config.JOB_STATUS_NEEDS_REVIEW,
-                                "notes": "Auto-blocked: source row integrity mismatch",
-                                "error_message": source_reason,
-                            })
-                            housekeeping += 1
-                        continue
-
-                    media = resolve_media_fixed(job, source)
-                    if not media:
-                        if housekeeping < HOUSEKEEPING_LIMIT:
-                            sheets.update_job(job, {
-                                "status": Config.JOB_STATUS_NEEDS_REVIEW,
-                                "notes": "Auto-cleaned: no media resolved",
-                            })
-                            housekeeping += 1
-                        continue
-
-                    selection = str(job.get("media_selection", "") or "")
-                    force_video = (
-                        str(job.get("format", "") or "").strip().lower() == "video"
-                        or selection == "product_video"
-                        or selection.startswith("model_video:")
+                    chosen, housekeeping, fail_kind = _accept_healthy_job(
+                        job, account, sources, sheets, reserved_fingerprints,
+                        seen_fingerprints, housekeeping,
                     )
-                    media_problem = _media_preflight_reason(
-                        media, force_video=force_video
-                    )
-                    if media_problem:
-                        if selection.startswith("model_video:"):
-                            model_video_failures += 1
-                        if housekeeping < HOUSEKEEPING_LIMIT:
-                            sheets.update_job(job, {
-                                "status": Config.JOB_STATUS_NEEDS_REVIEW,
-                                "notes": "Auto-cleaned: media failed production preflight",
-                                "error_message": f"Media preflight failed: {media_problem}",
-                            })
-                            housekeeping += 1
-                        continue
-
-                    try:
-                        main.build_caption(job, source, account)
-                    except ValueError as exc:
-                        caption_error = str(exc)
-                        if housekeeping < HOUSEKEEPING_LIMIT:
-                            sheets.update_job(job, {
-                                "status": Config.JOB_STATUS_NEEDS_REVIEW,
-                                "notes": "Auto-cleaned: regional caption preflight failed",
-                                "error_message": caption_error,
-                            })
-                            housekeeping += 1
-                        else:
-                            main.logger.warning(
-                                "Skipping %s for %s: %s",
-                                job.get("job_id", ""),
-                                account_id,
-                                caption_error,
-                            )
-                        continue
-
-                    fingerprint = _media_fingerprint(job, source)
-                    marker = _fingerprint_marker(job, source)
-                    if marker in reserved_fingerprints:
-                        if housekeeping < HOUSEKEEPING_LIMIT:
-                            sheets.update_job(job, {
-                                "status": Config.JOB_STATUS_SKIPPED,
-                                "notes": "Duplicate media already uploaded or protected by idempotency lock",
-                            })
-                            housekeeping += 1
-                        continue
-                    if fingerprint in seen_fingerprints:
-                        continue
-
-                    chosen = job
-                    seen_fingerprints.add(fingerprint)
-                    reserved_fingerprints.add(marker)
-                    if job_marker:
-                        reserved_fingerprints.add(job_marker)
-                    if product_marker:
-                        reserved_fingerprints.add(product_marker)
-                    break
+                    if fail_kind == "model_video":
+                        model_video_failures += 1
+                    if chosen:
+                        break
 
                 if not chosen:
                     if account_selected == 0:
@@ -1289,7 +1302,111 @@ def _healthy_candidates(
                     len(scan_jobs),
                 )
 
+    leftover = max(0, int(limit) - len(selected))
+    instagram_cap = _instagram_run_cap()
+    instagram_used = sum(
+        1 for job in selected
+        if str(job.get("platform", "") or "").lower() == "instagram"
+    )
+    if leftover > 0:
+        leftover, housekeeping = _fill_model_media_leftover(
+            leftover, selected, jobs_by_account, accounts, sources, sheets,
+            reserved_fingerprints, seen_fingerprints, housekeeping, limit,
+            instagram_cooldown, instagram_cap, instagram_used,
+            recent_upload_activity,
+        )
+        if leftover:
+            main.logger.info(
+                "Leftover model-media fill: %s unused slot(s) remain after model photo/video scan",
+                leftover,
+            )
+
     return selected
+
+
+def _fill_model_media_leftover(
+    leftover, selected, jobs_by_account, accounts, sources, sheets,
+    reserved_fingerprints, seen_fingerprints, housekeeping, limit,
+    instagram_cooldown, instagram_cap, instagram_used, recent_upload_activity,
+):
+    """Spend unused YouTube/TikTok/Facebook budget on model photo/video only."""
+    if leftover <= 0:
+        return leftover, housekeeping
+    already_ids = {id(job) for job in selected}
+    order = []
+    for platform in ("facebook", "instagram"):
+        if platform == "instagram" and instagram_cooldown:
+            continue
+        for account_id in _enabled_account_order(accounts, platform):
+            account = accounts.get(account_id)
+            if not account or not account.get("enabled"):
+                continue
+            if not _account_publish_ready(account):
+                continue
+            if (
+                _minimum_delivery_priority(account_id, recent_upload_activity)[0] != 0
+                and not _local_slot_due(account_id, account, recent_upload_activity)
+            ):
+                continue
+            order.append((platform, account_id, account))
+    order.sort(key=lambda item: (
+        _minimum_delivery_priority(item[1], recent_upload_activity),
+        item[1],
+    ))
+    instagram_selected = int(instagram_used or 0)
+    model_video_failures = {}
+    progressed = True
+    while leftover > 0 and len(selected) < limit and progressed:
+        progressed = False
+        for platform, account_id, account in order:
+            if leftover <= 0 or len(selected) >= limit:
+                break
+            if platform == "instagram":
+                if instagram_cooldown or instagram_selected >= instagram_cap:
+                    continue
+            account_jobs = [
+                job for job in jobs_by_account.get(account_id, [])
+                if is_model_media(job) and id(job) not in already_ids
+                and not _known_unusable_pending(job)
+            ]
+            if not account_jobs:
+                continue
+            scan_jobs = _account_scan_jobs(account_jobs)
+            failures = model_video_failures.get(account_id, 0)
+            chosen = None
+            for job in scan_jobs:
+                if id(job) in already_ids:
+                    continue
+                if str(job.get("platform", "") or "").lower() != platform:
+                    continue
+                selection = str(job.get("media_selection", "") or "")
+                if (
+                    selection.startswith("model_video:")
+                    and failures >= MODEL_VIDEO_PREFLIGHT_BUDGET
+                ):
+                    continue
+                chosen, housekeeping, fail_kind = _accept_healthy_job(
+                    job, account, sources, sheets, reserved_fingerprints,
+                    seen_fingerprints, housekeeping,
+                )
+                if fail_kind == "model_video":
+                    failures += 1
+                    model_video_failures[account_id] = failures
+                if chosen:
+                    break
+            if not chosen:
+                continue
+            selected.append(chosen)
+            already_ids.add(id(chosen))
+            leftover -= 1
+            progressed = True
+            if platform == "instagram":
+                instagram_selected += 1
+            main.logger.info(
+                "Leftover model-media slot: %s (%s) %s",
+                account_id, platform, chosen.get("media_selection", ""),
+            )
+    return leftover, housekeeping
 
 
 def _is_ambiguous_delivery_error(exc):

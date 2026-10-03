@@ -791,6 +791,55 @@ class FullRepairTests(unittest.TestCase):
         )
         self.assertTrue(all(is_model_media(job) for job in selected))
 
+    def test_unused_youtube_slots_fill_with_model_media_not_product_carousels(self):
+        jobs = [
+            {"job_id": "1-FB-CD-carousel", "sku": "1", "account_id": "FB-CD", "platform": "facebook", "format": "carousel", "media_selection": "carousel", "row": 40, "attempts": 0, "notes": ""},
+            {"job_id": "1-FB-CD-model_photo-0", "sku": "1", "account_id": "FB-CD", "platform": "facebook", "format": "carousel", "media_selection": "model_photo:0", "row": 20, "attempts": 0, "notes": ""},
+            {"job_id": "1-FB-CD-model_video-0", "sku": "1", "account_id": "FB-CD", "platform": "facebook", "format": "video", "media_selection": "model_video:0", "row": 10, "attempts": 0, "notes": ""},
+            {"job_id": "1-FB-CD-model_video-1", "sku": "1", "account_id": "FB-CD", "platform": "facebook", "format": "video", "media_selection": "model_video:1", "row": 11, "attempts": 0, "notes": ""},
+            {
+                "job_id": "yt-dead",
+                "sku": "9",
+                "account_id": "YT-CD",
+                "platform": "youtube",
+                "format": "video",
+                "media_selection": "model_video:0",
+                "row": 1,
+                "attempts": 1,
+                "notes": "invalid_grant",
+                "error_message": "invalid_grant",
+                "last_attempt_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
+            },
+        ]
+        accounts = {
+            "FB-CD": {"enabled": True, "platform": "facebook", "timezone": "Asia/Bangkok"},
+            "YT-CD": {"enabled": True, "platform": "youtube", "timezone": "Asia/Bangkok", "platform_account_id": "UCtest"},
+        }
+        sources = {
+            "1": {
+                "main_image": "https://media.example/product.jpg",
+                "side_images": [],
+                "model_images": ["https://media.example/model.jpg"],
+                "model_videos": ["https://media.example/model0.mp4", "https://media.example/model1.mp4"],
+            },
+            "9": {"model_videos": ["https://media.example/yt.mp4"]},
+        }
+        sheets = types.SimpleNamespace(update_job=lambda *args: None)
+        with patch("optimized_runner._platform_limits", return_value={"facebook": 1, "instagram": 0, "youtube": 2, "line": 0}), \
+             patch("optimized_runner._local_slot_due", return_value=True), \
+             patch("optimized_runner._rotation_rank", return_value=0), \
+             patch("optimized_runner._is_clean_source", return_value=(True, "")), \
+             patch("optimized_runner._media_preflight_reason", return_value=""), \
+             patch("optimized_runner.main.build_caption", return_value="ok"), \
+             patch("optimized_runner._youtube_auth_dead_accounts", return_value={"YT-CD"}):
+            selected = optimized_runner._healthy_candidates(
+                jobs, accounts, sources, sheets, limit=3
+            )
+        self.assertEqual(len(selected), 3)
+        self.assertTrue(all(is_model_media(job) for job in selected))
+        self.assertEqual({job["account_id"] for job in selected}, {"FB-CD"})
+        self.assertNotIn("carousel", {job["media_selection"] for job in selected})
+
     def test_account_scan_does_not_let_broken_model_backlog_hide_product_jobs(self):
         jobs = [
             {"job_id": "model-%s" % i, "media_selection": "model_video:0"}
