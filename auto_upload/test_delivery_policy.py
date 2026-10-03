@@ -59,10 +59,10 @@ def _primary(account_id, platform, enabled=True, platform_account_id="123"):
 
 
 class DeliveryPolicyTests(unittest.TestCase):
-    def test_floor_is_five_posts_with_two_hour_gap(self):
-        self.assertEqual(delivery_policy.MINIMUM_POSTS_24H, 5)
-        self.assertEqual(delivery_policy.MINIMUM_GAP_HOURS, 2)
-        self.assertEqual(len(optimized_runner.LOCAL_POSTING_SLOTS), 5)
+    def test_floor_is_eight_posts_with_half_hour_gap(self):
+        self.assertEqual(delivery_policy.MINIMUM_POSTS_24H, 8)
+        self.assertEqual(delivery_policy.MINIMUM_GAP_HOURS, 0.5)
+        self.assertEqual(len(optimized_runner.LOCAL_POSTING_SLOTS), 11)
         self.assertTrue(delivery_policy.LINE_QUOTA_EXHAUSTED)
 
     def test_slot_eligible_skips_line_placeholders_and_disabled(self):
@@ -88,7 +88,7 @@ class DeliveryPolicyTests(unittest.TestCase):
         gviz = delivery_policy.parse_queue_time("Date(2026,7,30,8,0,0)")
         self.assertEqual(gviz, datetime(2026, 8, 30, 8, 0, tzinfo=timezone.utc))
 
-    def test_due_accounts_respect_two_hour_spacing(self):
+    def test_due_accounts_respect_half_hour_spacing(self):
         now = datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc)
         accounts = {
             "IG-SPAIN": _primary("IG-SPAIN", "instagram"),
@@ -104,21 +104,21 @@ class DeliveryPolicyTests(unittest.TestCase):
         }
         activity = {
             "IG-SPAIN": {"count": 2, "last": now - timedelta(hours=6)},
-            "IG-ITALY": {"count": 2, "last": now - timedelta(hours=1)},
-            "FB-CD": {"count": 5, "last": now - timedelta(hours=6)},
+            "IG-ITALY": {"count": 2, "last": now - timedelta(minutes=20)},
+            "FB-CD": {"count": 8, "last": now - timedelta(hours=6)},
         }
         due = delivery_policy.due_deficit_accounts(accounts, activity, now)
         self.assertEqual([item["account_id"] for item in due], ["IG-SPAIN"])
-        self.assertEqual(due[0]["deficit"], 3)
+        self.assertEqual(due[0]["deficit"], 6)
 
-        just_inside = {"IG-SPAIN": {"count": 1, "last": now - timedelta(hours=2) + timedelta(seconds=1)}}
+        just_inside = {"IG-SPAIN": {"count": 1, "last": now - timedelta(minutes=30) + timedelta(seconds=1)}}
         self.assertEqual(delivery_policy.due_deficit_accounts(
             {"IG-SPAIN": accounts["IG-SPAIN"]}, just_inside, now,
         ), [])
-        exactly_two = {"IG-SPAIN": {"count": 1, "last": now - timedelta(hours=2)}}
+        exactly_gap = {"IG-SPAIN": {"count": 1, "last": now - timedelta(minutes=30)}}
         self.assertEqual(
             [item["account_id"] for item in delivery_policy.due_deficit_accounts(
-                {"IG-SPAIN": accounts["IG-SPAIN"]}, exactly_two, now,
+                {"IG-SPAIN": accounts["IG-SPAIN"]}, exactly_gap, now,
             )],
             ["IG-SPAIN"],
         )
@@ -168,7 +168,7 @@ class DeliveryPolicyTests(unittest.TestCase):
         for idx in range(21):
             aid = "FB-%02d" % idx
             accounts[aid] = _primary(aid, "facebook")
-            activity[aid] = {"count": 5, "last": now - timedelta(hours=1), "success_times": []}
+            activity[aid] = {"count": 8, "last": now - timedelta(hours=1), "success_times": []}
         for idx in range(17):
             aid = "IG-%02d" % idx
             accounts[aid] = _primary(aid, "instagram")
@@ -202,7 +202,7 @@ class DeliveryPolicyTests(unittest.TestCase):
         sources = {"100": {"sku": "100"}}
         sheets = type("Sheets", (), {"update_job": staticmethod(lambda *a, **k: None)})()
         activity = {
-            "FB-A": {"count": 5, "last": None, "success_times": []},
+            "FB-A": {"count": 8, "last": None, "success_times": []},
             "IG-A": {"count": 1, "last": None, "success_times": []},
             "IG-B": {"count": 1, "last": None, "success_times": []},
             "YT-CD": {"count": 0, "last": None, "success_times": []},

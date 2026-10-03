@@ -10,8 +10,8 @@ from datetime import datetime, timedelta, timezone
 import re
 
 PRIMARY_PLATFORMS = ("instagram", "facebook", "youtube", "tiktok")
-MINIMUM_POSTS_24H = 5
-MINIMUM_GAP_HOURS = 2
+MINIMUM_POSTS_24H = 8
+MINIMUM_GAP_HOURS = 0.5
 LINE_QUOTA_EXHAUSTED = True
 _GVIZ_DATE_RE = re.compile(
     r"Date\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)"

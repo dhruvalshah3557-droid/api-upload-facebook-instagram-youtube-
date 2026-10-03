@@ -649,11 +649,11 @@ def test_all_primary_accounts_prioritize_24h_deficit():
 
     now = datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc)
     due = {"IG-SPAIN": {"count": 2, "last": now - timedelta(hours=6)}}
-    recent = {"IG-SPAIN": {"count": 2, "last": now - timedelta(hours=2) + timedelta(seconds=1)}}
-    complete = {"IG-SPAIN": {"count": 5, "last": now - timedelta(hours=6)}}
+    recent = {"IG-SPAIN": {"count": 2, "last": now - timedelta(minutes=30) + timedelta(seconds=1)}}
+    complete = {"IG-SPAIN": {"count": 8, "last": now - timedelta(hours=6)}}
     assert optimized_runner._minimum_delivery_priority("IG-SPAIN", due, now) == (0, 2)
     assert optimized_runner._minimum_delivery_priority("IG-SPAIN", recent, now) == (1, 2)
-    assert optimized_runner._minimum_delivery_priority("IG-SPAIN", complete, now) == (1, 5)
+    assert optimized_runner._minimum_delivery_priority("IG-SPAIN", complete, now) == (1, 8)
     assert optimized_runner._minimum_delivery_priority("FB-CD", {}, now) == (0, 0)
     print("OK test_all_primary_accounts_prioritize_24h_deficit")
 

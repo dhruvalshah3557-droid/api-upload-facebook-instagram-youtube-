@@ -51,7 +51,10 @@ _CURRENT_SHEETS = None
 _DNS_CACHE = {}
 _VIDEO_VALIDATION_CACHE = {}
 
-LOCAL_POSTING_SLOTS = ((2, 0), (8, 0), (12, 0), (16, 0), (20, 0))
+LOCAL_POSTING_SLOTS = (
+    (0, 0), (3, 0), (6, 0), (8, 0), (10, 0), (12, 0),
+    (14, 0), (16, 0), (18, 0), (20, 0), (22, 0),
+)
 SLOT_WINDOW_MINUTES = 45
 
 INSTAGRAM_RATE_LIMIT_MARKER = "meta_rate_limit"

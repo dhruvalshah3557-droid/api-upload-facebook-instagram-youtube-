@@ -1,1 +1,1 @@
-2026-10-03T20:10:00Z - prioritize model photo/video leftover slots and refresh production
+2026-10-03T20:20:00Z - raise upload volume: 20 jobs/run, 8 posts/day, 30-minute gap
