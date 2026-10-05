@@ -86,6 +86,8 @@ class MetaAccountSyncTests(unittest.TestCase):
         self.assertEqual(market_settings("Colour Diam Germany"), ("GERMANY", "de-DE", "Europe/Berlin"))
         self.assertEqual(market_settings("colourdiamchina"), ("CHINA", "zh-CN", "Asia/Shanghai"))
         self.assertEqual(market_settings("Colour Diam Singapore"), ("SINGAPORE", "en-SG", "Asia/Singapore"))
+        self.assertEqual(market_settings("Colour Diam HK"), ("HK", "zh-HK", "Asia/Hong_Kong"))
+        self.assertEqual(market_settings("colourdiamhk"), ("HK", "zh-HK", "Asia/Hong_Kong"))
         self.assertEqual(market_settings("Colour Diam Greece"), ("GREECE", "el-GR", "Europe/Athens"))
         self.assertEqual(market_settings("Colour Diam Lebanon"), ("LEBANON", "lb-LB", "Asia/Beirut"))
         self.assertEqual(market_settings("colourdiamlebanon"), ("LEBANON", "lb-LB", "Asia/Beirut"))

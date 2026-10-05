@@ -11,6 +11,10 @@ from sheets_reader import SheetsReader
 
 
 class RegionalLanguageTests(unittest.TestCase):
+    def test_hong_kong_short_name_uses_chinese(self):
+        self.assertEqual(get_lang("Colour Diam HK"), "zh")
+        self.assertEqual(get_lang("colourdiamhk"), "zh")
+
     def test_colour_diam_does_not_match_philippines_by_substring(self):
         self.assertEqual(get_lang("Colour Diam"), "en")
         self.assertEqual(get_lang("Colour Diam Philippines"), "tl")

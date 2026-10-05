@@ -29,6 +29,7 @@ _REGIONAL_AUDIO_QUERIES = (
     (("kuwait",), ("Kuwait trending", "Khaleeji", "Arabic luxury")),
     (("pakistan",), ("Pakistan trending", "Pakistani pop", "South Asian instrumental")),
     (("singapore",), ("Singapore trending", "Singapore pop", "Asian luxury instrumental")),
+    (("hong kong", "colour diam hk", "colourdiamhk"), ("Hong Kong trending", "Cantopop", "Hong Kong luxury instrumental")),
     (("israel",), ("Israel trending", "Hebrew pop", "Hebrew instrumental")),
     (("spain",), ("Spain trending", "Spanish pop", "Latin luxury")),
     (("italy",), ("Italy trending", "Italian pop", "Italian luxury instrumental")),

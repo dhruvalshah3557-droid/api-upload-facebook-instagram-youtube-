@@ -87,6 +87,18 @@ class InstagramMusicRotationTests(unittest.TestCase):
             "Vietnam trending", "Vietnamese pop", "Vietnam luxury instrumental",
         })
 
+    def test_hong_kong_short_name_uses_regional_searches(self):
+        uploader = InstagramUploader.__new__(InstagramUploader)
+        uploader.ig_user_id = "hong-kong-account"
+        uploader.access_token = "token"
+        uploader.page_name = "Colour Diam HK"
+        with mock.patch.dict("os.environ", {}, clear=True), \
+             mock.patch("instagram_uploader.requests.get", return_value=_Response(), create=True) as get:
+            uploader._trending_audio_configuration("job-1")
+        self.assertIn(get.call_args.kwargs["params"]["search_query"], {
+            "Hong Kong trending", "Cantopop", "Hong Kong luxury instrumental",
+        })
+
     def test_same_track_is_not_repeated_consecutively(self):
         uploader = InstagramUploader.__new__(InstagramUploader)
         uploader.ig_user_id = "123"

@@ -222,6 +222,8 @@ PAGE_LANG_MAP = {
     "color diam korean": "ko",
     "colour diam taiwan": "zh",
     "colour diam hong kong": "zh",
+    "colour diam hk": "zh",
+    "colourdiamhk": "zh",
     "colour diam israel": "he",
     "israel": "he",
     "hebrew": "he",
