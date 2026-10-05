@@ -188,6 +188,22 @@ class SheetsReader:
         self.accounts_ws = sheet.worksheet(Config.ACCOUNTS_SHEET)
         self.queue_ws = sheet.worksheet(Config.QUEUE_SHEET)
         self.log_ws = sheet.worksheet(Config.LOG_SHEET)
+        self.model_media_ws = None
+        self.mirror_log_ws = None
+        self.mirror_log_header_row = None
+        if Config.MODEL_MEDIA_SHEET_URL:
+            try:
+                model_sheet = self.client.open_by_url(Config.MODEL_MEDIA_SHEET_URL)
+                self.model_media_ws = model_sheet.worksheet(Config.MODEL_MEDIA_SOURCE_SHEET)
+                self.mirror_log_ws = model_sheet.worksheet(Config.LOG_SHEET)
+                self.mirror_log_header_row = self._detect_header_row(
+                    self.mirror_log_ws, self.LOG_COLS
+                )
+            except Exception as exc:
+                # The primary workbook must remain usable if the supplemental
+                # workbook is temporarily unavailable or has not yet been
+                # shared with the service account.
+                logger.warning("Model-media workbook unavailable: %s", exc)
         self.guide_ws = None
         self.guide_error = ""
         try:
@@ -644,7 +660,54 @@ class SheetsReader:
                 "lang_hashtags": lang_hashtags,
                 "integrity_error": "; ".join(integrity_errors),
             }
+        self._merge_model_media_rows(sources)
         return sources
+
+    def _merge_model_media_rows(self, sources):
+        """Merge supplemental model media by SKU without creating new products.
+
+        The main Source Import remains authoritative for product copy, account
+        scheduling, and duplicate prevention. The dedicated workbook can add
+        model photos/videos only, so a copied queue can never publish twice.
+        """
+        if getattr(self, "model_media_ws", None) is None:
+            return
+        values = self.model_media_ws.get_all_values()
+        if not values:
+            return
+        headers = [str(value or "").strip().casefold() for value in values[0]]
+        positions = {header: idx for idx, header in enumerate(headers) if header}
+        sku_col = positions.get("sku")
+        if sku_col is None:
+            logger.warning("Model-media source has no sku header; ignoring it")
+            return
+        photo_cols = [
+            positions[name] for name in (
+                "model image link 1", "model image link 2", "model image link 3",
+                "multiple model photo link",
+            ) if name in positions
+        ]
+        video_cols = [
+            positions[name] for name in (
+                "model video link 1", "model video link 2", "model video link 3",
+                "multiple model video link",
+            ) if name in positions
+        ]
+        for row in values[1:]:
+            sku = self._normalize_sku(row[sku_col] if sku_col < len(row) else "")
+            source = sources.get(sku)
+            if not source:
+                continue
+            for col in photo_cols:
+                value = row[col] if col < len(row) else ""
+                for url in self._split_urls(value):
+                    if url not in source["model_images"]:
+                        source["model_images"].append(url)
+            for col in video_cols:
+                value = row[col] if col < len(row) else ""
+                for url in self._split_urls(value):
+                    if url not in source["model_videos"]:
+                        source["model_videos"].append(url)
 
     def get_source_row(self, sku):
         return self.get_source_rows().get(self._normalize_sku(sku))
@@ -750,6 +813,8 @@ class SheetsReader:
     def write_log(self, entry):
         row = [entry.get(col, "") for col in self.LOG_COLS]
         self.log_ws.append_row(row, value_input_option="USER_ENTERED")
+        if getattr(self, "mirror_log_ws", None) is not None:
+            self.mirror_log_ws.append_row(row, value_input_option="USER_ENTERED")
 
     @_retry_gsheet
     @_throttle_write
@@ -759,6 +824,10 @@ class SheetsReader:
         rows = [[entry.get(col, "") for col in self.LOG_COLS] for entry in entries]
         for start in range(0, len(rows), 200):
             self.log_ws.append_rows(rows[start:start + 200], value_input_option="USER_ENTERED")
+            if getattr(self, "mirror_log_ws", None) is not None:
+                self.mirror_log_ws.append_rows(
+                    rows[start:start + 200], value_input_option="USER_ENTERED"
+                )
 
     @staticmethod
     def _normalize_api_error_code(error_message="", api_error_code=""):

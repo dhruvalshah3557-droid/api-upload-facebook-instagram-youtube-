@@ -3,6 +3,8 @@ entrypoint: python main.py --loop
 
 env_variables:
   GOOGLE_SHEET_URL: "https://docs.google.com/spreadsheets/d/1jjC4oaWsyqLzG6vT5EwJkVAgJCXGpz_7fWr6wb7OU3o/edit"
+  MODEL_MEDIA_SHEET_URL: "https://docs.google.com/spreadsheets/d/15sSh9wnObay1UeZiUQdUoWe10C6ZBrg2VE40jaRsUZM/edit"
+  MODEL_MEDIA_SOURCE_SHEET: "Sheet1"
   SOURCE_IMPORT_SHEET: "Source Import"
   ACCOUNTS_SHEET: "Accounts"
   QUEUE_SHEET: "Publishing Queue"

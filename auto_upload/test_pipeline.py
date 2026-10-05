@@ -775,6 +775,37 @@ def test_source_import_duplicate_headers_do_not_abort_uploads():
     print("OK test_source_import_duplicate_headers_do_not_abort_uploads")
 
 
+def test_supplemental_model_media_merges_by_sku_without_new_products():
+    from sheets_reader import SheetsReader
+
+    reader = SheetsReader.__new__(SheetsReader)
+    reader.model_media_ws = types.SimpleNamespace(get_all_values=lambda: [
+        ["sku", "multiple model photo link", "multiple model video link"],
+        [
+            "298",
+            "https://cdn.example/298/model-1.jpg\nhttps://cdn.example/298/model-2.jpg",
+            "https://cdn.example/298/model.mp4",
+        ],
+        ["not-in-primary", "https://cdn.example/other.jpg", ""],
+    ])
+    sources = {
+        "298": {
+            "model_images": ["https://cdn.example/298/model-1.jpg"],
+            "model_videos": [],
+        }
+    }
+
+    reader._merge_model_media_rows(sources)
+
+    assert sources["298"]["model_images"] == [
+        "https://cdn.example/298/model-1.jpg",
+        "https://cdn.example/298/model-2.jpg",
+    ]
+    assert sources["298"]["model_videos"] == ["https://cdn.example/298/model.mp4"]
+    assert "not-in-primary" not in sources
+    print("OK test_supplemental_model_media_merges_by_sku_without_new_products")
+
+
 def test_source_import_builds_product_name_from_details():
     from sheets_reader import SheetsReader
 
@@ -987,6 +1018,7 @@ if __name__ == "__main__":
     test_stable_job_id_blocks_duplicate_when_media_changed()
     test_account_local_posting_slots_are_timezone_aware_and_idempotent()
     test_source_import_duplicate_headers_do_not_abort_uploads()
+    test_supplemental_model_media_merges_by_sku_without_new_products()
     test_source_import_builds_product_name_from_details()
     test_compound_sku_product_links_are_not_false_mismatches()
     test_glued_model_photo_and_video_links_use_model_photo_video_origin()
@@ -994,4 +1026,3 @@ if __name__ == "__main__":
     test_youtube_jobs_are_queued_when_only_product_images_mismatch()
     test_dns_and_integrity_preflight_failures_are_retried()
     print("All pipeline tests passed.")
-

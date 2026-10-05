@@ -918,19 +918,30 @@ def insert_logs_newest_first(sheets, entries):
         [entry.get(col, "") for col in sheets.LOG_COLS]
         for entry in reversed(entries)
     ]
-    for attempt, delay in enumerate((0, 15, 30, 60), start=1):
-        if delay:
-            time.sleep(delay)
-        try:
-            sheets.log_ws.insert_rows(
-                rows, row=sheets.log_header_row + 1, value_input_option="USER_ENTERED"
-            )
-            return
-        except Exception as exc:
-            text = str(exc).lower()
-            if ("429" not in text and "quota" not in text) or attempt == 4:
-                raise
-            logger.warning(f"Publishing Log insert hit quota; retrying: {exc}")
+    targets = [(sheets.log_ws, sheets.log_header_row, "primary")]
+    if getattr(sheets, "mirror_log_ws", None) is not None:
+        targets.append((
+            sheets.mirror_log_ws,
+            sheets.mirror_log_header_row,
+            "model-media mirror",
+        ))
+    for worksheet, header_row, label in targets:
+        for attempt, delay in enumerate((0, 15, 30, 60), start=1):
+            if delay:
+                time.sleep(delay)
+            try:
+                worksheet.insert_rows(
+                    rows, row=header_row + 1, value_input_option="USER_ENTERED"
+                )
+                break
+            except Exception as exc:
+                text = str(exc).lower()
+                if ("429" not in text and "quota" not in text) or attempt == 4:
+                    if label == "primary":
+                        raise
+                    logger.error("Could not mirror Publishing Log: %s", exc)
+                    break
+                logger.warning("%s Publishing Log insert hit quota; retrying: %s", label, exc)
 
 
 def _round_robin_jobs(jobs, limit):

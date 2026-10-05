@@ -9,6 +9,10 @@ NEW_WORKBOOK_URL = (
     "https://docs.google.com/spreadsheets/d/"
     "1jjC4oaWsyqLzG6vT5EwJkVAgJCXGpz_7fWr6wb7OU3o/edit"
 )
+MODEL_MEDIA_WORKBOOK_URL = (
+    "https://docs.google.com/spreadsheets/d/"
+    "15sSh9wnObay1UeZiUQdUoWe10C6ZBrg2VE40jaRsUZM/edit"
+)
 
 
 def _env(key, default):
@@ -21,6 +25,8 @@ class Config:
     GOOGLE_SHEET_CREDENTIALS = _env("GOOGLE_SHEET_CREDENTIALS", "credentials/service_account.json")
     GOOGLE_SHEET_URL = _env("GOOGLE_SHEET_URL", NEW_WORKBOOK_URL)
     GOOGLE_SHEET_NAME = _env("GOOGLE_SHEET_NAME", "")
+    MODEL_MEDIA_SHEET_URL = _env("MODEL_MEDIA_SHEET_URL", MODEL_MEDIA_WORKBOOK_URL)
+    MODEL_MEDIA_SOURCE_SHEET = _env("MODEL_MEDIA_SOURCE_SHEET", "Sheet1")
 
     SOURCE_IMPORT_SHEET = _env("SOURCE_IMPORT_SHEET", "Source Import")
     ACCOUNTS_SHEET = _env("ACCOUNTS_SHEET", "Accounts")
