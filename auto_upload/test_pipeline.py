@@ -371,6 +371,30 @@ def test_generation_cap_is_fair_across_accounts():
     print("OK test_generation_cap_is_fair_across_accounts")
 
 
+def test_generation_cap_fills_model_media_before_product_jobs():
+    accounts = [
+        _account("FB-A", "facebook"),
+        _account("FB-B", "facebook"),
+    ]
+    source_a = _source("100")
+    source_b = _source("200")
+    source_b["model_images"] = ["http://example.com/200_model.jpg"]
+    fake = FakeSheets({"100": source_a, "200": source_b}, accounts, [])
+    with patch.object(Config, "MAX_GENERATE_JOBS", 3), patch("main.time.time", return_value=0):
+        main.run_generate(fake)
+    selections = [
+        (job["account_id"], job["media_selection"])
+        for job in fake.appended_jobs
+    ]
+    assert len(selections) == 3, selections
+    assert all(
+        sel.startswith("model_") for _, sel in selections
+    ), selections
+    assert "carousel" not in {sel for _, sel in selections}
+    assert "product_video" not in {sel for _, sel in selections}
+    print("OK test_generation_cap_fills_model_media_before_product_jobs")
+
+
 def test_one_failure_does_not_stop_others():
     accounts = [_account("FB-A"), _account("FB-B")]
     sources = {"100": _source("100")}

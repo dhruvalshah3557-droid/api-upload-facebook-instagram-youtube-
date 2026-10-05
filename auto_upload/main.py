@@ -18,7 +18,7 @@ from instagram_uploader import (
     InstagramRateLimitError,
     InstagramUploader,
 )
-from job_generator import generate_jobs, model_media_priority
+from job_generator import generate_jobs, is_model_media, model_media_priority
 from line_uploader import LineUploader
 from linkedin_uploader import LinkedInUploader
 from media_prep import media_kind, validate_media_url
@@ -1174,15 +1174,30 @@ def run_generate(sheets=None):
         )
 
     new_jobs = []
-    while account_ids and len(new_jobs) < Config.MAX_GENERATE_JOBS:
-        next_pass = []
-        for account_id in account_ids:
-            bucket = missing_by_account[account_id]
-            if bucket and len(new_jobs) < Config.MAX_GENERATE_JOBS:
-                new_jobs.append(bucket.pop(0))
-            if bucket:
-                next_pass.append(account_id)
-        account_ids = next_pass
+
+    def _fill_missing(want_model):
+        ids = list(account_ids)
+        while ids and len(new_jobs) < Config.MAX_GENERATE_JOBS:
+            next_pass = []
+            for account_id in ids:
+                bucket = missing_by_account[account_id]
+                idx = next(
+                    (
+                        i for i, job in enumerate(bucket)
+                        if is_model_media(job) is want_model
+                    ),
+                    None,
+                )
+                if idx is not None and len(new_jobs) < Config.MAX_GENERATE_JOBS:
+                    new_jobs.append(bucket.pop(idx))
+                if any(is_model_media(job) is want_model for job in bucket):
+                    next_pass.append(account_id)
+            ids = next_pass
+
+    # Branding first: fill the generation cap with model photo/video only.
+    # Product Reels and carousels wait until no model jobs remain.
+    _fill_missing(True)
+    _fill_missing(False)
 
     remaining = sum(len(bucket) for bucket in missing_by_account.values())
     if remaining:
