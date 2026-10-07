@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 import requests
 
@@ -57,13 +57,54 @@ _CC0_SOURCE = (
     "https://raw.githubusercontent.com/effacestudios/"
     "Royalty-Free-Music-Pack/2ce8458293fe4eeb91414a19d6d7ecd1562a5949"
 )
-BUNDLED_CC0_MUSIC_URLS = (
-    f"{_CC0_SOURCE}/Cinemato.mp3",
-    f"{_CC0_SOURCE}/Newness.mp3",
-    f"{_CC0_SOURCE}/Mysterious.mp3",
-    f"{_CC0_SOURCE}/Planning.mp3",
-    f"{_CC0_SOURCE}/Illusionist.mp3",
-    f"{_CC0_SOURCE}/slow%20down.mp3",
+# Every file at this pinned commit is covered by the repository's CC0-1.0
+# licence.  Keep the commit immutable and the explicit allow-list auditable:
+# never discover or download arbitrary music at runtime.
+_BUNDLED_CC0_TRACK_NAMES = (
+    "Beeper.mp3",
+    "Bubbles.mp3",
+    "Cinemato.mp3",
+    "Dubstepper.mp3",
+    "Fury.mp3",
+    "Gamer Guy.mp3",
+    "Happy Life.mp3",
+    "Illusionist.mp3",
+    "My Inventions.mp3",
+    "Mysterious.mp3",
+    "Newness.mp3",
+    "Outsider.mp3",
+    "Party Time.mp3",
+    "Planning.mp3",
+    "Science Fiction.mp3",
+    "Sports Spirit.mp3",
+    "Starter.mp3",
+    "Sudden Tour.mp3",
+    "THE CLOWN.mp3",
+    "The Champion.mp3",
+    "The Mystery.mp3",
+    "The Templer.mp3",
+    "Unexpected.mp3",
+    "Unknown.mp3",
+    "Unpredicted.mp3",
+    "Worship Me.mp3",
+    "Yo Vender Music.mp3",
+    "alarming.mp3",
+    "biography.mp3",
+    "breaker.mp3",
+    "commercial.mp3",
+    "lunatic.mp3",
+    "my snares.mp3",
+    "our show.mp3",
+    "player.mp3",
+    "recipe.mp3",
+    "reminer.mp3",
+    "respectation.mp3",
+    "right after.mp3",
+    "slow down.mp3",
+    "technologist.mp3",
+)
+BUNDLED_CC0_MUSIC_URLS = tuple(
+    f"{_CC0_SOURCE}/{quote(name)}" for name in _BUNDLED_CC0_TRACK_NAMES
 )
 
 
