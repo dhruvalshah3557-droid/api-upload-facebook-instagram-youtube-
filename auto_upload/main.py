@@ -1179,16 +1179,15 @@ def run_generate(sheets=None):
         account_ids.sort(
             key=lambda account_id: (
                 existing_counts.get(account_id, 0) > 0,
-                existing_counts.get(account_id, 0),
                 rotation_rank[account_id],
             )
         )
 
     new_jobs = []
 
-    def _fill_missing(want_model):
+    def _fill_missing(want_model, cap):
         ids = list(account_ids)
-        while ids and len(new_jobs) < Config.MAX_GENERATE_JOBS:
+        while ids and len(new_jobs) < cap:
             next_pass = []
             for account_id in ids:
                 bucket = missing_by_account[account_id]
@@ -1199,16 +1198,20 @@ def run_generate(sheets=None):
                     ),
                     None,
                 )
-                if idx is not None and len(new_jobs) < Config.MAX_GENERATE_JOBS:
+                if idx is not None and len(new_jobs) < cap:
                     new_jobs.append(bucket.pop(idx))
                 if any(is_model_media(job) is want_model for job in bucket):
                     next_pass.append(account_id)
             ids = next_pass
 
-    # Branding first: fill the generation cap with model photo/video only.
-    # Product Reels and carousels wait until no model jobs remain.
-    _fill_missing(True)
-    _fill_missing(False)
+    # Guarantee up to one healthy product job per account before filling the
+    # remaining generation capacity with model media. A large/dead model-video
+    # backlog must not prevent a destination from receiving any publishable
+    # work. Upload selection still prioritizes healthy model media first.
+    product_cap = min(Config.MAX_GENERATE_JOBS, max(1, len(account_ids)))
+    _fill_missing(False, product_cap)
+    _fill_missing(True, Config.MAX_GENERATE_JOBS)
+    _fill_missing(False, Config.MAX_GENERATE_JOBS)
 
     remaining = sum(len(bucket) for bucket in missing_by_account.values())
     if remaining:
