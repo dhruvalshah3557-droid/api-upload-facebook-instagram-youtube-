@@ -8,6 +8,10 @@ on:
       - ".github/workflows/auto-upload-production.yml"
       - ".github/workflows/watchdog.yml"
       - ".github/workflows/pipeline-tests.yml"
+  pull_request:
+    paths:
+      - "auto_upload/**"
+      - ".github/workflows/pipeline-tests.yml"
   workflow_dispatch:
 
 permissions:
