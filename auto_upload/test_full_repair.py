@@ -1094,6 +1094,51 @@ class FullRepairTests(unittest.TestCase):
             urls,
         )
 
+    def test_pre_publish_timeout_is_not_ambiguous_delivery(self):
+        exc = Exception(
+            "Media validation failed (https://colourdiam.com/Product/Jewellery/461/white45/video.mp4): ffprobe timed out"
+        )
+        self.assertTrue(optimized_runner._is_pre_publish_error(exc))
+        self.assertFalse(optimized_runner._is_ambiguous_delivery_error(exc))
+        self.assertFalse(
+            optimized_runner._is_ambiguous_delivery_error(
+                Exception("Connection broken: IncompleteRead(16384 bytes read)")
+            )
+        )
+        self.assertTrue(
+            optimized_runner._is_ambiguous_delivery_error(
+                optimized_runner.main.DeliveryUncertainError("pending")
+            )
+        )
+
+    def test_pre_publish_holds_are_revived_for_retry(self):
+        updates = []
+        records = [{
+            "status": "hold",
+            "account_id": "FB-FRANCE",
+            "error_message": "Media validation failed (https://colourdiam.com/Product/Jewellery/461/white45/video.mp4): ffprobe timed out",
+            "notes": "IDEMPOTENCY_LOCK:1 | DELIVERY_UNCERTAIN:ffprobe timed out",
+        }]
+        sheets = types.SimpleNamespace(
+            queue_header_row=1,
+            queue_ws=types.SimpleNamespace(get_all_records=lambda head=1: records),
+            update_job=lambda job, payload: updates.append((job, payload)),
+        )
+        accounts = {"FB-FRANCE": {"enabled": True, "platform": "facebook"}}
+        revived = optimized_runner._revive_pre_publish_holds(sheets, accounts)
+        self.assertEqual(revived, 1)
+        self.assertEqual(updates[0][1]["status"], "pending")
+        self.assertIn("pre-publish", updates[0][1]["notes"])
+
+    def test_transient_ffprobe_timeout_does_not_park_video(self):
+        optimized_runner._VIDEO_VALIDATION_CACHE.clear()
+        with patch("optimized_runner.main.validate_media_url", return_value="ffprobe timed out"):
+            self.assertEqual(
+                optimized_runner._video_validation_reason("https://media.example/video.mp4"),
+                "",
+            )
+        self.assertNotIn("https://media.example/video.mp4", optimized_runner._VIDEO_VALIDATION_CACHE)
+
     def test_unfetchable_media_jobs_are_revived_for_byte_upload(self):
         updates = []
         records = [{

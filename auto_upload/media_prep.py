@@ -7,10 +7,18 @@ import shutil
 import subprocess
 import tempfile
 import time
+from http.client import IncompleteRead
 from pathlib import Path
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 import requests
+
+try:
+    from requests.exceptions import ChunkedEncodingError, ConnectionError, Timeout
+except ImportError:
+    ChunkedEncodingError = getattr(requests, "ChunkedEncodingError", Exception)
+    ConnectionError = getattr(requests, "ConnectionError", Exception)
+    Timeout = getattr(requests, "Timeout", Exception)
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +28,13 @@ DOWNLOAD_HEADERS = {
     "Cache-Control": "no-cache, no-store, max-age=0",
     "Pragma": "no-cache",
 }
+_DOWNLOAD_RETRIES = 3
+_TRANSIENT_DOWNLOAD_ERRORS = (
+    ChunkedEncodingError,
+    ConnectionError,
+    Timeout,
+    IncompleteRead,
+)
 
 _VIDEO_EXTS = (".mp4", ".mov", ".avi", ".mkv", ".webm")
 
@@ -125,10 +140,41 @@ def _fresh_media_url(media_url, token=None):
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
 
+def _request_get(url, headers=None, timeout=180, stream=False):
+    """GET with retries for truncated Colour Diam CDN responses."""
+    last_error = None
+    for attempt in range(1, _DOWNLOAD_RETRIES + 1):
+        try:
+            resp = requests.get(
+                url,
+                timeout=timeout,
+                headers=headers or DOWNLOAD_HEADERS,
+                stream=stream,
+            )
+            resp.raise_for_status()
+            if stream:
+                return resp
+            content = resp.content
+            encoding = (resp.headers.get("Content-Encoding") or "").lower()
+            expected = resp.headers.get("Content-Length")
+            if expected and not encoding and len(content) < int(expected):
+                raise IncompleteRead(content, int(expected) - len(content))
+            return resp
+        except _TRANSIENT_DOWNLOAD_ERRORS as exc:
+            last_error = exc
+            logger.warning(
+                "Media download attempt %s/%s failed for %s: %s",
+                attempt, _DOWNLOAD_RETRIES, url, exc,
+            )
+            if attempt == _DOWNLOAD_RETRIES:
+                break
+            time.sleep(min(8, 2 * attempt))
+    raise last_error
+
+
 def _download_bytes(media_url):
     """Download fresh original file bytes, bypassing stale URL/CDN cache entries."""
-    resp = requests.get(_fresh_media_url(media_url), timeout=180, headers=DOWNLOAD_HEADERS)
-    resp.raise_for_status()
+    resp = _request_get(_fresh_media_url(media_url), timeout=180, headers=DOWNLOAD_HEADERS)
     name = media_url.split("?")[0].rsplit("/", 1)[-1] or "media"
     content_type = resp.headers.get("Content-Type", "application/octet-stream")
     return name, resp.content, content_type
@@ -187,8 +233,7 @@ def audio_state(video_path):
 
 
 def _download_music_url(url, out_path):
-    resp = requests.get(url, timeout=180, headers={"User-Agent": USER_AGENT})
-    resp.raise_for_status()
+    resp = _request_get(url, timeout=180, headers={"User-Agent": USER_AGENT})
     Path(out_path).write_bytes(resp.content)
     return out_path
 
@@ -472,8 +517,7 @@ def prepare_video(media_url, fill_9x16=False, selection_key="", platform=""):
     temp_paths = [tmp_path]
     try:
         download_url = _fresh_media_url(media_url)
-        resp = requests.get(download_url, timeout=180, headers=DOWNLOAD_HEADERS)
-        resp.raise_for_status()
+        resp = _request_get(download_url, timeout=180, headers=DOWNLOAD_HEADERS)
         with open(tmp_path, "wb") as f:
             f.write(resp.content)
 
@@ -561,24 +605,49 @@ def _matches_magic(header, kind):
 
 
 def _probe_video(media_url):
+    """Probe a local download of the video so CDN stalls cannot freeze ffprobe."""
     ffprobe = shutil.which("ffprobe")
     if not ffprobe:
         return ""
+    suffix = Path(str(media_url).split("?")[0]).suffix or ".mp4"
+    fd, tmp_path = tempfile.mkstemp(suffix=suffix)
+    os.close(fd)
     try:
-        out = subprocess.run(
-            [ffprobe, "-v", "error", "-show_entries", "format=format_name,duration", "-of", "csv=p=0", media_url],
-            check=False, capture_output=True, text=True, timeout=300,
-        )
-        if out.returncode != 0:
-            detail = (out.stderr or "").strip().splitlines()
-            return (detail[-1] if detail else "ffprobe rejected the file")[:300]
-        if "N/A" in out.stdout or not out.stdout.strip():
-            return "ffprobe could not read a valid stream"
+        resp = _request_get(_fresh_media_url(media_url), timeout=180, headers=DOWNLOAD_HEADERS)
+        with open(tmp_path, "wb") as handle:
+            handle.write(resp.content)
+        last_error = ""
+        for attempt in range(1, 3):
+            try:
+                out = subprocess.run(
+                    [
+                        ffprobe, "-v", "error",
+                        "-show_entries", "format=format_name,duration",
+                        "-of", "csv=p=0", tmp_path,
+                    ],
+                    check=False, capture_output=True, text=True, timeout=60,
+                )
+            except subprocess.TimeoutExpired:
+                last_error = "ffprobe timed out"
+                logger.warning("ffprobe attempt %s timed out for %s", attempt, media_url)
+                continue
+            if out.returncode != 0:
+                detail = (out.stderr or "").strip().splitlines()
+                return (detail[-1] if detail else "ffprobe rejected the file")[:300]
+            if "N/A" in out.stdout or not out.stdout.strip():
+                return "ffprobe could not read a valid stream"
+            return ""
+        return last_error
+    except _TRANSIENT_DOWNLOAD_ERRORS as exc:
+        logger.warning("Video probe download failed for %s: %s", media_url, exc)
         return ""
-    except subprocess.TimeoutExpired:
-        return "ffprobe timed out"
     except Exception as exc:
         return f"ffprobe error: {exc}"
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
 
 
 def validate_media_url(media_url, kind=None, ffprobe=True):
@@ -589,11 +658,13 @@ def validate_media_url(media_url, kind=None, ffprobe=True):
     fresh_url = _fresh_media_url(media_url)
     headers = dict(DOWNLOAD_HEADERS)
     headers["Range"] = "bytes=0-65535"
-    resp = requests.get(fresh_url, timeout=180, headers=headers)
     try:
-        resp.raise_for_status()
+        resp = _request_get(fresh_url, timeout=180, headers=headers)
+    except _TRANSIENT_DOWNLOAD_ERRORS as exc:
+        logger.warning("Media validation download failed for %s: %s", media_url, exc)
+        return ""
     except Exception:
-        return f"HTTP {resp.status_code} for {media_url}"
+        return f"HTTP error for {media_url}"
 
     content_type = (resp.headers.get("Content-Type", "") or "").lower().split(";")[0]
     expected = _VIDEO_TYPES if kind == "video" else _IMAGE_TYPES

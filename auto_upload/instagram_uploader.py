@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 import requests
-from media_prep import audio_state, prepare_video, video_layout_from_bytes
+from media_prep import _download_bytes, audio_state, prepare_video, video_layout_from_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -129,11 +129,6 @@ _UNFETCHABLE_MEDIA_MARKERS = (
     "the parameter image_url",
     "the parameter video_url",
 )
-_IMAGE_DOWNLOAD_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-}
-
-
 def _is_unfetchable_media_error(error, result=None):
     blob = " ".join((
         str((error or {}).get("message", "") or ""),
@@ -323,17 +318,14 @@ class InstagramUploader:
     @staticmethod
     def _download_image_bytes(media_url):
         """Download original image bytes Meta's crawler could not fetch."""
-        resp = requests.get(
-            media_url, timeout=180, headers=_IMAGE_DOWNLOAD_HEADERS
-        )
-        resp.raise_for_status()
-        content_type = (resp.headers.get("Content-Type") or "").lower().split(";", 1)[0]
-        content = resp.content or b""
+        name, content, content_type = _download_bytes(media_url)
+        content_type = (content_type or "").lower().split(";", 1)[0]
+        content = content or b""
         if content_type.startswith("text/") or "html" in content_type:
             raise Exception(f"Downloaded media is not an image ({content_type})")
         if not any(content.startswith(magic) for magic in _IMAGE_MAGIC):
             raise Exception("Downloaded bytes are not a valid image")
-        name = media_url.split("?")[0].rsplit("/", 1)[-1] or "image.jpg"
+        name = name or media_url.split("?")[0].rsplit("/", 1)[-1] or "image.jpg"
         if content_type not in ("image/jpeg", "image/png", "image/gif", "image/webp"):
             if content.startswith(b"\xff\xd8\xff"):
                 content_type = "image/jpeg"

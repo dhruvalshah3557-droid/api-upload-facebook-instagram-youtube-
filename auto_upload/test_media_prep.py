@@ -23,6 +23,22 @@ class MusicRotationTests(unittest.TestCase):
         self.assertEqual(query["download"], "1")
         self.assertEqual(query["_cd_refresh"], "fixed")
 
+    def test_request_get_retries_truncated_downloads(self):
+        truncated = mock.Mock(
+            content=b"partial",
+            headers={"Content-Type": "video/mp4", "Content-Length": "20"},
+        )
+        truncated.raise_for_status.return_value = None
+        complete = mock.Mock(
+            content=b"complete-video-bytes",
+            headers={"Content-Type": "video/mp4", "Content-Length": "20"},
+        )
+        complete.raise_for_status.return_value = None
+        with mock.patch("media_prep.requests.get", side_effect=[truncated, complete]), \
+             mock.patch("media_prep.time.sleep"):
+            resp = media_prep._request_get("https://media.example/video.mp4")
+        self.assertEqual(resp.content, b"complete-video-bytes")
+
     def test_prepare_video_bypasses_cache_and_audits_fresh_source(self):
         response = mock.Mock(
             content=b"updated-video-with-audio",

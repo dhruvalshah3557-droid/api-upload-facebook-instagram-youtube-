@@ -234,6 +234,33 @@ _UNFETCHABLE_MEDIA_RETRY_MARKERS = (
     "doesn't meet our requirements",
     "instagram carousel requires at least two child containers",
 )
+_PRE_PUBLISH_ERROR_MARKERS = (
+    "media validation failed",
+    "ffprobe timed out",
+    "ffprobe error",
+    "ffprobe could not",
+    "incompleteread",
+    "connection broken",
+    "chunkedencodingerror",
+    "all resolved media urls",
+    "no media resolved",
+    "downloaded media is not",
+    "downloaded bytes are not",
+)
+_TRANSIENT_PROBE_MARKERS = (
+    "ffprobe timed out",
+    "ffprobe error",
+    "timed out",
+    "timeout",
+    "incompleteread",
+    "connection broken",
+)
+_PRE_PUBLISH_HOLD_RETRY_MARKERS = (
+    "media validation failed",
+    "ffprobe timed out",
+    "incompleteread",
+    "connection broken",
+)
 _SKIPPED_MODEL_RETRY_MARKERS = (
     "duplicate product already uploaded to this account in another media format",
 )
@@ -443,6 +470,10 @@ def _video_validation_reason(url, force=False):
         reason = main.validate_media_url(url, kind="video", ffprobe=True) or ""
     except Exception as exc:
         main.logger.warning("Video preflight was inconclusive for %s: %s", url, exc)
+        return ""
+    lowered = reason.lower()
+    if any(marker in lowered for marker in _TRANSIENT_PROBE_MARKERS):
+        main.logger.warning("Video preflight was transient for %s: %s", url, reason)
         return ""
     _VIDEO_VALIDATION_CACHE[url] = reason
     return reason
@@ -781,6 +812,42 @@ def _revive_caption_blockers(sheets, accounts):
         revived += 1
     if revived:
         main.logger.info("Revived %s regional-caption blocked job(s)", revived)
+    return revived
+
+
+def _revive_pre_publish_holds(sheets, accounts):
+    """Release hold rows parked on media-prep failures that never reached a platform."""
+    enabled = {
+        aid for aid, a in accounts.items()
+        if a.get("enabled")
+    }
+    if not enabled:
+        return 0
+    records = sheets.queue_ws.get_all_records(head=sheets.queue_header_row)
+    revived = 0
+    for idx, rec in enumerate(records, start=sheets.queue_header_row + 1):
+        if revived >= REVIVE_LIMIT:
+            break
+        status = str(rec.get("status", "")).strip().lower()
+        if status != "hold":
+            continue
+        account_id = str(rec.get("account_id", "") or "").strip()
+        if account_id not in enabled:
+            continue
+        blob = " ".join((
+            str(rec.get("error_message", "") or ""),
+            str(rec.get("notes", "") or ""),
+        )).lower()
+        if not any(marker in blob for marker in _PRE_PUBLISH_HOLD_RETRY_MARKERS):
+            continue
+        sheets.update_job({"row": idx}, {
+            "status": "pending",
+            "error_message": "",
+            "notes": "Auto-revived after pre-publish media timeout/download failure",
+        })
+        revived += 1
+    if revived:
+        main.logger.info("Revived %s pre-publish hold job(s)", revived)
     return revived
 
 
@@ -1409,9 +1476,19 @@ def _fill_model_media_leftover(
     return leftover, housekeeping
 
 
+def _is_pre_publish_error(exc):
+    """True when the failure happened before any platform publish request."""
+    message = str(exc).lower()
+    return any(marker in message for marker in _PRE_PUBLISH_ERROR_MARKERS)
+
+
 def _is_ambiguous_delivery_error(exc):
     """True when the platform may have accepted the post before the error."""
-    if isinstance(exc, (main.DeliveryUncertainError, requests.Timeout, requests.ConnectionError)):
+    if _is_pre_publish_error(exc):
+        return False
+    if isinstance(exc, main.DeliveryUncertainError):
+        return True
+    if isinstance(exc, (requests.Timeout, requests.ConnectionError)):
         return True
     message = str(exc).lower()
     markers = (
@@ -1485,6 +1562,7 @@ def process_optimized():
     _revive_stale_meta_failures(sheets, accounts)
     _revive_caption_blockers(sheets, accounts)
     _revive_unfetchable_media_jobs(sheets, accounts)
+    _revive_pre_publish_holds(sheets, accounts)
     _revive_skipped_model_jobs(sheets, accounts)
     jobs = sheets.get_pending_jobs()
     if not jobs:

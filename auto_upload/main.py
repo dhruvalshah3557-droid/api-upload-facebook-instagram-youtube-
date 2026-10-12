@@ -65,9 +65,22 @@ class DeliveryUncertainError(Exception):
     """The platform may have accepted a post; automatic retry is unsafe."""
 
 
+_TRANSIENT_MEDIA_MARKERS = (
+    "timed out",
+    "timeout",
+    "incompleteread",
+    "connection broken",
+    "chunkedencodingerror",
+    "connection reset",
+    "connection aborted",
+)
+
+
 def _is_broken_media_error(message):
     """Dead/broken media (404, un-fetchable URI) will not heal on retry."""
     lowered = message.lower()
+    if any(marker in lowered for marker in _TRANSIENT_MEDIA_MARKERS):
+        return False
     return any(marker in lowered for marker in _BROKEN_MEDIA_MARKERS)
 
 

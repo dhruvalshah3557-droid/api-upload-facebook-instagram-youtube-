@@ -992,6 +992,15 @@ def test_dns_and_integrity_preflight_failures_are_retried():
     print("OK test_dns_and_integrity_preflight_failures_are_retried")
 
 
+def test_ffprobe_timeout_is_not_broken_media():
+    timeout = "Media validation failed (https://colourdiam.com/x.mp4): ffprobe timed out"
+    truncated = "('Connection broken: IncompleteRead(16384 bytes read)', IncompleteRead(16384 bytes read))"
+    assert not main._is_broken_media_error(timeout)
+    assert not main._is_broken_media_error(truncated)
+    assert main._is_broken_media_error("Media validation failed: 404 not found")
+    print("OK test_ffprobe_timeout_is_not_broken_media")
+
+
 if __name__ == "__main__":
     test_generate_queues_model_media_before_product_media()
     test_round_robin_prefers_model_media_within_platform()
@@ -1021,4 +1030,5 @@ if __name__ == "__main__":
     test_dead_cdn_hosts_are_rewritten_onto_live_origin()
     test_youtube_jobs_are_queued_when_only_product_images_mismatch()
     test_dns_and_integrity_preflight_failures_are_retried()
+    test_ffprobe_timeout_is_not_broken_media()
     print("All pipeline tests passed.")
