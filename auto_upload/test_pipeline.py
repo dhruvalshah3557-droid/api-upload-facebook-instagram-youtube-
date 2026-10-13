@@ -801,6 +801,31 @@ def test_supplemental_model_media_merges_by_sku_without_new_products():
     print("OK test_supplemental_model_media_merges_by_sku_without_new_products")
 
 
+def test_model_media_ftp_schema_merges_by_stock_id():
+    from sheets_reader import SheetsReader
+
+    reader = SheetsReader.__new__(SheetsReader)
+    reader.model_media_ws = types.SimpleNamespace(get_all_values=lambda: [
+        ["Stock ID", "Model Photo Links", "Model Video Links", "FTP Folder"],
+        [
+            "416",
+            "https://colourdiam.com/Product/Model%20Photo%20Video/416/center.jpeg\n"
+            "https://colourdiam.com/Product/Model%20Photo%20Video/416/2.jpeg",
+            "https://colourdiam.com/Product/Model%20Photo%20Video/416/video.mp4",
+            "416",
+        ],
+    ])
+    sources = {"416": {"model_images": [], "model_videos": []}}
+
+    reader._merge_model_media_rows(sources)
+
+    assert len(sources["416"]["model_images"]) == 2
+    assert sources["416"]["model_videos"] == [
+        "https://colourdiam.com/Product/Model%20Photo%20Video/416/video.mp4"
+    ]
+    print("OK test_model_media_ftp_schema_merges_by_stock_id")
+
+
 def test_source_import_builds_product_name_from_details():
     from sheets_reader import SheetsReader
 
@@ -1024,6 +1049,7 @@ if __name__ == "__main__":
     test_account_local_posting_slots_are_timezone_aware_and_idempotent()
     test_source_import_duplicate_headers_do_not_abort_uploads()
     test_supplemental_model_media_merges_by_sku_without_new_products()
+    test_model_media_ftp_schema_merges_by_stock_id()
     test_source_import_builds_product_name_from_details()
     test_compound_sku_product_links_are_not_false_mismatches()
     test_glued_model_photo_and_video_links_use_model_photo_video_origin()
