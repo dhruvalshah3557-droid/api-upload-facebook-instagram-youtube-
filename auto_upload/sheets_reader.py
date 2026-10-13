@@ -195,10 +195,6 @@ class SheetsReader:
             try:
                 model_sheet = self.client.open_by_url(Config.MODEL_MEDIA_SHEET_URL)
                 self.model_media_ws = model_sheet.worksheet(Config.MODEL_MEDIA_SOURCE_SHEET)
-                self.mirror_log_ws = model_sheet.worksheet(Config.LOG_SHEET)
-                self.mirror_log_header_row = self._detect_header_row(
-                    self.mirror_log_ws, self.LOG_COLS
-                )
             except Exception as exc:
                 # The primary workbook must remain usable if the supplemental
                 # workbook is temporarily unavailable or has not yet been
@@ -677,20 +673,20 @@ class SheetsReader:
             return
         headers = [str(value or "").strip().casefold() for value in values[0]]
         positions = {header: idx for idx, header in enumerate(headers) if header}
-        sku_col = positions.get("sku")
+        sku_col = positions.get("sku", positions.get("stock id"))
         if sku_col is None:
-            logger.warning("Model-media source has no sku header; ignoring it")
+            logger.warning("Model-media source has no SKU/Stock ID header; ignoring it")
             return
         photo_cols = [
             positions[name] for name in (
                 "model image link 1", "model image link 2", "model image link 3",
-                "multiple model photo link",
+                "multiple model photo link", "model photo links",
             ) if name in positions
         ]
         video_cols = [
             positions[name] for name in (
                 "model video link 1", "model video link 2", "model video link 3",
-                "multiple model video link",
+                "multiple model video link", "model video links",
             ) if name in positions
         ]
         for row in values[1:]:
