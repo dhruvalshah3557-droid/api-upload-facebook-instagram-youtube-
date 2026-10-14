@@ -52,6 +52,15 @@ class FakeSheets:
                 "username_or_channel": "colourdiamsweden",
                 "enabled": True,
             },
+            {
+                "row": 64,
+                "account_id": "FB-GERMANY",
+                "platform": "facebook",
+                "account_name": "Colour Diam Germany",
+                "platform_account_id": "",
+                "username_or_channel": "colourdiamgermany",
+                "enabled": True,
+            },
         ]
 
     def get_accounts(self):
@@ -93,6 +102,26 @@ class MetaAccountSyncTests(unittest.TestCase):
         self.assertEqual(market_settings("colourdiamlebanon"), ("LEBANON", "lb-LB", "Asia/Beirut"))
         self.assertEqual(market_settings("Colour Diam Czech"), ("CZECH", "cs-CZ", "Europe/Prague"))
         self.assertEqual(market_settings("colourdiamczech"), ("CZECH", "cs-CZ", "Europe/Prague"))
+
+    def test_updates_existing_enabled_facebook_placeholder(self):
+        sheets = FakeSheets()
+        pages = [{
+            "id": "GERMANY_PAGE",
+            "name": "Colour Diam Germany",
+            "instagram_business_account": {},
+        }]
+
+        changes = sync_accounts(pages, sheets)
+
+        self.assertEqual(sheets.accounts_ws.appended, [])
+        updates = {
+            item["range"]: item["values"][0][0]
+            for item in sheets.accounts_ws.updated
+        }
+        self.assertEqual(updates["D64"], "GERMANY_PAGE")
+        self.assertIn("none", updates["T64"])
+        self.assertNotIn("I64", updates)
+        self.assertEqual(changes[0]["action"], "updated_platform_id")
 
     def test_greece_unique_account_id_uses_market_code(self):
         used = set()
