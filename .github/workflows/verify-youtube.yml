@@ -2,6 +2,9 @@ name: Verify YouTube OAuth
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/verify-youtube.yml
 
 permissions:
   contents: read
