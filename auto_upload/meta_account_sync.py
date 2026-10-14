@@ -167,6 +167,30 @@ def _matching_blank_instagram(existing, page_name, ig_username):
     return matches[0] if len(matches) == 1 else None
 
 
+def _matching_blank_facebook(existing, page_name):
+    """Return one preconfigured Facebook row awaiting Meta's Page ID."""
+    blank = [
+        account for account in existing
+        if account.get("platform") == "facebook"
+        and not str(account.get("platform_account_id", "") or "").strip()
+    ]
+    code, _, _ = market_settings(page_name)
+    if code != "AUTO":
+        direct = [
+            account for account in blank
+            if account.get("account_id") == f"FB-{code}"
+        ]
+        if len(direct) == 1:
+            return direct[0]
+
+    wanted = _identity_key(page_name)
+    matches = [
+        account for account in blank
+        if wanted and wanted == _identity_key(account.get("account_name", ""))
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
 def sync_accounts(pages, sheets):
     existing = sheets.get_accounts()
     existing_keys = {
@@ -200,13 +224,30 @@ def sync_accounts(pages, sheets):
         ig_username = str(ig.get("username", ""))
 
         if page_id and ("facebook", page_id) not in existing_keys:
-            aid = unique_account_id("FB", page_name, page_id, used_ids)
-            new_rows.append(row_for(headers, aid, "Facebook", page_name, page_id,
-                                    ig_username, ig_id))
-            discovered.append({
-                "account_id": aid, "platform": "Facebook",
-                "name": page_name, "action": "added",
-            })
+            placeholder = _matching_blank_facebook(existing, page_name)
+            if placeholder:
+                queue_cell(placeholder["row"], "platform_account_id", page_id)
+                queue_cell(
+                    placeholder["row"],
+                    "notes",
+                    "Verified via live Meta API; "
+                    f"linked Instagram Business ID: {ig_id or 'none'}.",
+                )
+                placeholder["platform_account_id"] = page_id
+                discovered.append({
+                    "account_id": placeholder["account_id"],
+                    "platform": "Facebook",
+                    "name": page_name,
+                    "action": "updated_platform_id",
+                })
+            else:
+                aid = unique_account_id("FB", page_name, page_id, used_ids)
+                new_rows.append(row_for(headers, aid, "Facebook", page_name, page_id,
+                                        ig_username, ig_id))
+                discovered.append({
+                    "account_id": aid, "platform": "Facebook",
+                    "name": page_name, "action": "added",
+                })
             existing_keys.add(("facebook", page_id))
 
         if ig_id and ("instagram", ig_id) not in existing_keys:
