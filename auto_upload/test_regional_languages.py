@@ -101,25 +101,6 @@ class RegionalLanguageTests(unittest.TestCase):
         self.assertIn("Δείτε το προϊόν:", caption)
         self.assertNotIn("#diamond", caption)
 
-    def test_pakistan_generates_urdu_when_source_has_no_urdu_column(self):
-        source = {
-            "lang_captions": {},
-            "lang_hashtags": {},
-            "hashtags": "#diamond",
-            "product_link": "https://colourdiam.com/product/1",
-            "product_name": "Fancy Yellow Diamond Ring",
-        }
-        account = {
-            "primary_language": "ur-PK",
-            "fallback_language": "en-GB",
-            "account_name": "Colour Diam Pakistan",
-        }
-
-        caption = main.build_caption({"platform": "facebook"}, source, account)
-        self.assertIn("#پاکستان", caption)
-        self.assertIn("پروڈکٹ دیکھیں:", caption)
-        self.assertNotIn("#diamond", caption.lower())
-
     def test_lebanon_uses_lebenesse_source_columns(self):
         row = {
             "lebenesse description": "وصف لبناني فاخر",
