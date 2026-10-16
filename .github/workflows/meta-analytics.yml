@@ -16,6 +16,7 @@ concurrency:
 
 jobs:
   collect:
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     defaults:
       run:
