@@ -11,8 +11,8 @@ META_TOKEN_FB_* secrets. This script helps create that token:
 Get a short-lived token first from the Graph API Explorer:
   https://developers.facebook.com/tools/explorer/
 Select your app, add permissions (pages_show_list, pages_manage_posts,
-pages_read_engagement, instagram_basic, instagram_content_publish,
-business_management), click "Generate Access Token", and authorize.
+pages_read_engagement, read_insights, instagram_basic,
+instagram_content_publish, instagram_manage_insights, business_management), click "Generate Access Token", and authorize.
 
 Usage examples:
   python3 get_fb_token.py --app-id 123 --app-secret abc --short-lived-token EAA...
