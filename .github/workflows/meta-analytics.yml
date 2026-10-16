@@ -38,6 +38,8 @@ jobs:
           GOOGLE_SHEET_CREDENTIALS: credentials/service_account.json
           GOOGLE_SHEET_URL: ${{ secrets.GOOGLE_SHEET_URL }}
           ACCOUNTS_SHEET: Accounts
-          FB_ACCESS_TOKEN: ${{ secrets.FACEBOOKTOKEN }}
-          FACEBOOKTOKEN: ${{ secrets.FACEBOOKTOKEN }}
+          # Keep analytics authorization independent from the publishing token.
+          # META_ANALYTICS_TOKEN must include read_insights and instagram_manage_insights.
+          FB_ACCESS_TOKEN: ${{ secrets.META_ANALYTICS_TOKEN || secrets.FACEBOOKTOKEN }}
+          FACEBOOKTOKEN: ${{ secrets.META_ANALYTICS_TOKEN || secrets.FACEBOOKTOKEN }}
         run: python meta_analytics.py
