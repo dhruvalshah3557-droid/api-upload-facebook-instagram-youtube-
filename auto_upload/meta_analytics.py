@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Collect read-only Facebook and Instagram analytics into Google Sheets."""
+"""Collect read-only Facebook and Instagram analytics into Google Sheets daily."""
 
 import os
 from datetime import datetime, timedelta, timezone
