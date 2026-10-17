@@ -62,8 +62,10 @@ class MusicRotationTests(unittest.TestCase):
 
     def test_bundled_library_contains_pinned_real_tracks(self):
         tracks = media_prep.BUNDLED_CC0_MUSIC_URLS
-        self.assertEqual(len(tracks), 41)
-        self.assertTrue(all("2ce8458293fe4eeb91414a19d6d7ecd1562a5949" in track for track in tracks))
+        self.assertEqual(len(tracks), 58)
+        self.assertTrue(any("2ce8458293fe4eeb91414a19d6d7ecd1562a5949" in track for track in tracks))
+        self.assertEqual(len(media_prep.DURU_CC0_MUSIC_URLS), 17)
+        self.assertTrue(all("1f63fef279098a082f2f77b3f74940b2784d37b7" in track for track in media_prep.DURU_CC0_MUSIC_URLS))
         self.assertEqual(len(tracks), len(set(tracks)))
         self.assertTrue(all(" " not in track for track in tracks))
 

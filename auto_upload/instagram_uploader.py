@@ -46,6 +46,24 @@ _REGIONAL_AUDIO_QUERIES = (
 )
 _DEFAULT_AUDIO_QUERIES = ("trending luxury", "elegant instrumental", "cinematic fashion")
 
+# Additional gentle catalog searches for silent Reels. These are mood based so
+# Meta returns music licensed for the destination account and region. Audible
+# source videos never enter this path and retain their original soundtrack.
+_SOFT_AUDIO_QUERIES = (
+    "soft luxury piano", "gentle piano instrumental", "calm elegant piano",
+    "soft ambient instrumental", "peaceful cinematic instrumental",
+    "delicate acoustic guitar", "warm acoustic instrumental",
+    "relaxing luxury lounge", "soft jazz instrumental",
+    "smooth lounge instrumental", "dreamy instrumental",
+    "serene ambient music", "romantic piano instrumental",
+    "graceful strings instrumental", "light classical instrumental",
+    "minimal piano ambience", "calm fashion instrumental",
+    "elegant jewellery music", "soft bossa nova instrumental",
+    "gentle harp instrumental", "peaceful flute instrumental",
+    "slow luxury instrumental", "soothing instrumental",
+    "quiet morning piano", "soft sunset ambience",
+)
+
 
 def _is_video_url(url):
     return any(ext in str(url or "").lower() for ext in _VIDEO_EXTS)
@@ -279,7 +297,13 @@ class InstagramUploader:
         )
         queries_raw = os.getenv("IG_AUDIO_SEARCH_QUERIES", "").strip()
         configured_queries = [q.strip() for q in re.split(r"[\n,]+", queries_raw) if q.strip()]
-        queries = list(dict.fromkeys(list(regional_queries) + configured_queries))
+        # Keep regional music prominent while using the gentle pool on roughly
+        # half of silent Reels. Generic/main accounts use the full soft pool.
+        include_soft = regional_queries == _DEFAULT_AUDIO_QUERIES or digest[-1] % 2 == 0
+        soft_queries = list(_SOFT_AUDIO_QUERIES) if include_soft else []
+        queries = list(dict.fromkeys(
+            list(regional_queries) + soft_queries + configured_queries
+        ))
         if not queries:
             search_query = os.getenv("IG_AUDIO_SEARCH_QUERY", "").strip()
             queries = [search_query] if search_query else list(regional_queries)

@@ -9,7 +9,12 @@ try:
 except ImportError:
     sys.modules["requests"] = types.SimpleNamespace(get=lambda *args, **kwargs: None)
 
-from instagram_uploader import InstagramRateLimitError, InstagramUploader, _COVER_PROBE_CACHE
+from instagram_uploader import (
+    InstagramRateLimitError,
+    InstagramUploader,
+    _COVER_PROBE_CACHE,
+    _SOFT_AUDIO_QUERIES,
+)
 
 
 class _Response:
@@ -74,6 +79,24 @@ class InstagramMusicRotationTests(unittest.TestCase):
                 for key in keys
             ]
         self.assertGreaterEqual(len({c["audio_id"] for c in configurations}), 6)
+
+    def test_twenty_five_soft_catalog_moods_are_available(self):
+        self.assertEqual(len(_SOFT_AUDIO_QUERIES), 25)
+        self.assertEqual(len(_SOFT_AUDIO_QUERIES), len(set(_SOFT_AUDIO_QUERIES)))
+
+    def test_china_uses_chinese_or_soft_catalog_searches(self):
+        uploader = InstagramUploader.__new__(InstagramUploader)
+        uploader.ig_user_id = "china-account"
+        uploader.access_token = "token"
+        uploader.page_name = "Colour Diam China"
+        with mock.patch.dict("os.environ", {}, clear=True), \
+             mock.patch("instagram_uploader.requests.get", return_value=_Response(), create=True) as get:
+            uploader._trending_audio_configuration("china-job")
+        query = get.call_args.kwargs["params"]["search_query"]
+        self.assertIn(query, {
+            "China trending", "Chinese pop", "Chinese instrumental",
+            *_SOFT_AUDIO_QUERIES,
+        })
 
     def test_vietnam_uses_regional_searches(self):
         uploader = InstagramUploader.__new__(InstagramUploader)

@@ -90,8 +90,8 @@ jobs:
           AUTO_ADD_AUDIO: "true"
           # Audible model videos keep their original sound; music is added only when silent.
           TRENDING_AUDIO_URL: ${{ secrets.TRENDING_AUDIO_URL }}
-          # Optional comma-separated licensed library. When unset, the six
-          # bundled CC0 tracks rotate automatically. The former single-track
+          # Optional comma-separated licensed library. When unset, the pinned
+          # CC0 fallback library rotates automatically. The former single-track
           # BACKGROUND_MUSIC_URL is intentionally retired.
           BACKGROUND_MUSIC_URLS: ${{ secrets.BACKGROUND_MUSIC_URLS }}
           IG_AUTO_TRENDING_AUDIO: "true"

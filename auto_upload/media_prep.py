@@ -122,6 +122,30 @@ BUNDLED_CC0_MUSIC_URLS = tuple(
     f"{_CC0_SOURCE}/{quote(name)}" for name in _BUNDLED_CC0_TRACK_NAMES
 )
 
+# Additional immutable CC0 fallback pack. The repository publishes both the
+# rendered tracks and their source under CC0 1.0; pinning the commit prevents
+# an upstream file from changing after review.
+_DURU_CC0_SOURCE = (
+    "https://raw.githubusercontent.com/uncle-sheepsky/"
+    "duru-ai-cc0-bgm/1f63fef279098a082f2f77b3f74940b2784d37b7/mp3"
+)
+_DURU_CC0_TRACK_NAMES = (
+    "duru-ai-ep2-music.mp3", "duru-arcade-vibe.mp3",
+    "duru-denparcade.mp3", "duru-rhythm-fever.mp3", "duru-rondo.mp3",
+    "duru-roomscene-lofi.mp3", "duru-winter-arcade.mp3",
+    "hyak-ep1-rhythm.mp3", "hyak-ep2-korobeiniki-tetris.mp3",
+    "hyak-ep3-suika.mp3", "hyak-ep4-blackhole.mp3", "hyak-ep5-2048.mp3",
+    "hyak-ep6-galaxy.mp3", "hyak-ep7-danmaku.mp3",
+    "korobeiniki-arcade-fullver.mp3", "korobeiniki-boombap-loop.mp3",
+    "mountainking-arcade-loop.mp3",
+)
+DURU_CC0_MUSIC_URLS = tuple(
+    f"{_DURU_CC0_SOURCE}/{quote(name)}" for name in _DURU_CC0_TRACK_NAMES
+)
+BUNDLED_CC0_MUSIC_URLS = tuple(dict.fromkeys(
+    BUNDLED_CC0_MUSIC_URLS + DURU_CC0_MUSIC_URLS
+))
+
 
 def _env(key, default=""):
     value = os.getenv(key)
