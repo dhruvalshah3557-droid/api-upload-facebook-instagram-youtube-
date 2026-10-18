@@ -11,6 +11,29 @@ from sheets_reader import SheetsReader
 
 
 class RegionalLanguageTests(unittest.TestCase):
+    def test_pakistan_uses_urdu_caption_hashtags_and_link_label(self):
+        account = {
+            "primary_language": "ur-PK",
+            "fallback_language": "en-GB",
+            "account_name": "Colour Diam Pakistan",
+        }
+        job = {"platform": "facebook", "account_id": "FB-PAK"}
+        source = {
+            "sku": "PK-1",
+            "product_name": "Fancy Yellow Diamond Ring",
+            "details": "Fancy Yellow Diamond Ring",
+            "product_link": "https://www.colourdiam.com/product/PK-1",
+            "lang_captions": {},
+            "lang_hashtags": {},
+            "hashtags": "#Diamond",
+        }
+
+        caption = main.build_caption(job, source, account)
+
+        self.assertIn("#پاکستان", caption)
+        self.assertIn("پروڈکٹ دیکھیں:", caption)
+        self.assertNotIn("View product:", caption)
+
     def test_hong_kong_short_name_uses_chinese(self):
         self.assertEqual(get_lang("Colour Diam HK"), "zh")
         self.assertEqual(get_lang("colourdiamhk"), "zh")

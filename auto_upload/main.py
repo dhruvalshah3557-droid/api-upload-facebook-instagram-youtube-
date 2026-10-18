@@ -315,6 +315,7 @@ _PRODUCT_LINK_LABELS = {
     "tl": "Tingnan ang produkto", "fil": "Tingnan ang produkto",
     "el": "Δείτε το προϊόν",
     "lb": "عرض المنتج", "cs": "Zobrazit produkt",
+    "ur": "پروڈکٹ دیکھیں",
 }
 
 
@@ -393,6 +394,7 @@ _REGIONAL_FALLBACK_HASHTAGS = {
     "el": "#Διαμάντια #Κοσμήματα #ΠολυτελήΚοσμήματα",
     "lb": "#ألماس #مجوهرات #مجوهرات_فاخرة",
     "cs": "#Diamanty #Šperky #LuxusníŠperky",
+    "ur": "#ہیرے #زیورات #لگژری_زیورات #پاکستان",
 }
 
 
