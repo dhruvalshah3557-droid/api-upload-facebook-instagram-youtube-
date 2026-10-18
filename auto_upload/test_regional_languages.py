@@ -35,8 +35,30 @@ class RegionalLanguageTests(unittest.TestCase):
         self.assertNotIn("View product:", caption)
 
     def test_hong_kong_short_name_uses_chinese(self):
-        self.assertEqual(get_lang("Colour Diam HK"), "zh")
-        self.assertEqual(get_lang("colourdiamhk"), "zh")
+        self.assertEqual(get_lang("Colour Diam HK"), "zh-hant")
+        self.assertEqual(get_lang("colourdiamhk"), "zh-hant")
+
+    def test_hong_kong_locale_uses_traditional_chinese(self):
+        account = {
+            "primary_language": "zh-HK",
+            "fallback_language": "en-GB",
+            "account_name": "Colourdiamhk",
+        }
+        job = {"platform": "facebook", "account_id": "FB-HK"}
+        source = {
+            "sku": "HK-1",
+            "product_name": "Fancy Pink Diamond Ring",
+            "details": "Fancy Pink Diamond Ring",
+            "product_link": "https://www.colourdiam.com/product/HK-1",
+            "lang_captions": {},
+            "lang_hashtags": {},
+            "hashtags": "#Diamond",
+        }
+
+        caption = main.build_caption(job, source, account)
+
+        self.assertIn("#香港", caption)
+        self.assertIn("查看產品:", caption)
 
     def test_colour_diam_does_not_match_philippines_by_substring(self):
         self.assertEqual(get_lang("Colour Diam"), "en")

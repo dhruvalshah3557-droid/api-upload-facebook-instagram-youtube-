@@ -241,7 +241,10 @@ def job_unique_key(job):
 
 
 def _lang_code(primary_language):
-    return str(primary_language or "en").split("-")[0].lower()
+    value = str(primary_language or "en").strip().lower()
+    if value in {"zh-hk", "zh-tw", "zh-mo", "zh-hant"}:
+        return "zh-hant"
+    return value.split("-")[0]
 
 
 def resolve_media(job, source):
@@ -307,6 +310,7 @@ def resolve_media(job, source):
 
 _PRODUCT_LINK_LABELS = {
     "ar": "عرض المنتج", "vi": "Xem sản phẩm", "zh": "查看产品",
+    "zh-hant": "查看產品",
     "sv": "Visa produkt", "de": "Produkt ansehen", "pl": "Zobacz produkt",
     "da": "Se produkt", "fr": "Voir le produit", "tr": "Ürünü görüntüle",
     "it": "Visualizza prodotto", "es": "Ver producto", "ja": "商品を見る",
@@ -374,6 +378,7 @@ _REGIONAL_FALLBACK_HASHTAGS = {
     "ar": "#ألماس #مجوهرات #مجوهرات_فاخرة",
     "vi": "#KimCương #TrangSức #TrangSứcCaoCấp",
     "zh": "#钻石 #珠宝 #高级珠宝",
+    "zh-hant": "#鑽石 #珠寶 #高級珠寶 #香港",
     "sv": "#Diamanter #Smycken #Lyxsmycken",
     "de": "#Diamanten #Schmuck #Luxusschmuck",
     "pl": "#Diamenty #Biżuteria #BiżuteriaLuksusowa",

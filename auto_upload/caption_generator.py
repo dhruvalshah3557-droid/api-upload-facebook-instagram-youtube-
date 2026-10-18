@@ -39,6 +39,13 @@ CAPTION_TEMPLATES = {
         "{title} 新品到店！{description}",
         "让 {title} 成为您的点睛之笔",
     ],
+    "zh-hant": [
+        "✨ {title} — 雋永優雅，綻放獨特光芒。",
+        "探索 {title} 的迷人美態。✨",
+        "以 {title} 提升您的優雅品味。",
+        "全新登場：{title}。一件令人矚目的珠寶。",
+        "讓 {title} 為每個珍貴時刻增添光彩。",
+    ],
     "ru": [
         "✨ {title} — {description}",
         "Откройте для себя красоту {title} ✨",
@@ -187,6 +194,7 @@ HASHTAG_TEMPLATES = {
     "my": ["#ColourDiam", "#လက်ဝတ်ရတနာ", "#စိန်", "#ဇိမ်ခံ", "#လက်ဆောင်"],
     "tl": ["#ColourDiam", "#Alahas", "#Diamante", "#Marangya", "#Regalo"],
     "zh": ["#ColourDiam", "#钻石", "#奢华", "#珠宝", "#礼物"],
+    "zh-hant": ["#ColourDiam", "#鑽石", "#高級珠寶", "#珠寶", "#香港"],
     "ru": ["#ColourDiam", "#ювелирныеизделия", "#бриллианты", "#роскошь", "#подарок"],
     "ja": ["#ColourDiam", "#ジュエリー", "#ダイヤモンド", "#ラグジュアリー", "#ギフト"],
     "ko": ["#ColourDiam", "#주얼리", "#다이아몬드", "#럭셔리", "#선물"],
@@ -229,9 +237,9 @@ PAGE_LANG_MAP = {
     "color diam korea": "ko",
     "color diam korean": "ko",
     "colour diam taiwan": "zh",
-    "colour diam hong kong": "zh",
-    "colour diam hk": "zh",
-    "colourdiamhk": "zh",
+    "colour diam hong kong": "zh-hant",
+    "colour diam hk": "zh-hant",
+    "colourdiamhk": "zh-hant",
     "colour diam israel": "he",
     "israel": "he",
     "hebrew": "he",
@@ -271,7 +279,9 @@ def get_lang(page_name):
 
 
 def generate_caption(product_info, page_name="", language=""):
-    lang = str(language or "").split("-")[0].lower() or get_lang(page_name)
+    value = str(language or "").strip().lower()
+    lang = "zh-hant" if value in {"zh-hk", "zh-tw", "zh-mo", "zh-hant"} else value.split("-")[0]
+    lang = lang or get_lang(page_name)
     title = str(product_info.get("title") or "").strip() or "Diamond Jewelry"
     description = str(product_info.get("description") or "").strip()
     if description == title:
@@ -282,7 +292,9 @@ def generate_caption(product_info, page_name="", language=""):
 
 
 def generate_hashtags(product_info, page_name="", language=""):
-    lang = str(language or "").split("-")[0].lower() or get_lang(page_name)
+    value = str(language or "").strip().lower()
+    lang = "zh-hant" if value in {"zh-hk", "zh-tw", "zh-mo", "zh-hant"} else value.split("-")[0]
+    lang = lang or get_lang(page_name)
     base_tags = HASHTAG_TEMPLATES.get(lang, HASHTAG_TEMPLATES["en"])
     keywords = product_info.get("keywords", [])
     extra = []
