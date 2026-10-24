@@ -1249,6 +1249,115 @@ class FullRepairTests(unittest.TestCase):
             set(),
         )
 
+    def test_recent_facebook_permission_failure_skips_page_not_instagram(self):
+        now = datetime(2026, 10, 24, 12, 0, tzinfo=timezone.utc)
+        jobs = [
+            {
+                "job_id": "6009-FB-VNM-product_video",
+                "account_id": "FB-VNM",
+                "platform": "facebook",
+                "sku": "6009",
+                "media_selection": "product_video",
+                "format": "video",
+                "row": 1,
+                "attempts": 1,
+                "notes": "",
+                "error_message": "(#100) No permission to publish the video",
+                "last_attempt_at": "2026-10-24T11:00:00Z",
+            },
+            {
+                "job_id": "6010-FB-VNM-product_video",
+                "account_id": "FB-VNM",
+                "platform": "facebook",
+                "sku": "6010",
+                "media_selection": "product_video",
+                "format": "video",
+                "row": 2,
+                "attempts": 0,
+                "notes": "",
+                "error_message": "",
+            },
+            {
+                "job_id": "6010-IG-VNM-product_video",
+                "account_id": "IG-VNM",
+                "platform": "instagram",
+                "sku": "6010",
+                "media_selection": "product_video",
+                "format": "video",
+                "row": 3,
+                "attempts": 0,
+                "notes": "",
+                "error_message": "",
+            },
+        ]
+        accounts = {
+            "FB-VNM": {
+                "enabled": True,
+                "platform": "facebook",
+                "platform_account_id": "1269911106209831",
+                "timezone": "Asia/Ho_Chi_Minh",
+            },
+            "IG-VNM": {
+                "enabled": True,
+                "platform": "instagram",
+                "platform_account_id": "17841438460414703",
+                "timezone": "Asia/Ho_Chi_Minh",
+            },
+        }
+        sources = {
+            "6009": {"sku": "6009", "video": "https://media.example/vnm.mp4"},
+            "6010": {"sku": "6010", "video": "https://media.example/vnm2.mp4"},
+        }
+        sheets = types.SimpleNamespace(update_job=lambda *args, **kwargs: None)
+        optimized_runner._CACHED_FACEBOOK_AUTH_DEAD = set()
+        self.assertEqual(
+            optimized_runner._facebook_auth_dead_accounts(jobs, now=now),
+            {"FB-VNM"},
+        )
+        with patch("optimized_runner._platform_limits", return_value={"facebook": 1, "instagram": 1, "youtube": 0, "line": 0}), \
+             patch("optimized_runner._local_slot_due", return_value=True), \
+             patch("optimized_runner._rotation_rank", return_value=0), \
+             patch("optimized_runner._is_clean_source", return_value=(True, "")), \
+             patch("optimized_runner.resolve_media_fixed", side_effect=lambda job, source: [source.get("video")] if source.get("video") else []), \
+             patch("optimized_runner._media_preflight_reason", return_value=""), \
+             patch("optimized_runner.main.build_caption", return_value="ok"):
+            selected = optimized_runner._healthy_candidates(
+                jobs, accounts, sources, sheets, limit=2,
+            )
+        self.assertEqual([job["account_id"] for job in selected], ["IG-VNM"])
+
+    def test_stale_facebook_permission_error_does_not_quarantine_page(self):
+        now = datetime(2026, 10, 24, 12, 0, tzinfo=timezone.utc)
+        jobs = [{
+            "account_id": "FB-CD",
+            "platform": "facebook",
+            "error_message": "(#100) No permission to publish the video",
+            "last_attempt_at": "2026-10-16T08:00:00Z",
+        }]
+        self.assertEqual(
+            optimized_runner._facebook_auth_dead_accounts(jobs, now=now),
+            set(),
+        )
+
+    def test_recent_facebook_permission_failures_are_not_revived(self):
+        updates = []
+        records = [{
+            "status": "failed",
+            "account_id": "FB-JPN",
+            "platform": "facebook",
+            "error_message": "(#100) No permission to publish the video",
+            "last_attempt_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }]
+        sheets = types.SimpleNamespace(
+            queue_header_row=1,
+            queue_ws=types.SimpleNamespace(get_all_records=lambda head=1: records),
+            update_job=lambda job, payload: updates.append((job, payload)),
+        )
+        accounts = {"FB-JPN": {"enabled": True, "platform": "facebook"}}
+        revived = optimized_runner._revive_stale_meta_failures(sheets, accounts)
+        self.assertEqual(revived, 0)
+        self.assertEqual(updates, [])
+
     def test_youtube_token_cache_is_isolated_per_client(self):
         from youtube_uploader import token_cache_path
         colour = token_cache_path("colour-client", "colour-refresh")

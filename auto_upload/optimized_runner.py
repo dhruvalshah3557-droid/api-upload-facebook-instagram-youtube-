@@ -68,6 +68,7 @@ _UNUSABLE_PENDING_MARKERS = (
     "token has been expired or revoked",
 )
 YOUTUBE_AUTH_DEAD_HOURS = 12
+FACEBOOK_AUTH_DEAD_HOURS = 12
 _RETRIABLE_PREFLIGHT_MARKERS = (
     "media preflight failed",
     "all media urls are unavailable",
@@ -87,6 +88,7 @@ _LIVE_MEDIA_HOSTS = (
     "colourdiam.com",
 )
 _REWRITE_LOGGED = set()
+_CACHED_FACEBOOK_AUTH_DEAD = set()
 
 
 def _known_unusable_pending(job):
@@ -98,6 +100,48 @@ def _known_unusable_pending(job):
     if any(marker in blob for marker in _RETRIABLE_PREFLIGHT_MARKERS):
         return False
     return any(marker in blob for marker in _UNUSABLE_PENDING_MARKERS)
+
+
+_FACEBOOK_PERMISSION_MARKERS = (
+    "no permission to publish the video",
+    "unpublished posts must be posted to a page as the page itself",
+    "(#200) permissions error",
+    "pages_manage_posts",
+)
+
+
+def _facebook_permission_error(job):
+    blob = " ".join((
+        str((job or {}).get("error_message", "") or ""),
+        str((job or {}).get("notes", "") or ""),
+    )).lower()
+    return any(marker in blob for marker in _FACEBOOK_PERMISSION_MARKERS)
+
+
+def _facebook_auth_dead_accounts(jobs, now=None):
+    """Facebook pages whose latest page-token/permission error is still fresh.
+
+    From 2026-10-16 07:00 UTC every Facebook Reel/carousel failed with
+    `(#100) No permission to publish the video` / `(#200) Permissions error`
+    because the uploader fell back to a user token. Keep retrying those pages
+    burns the Facebook slot every run while Instagram still publishes. Skip
+    the dead pages until a page-scoped token is resolved again.
+    """
+    now = now or datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=FACEBOOK_AUTH_DEAD_HOURS)
+    dead = set()
+    for job in jobs or ():
+        if str(job.get("platform", "") or "").strip().lower() != "facebook":
+            continue
+        if not _facebook_permission_error(job):
+            continue
+        attempted = parse_queue_time(job.get("last_attempt_at"))
+        if attempted is None or attempted < cutoff or attempted > now:
+            continue
+        account_id = str(job.get("account_id", "") or "").strip()
+        if account_id:
+            dead.add(account_id)
+    return dead
 
 
 def _youtube_auth_dead_accounts(jobs, now=None):
@@ -368,10 +412,12 @@ _due_deficit_accounts = due_deficit_accounts
 
 def _queue_state(sheets, now=None, accounts=None):
     """Return duplicate locks plus rolling upload activity in one queue read."""
+    global _CACHED_FACEBOOK_AUTH_DEAD
     records = sheets.queue_ws.get_all_records(head=sheets.queue_header_row)
     reserved = set()
     now = now or datetime.now(timezone.utc)
     activity = rolling_activity(records, accounts or {}, now)
+    _CACHED_FACEBOOK_AUTH_DEAD = _facebook_auth_dead_accounts(records, now)
     patterns = (
         f"{FINGERPRINT_PREFIX}:", f"{JOB_ID_PREFIX}:",
         f"{PRODUCT_ACCOUNT_PREFIX}:",
@@ -762,6 +808,12 @@ def _revive_stale_meta_failures(sheets, accounts):
         error = str(rec.get("error_message", "") or "").lower()
         if not any(marker in error for marker in _META_RETRY_MARKERS):
             continue
+        if platform == "facebook" and _facebook_permission_error(rec):
+            attempted = parse_queue_time(rec.get("last_attempt_at"))
+            now = datetime.now(timezone.utc)
+            cutoff = now - timedelta(hours=FACEBOOK_AUTH_DEAD_HOURS)
+            if attempted is not None and cutoff <= attempted <= now:
+                continue
         sheets.update_job({"row": idx}, {
             "status": "pending",
             "attempts": 0,
@@ -1191,6 +1243,24 @@ def _healthy_candidates(
             "YouTube account(s) skipped until OAuth is repaired: %s",
             ", ".join(sorted(youtube_auth_dead)),
         )
+    facebook_auth_dead = set(_CACHED_FACEBOOK_AUTH_DEAD) | _facebook_auth_dead_accounts(jobs)
+    if facebook_auth_dead:
+        main.logger.warning(
+            "Facebook account(s) skipped until a page-scoped token is resolved: %s",
+            ", ".join(sorted(facebook_auth_dead)),
+        )
+        enabled_facebook = set(_enabled_account_order(accounts, "facebook"))
+        if enabled_facebook and enabled_facebook <= facebook_auth_dead:
+            slots["facebook"] = 0
+            remaining = max(0, int(limit) - int(slots.get("line", 0) or 0))
+            ready = _ready_platform_counts(accounts) if accounts is not None else None
+            instagram_cap = _instagram_run_cap()
+            slots = _fill_instagram_leftover(slots, remaining, ready, instagram_cap)
+            slots = _fill_youtube_leftover(slots, remaining, ready)
+            main.logger.warning(
+                "Facebook selection skipped: page-token/permission errors are still fresh; "
+                "slots moved to Instagram/YouTube until a page-scoped token is resolved"
+            )
     seen_fingerprints = set()
     reserved_fingerprints = set(reserved_fingerprints or ())
     paired_sku_by_market = {}
@@ -1271,6 +1341,8 @@ def _healthy_candidates(
             if not _account_publish_ready(account):
                 continue
             if platform == "youtube" and account_id in youtube_auth_dead:
+                continue
+            if platform == "facebook" and account_id in facebook_auth_dead:
                 continue
 
             account_jobs = [
@@ -1380,7 +1452,7 @@ def _healthy_candidates(
             leftover, selected, jobs_by_account, accounts, sources, sheets,
             reserved_fingerprints, seen_fingerprints, housekeeping, limit,
             instagram_cooldown, instagram_cap, instagram_used,
-            recent_upload_activity,
+            recent_upload_activity, facebook_auth_dead,
         )
         if leftover:
             main.logger.info(
@@ -1395,6 +1467,7 @@ def _fill_model_media_leftover(
     leftover, selected, jobs_by_account, accounts, sources, sheets,
     reserved_fingerprints, seen_fingerprints, housekeeping, limit,
     instagram_cooldown, instagram_cap, instagram_used, recent_upload_activity,
+    facebook_auth_dead=None,
 ):
     """Spend unused YouTube/TikTok/Facebook budget on model photo/video only."""
     if leftover <= 0:
@@ -1409,6 +1482,8 @@ def _fill_model_media_leftover(
             if not account or not account.get("enabled"):
                 continue
             if not _account_publish_ready(account):
+                continue
+            if platform == "facebook" and account_id in (facebook_auth_dead or ()):
                 continue
             if (
                 _minimum_delivery_priority(account_id, recent_upload_activity)[0] != 0

@@ -25,10 +25,28 @@ class FacebookUploader:
 
     @classmethod
     def _resolve_page_token(cls, page_id, token):
-        """Resolve a page-scoped token from a user token."""
+        """Resolve a page-scoped token. Never publish with a user token."""
+        page_id = str(page_id or "").strip()
+        token = str(token or "").strip()
+        if not page_id or not token:
+            return token
         cached = _PAGE_TOKEN_CACHE.get(page_id)
         if cached:
             return cached
+        resolved = (
+            cls._page_token_from_page(page_id, token)
+            or cls._page_token_from_accounts(page_id, token)
+        )
+        if resolved:
+            _PAGE_TOKEN_CACHE[page_id] = resolved
+            return resolved
+        raise Exception(
+            "(#100) No permission to publish the video: "
+            f"could not resolve a page-scoped access token for page {page_id}"
+        )
+
+    @staticmethod
+    def _page_token_from_page(page_id, token):
         try:
             resp = requests.get(
                 f"{FB_GRAPH_URL}/{page_id}",
@@ -36,13 +54,47 @@ class FacebookUploader:
                 timeout=15,
             )
             data = resp.json()
-            resolved = data.get("access_token")
-            if resolved:
-                _PAGE_TOKEN_CACHE[page_id] = resolved
-                return resolved
-        except Exception:
-            pass
-        return token
+        except Exception as exc:
+            logger.warning("Page token lookup for %s failed: %s", page_id, exc)
+            return ""
+        if data.get("error"):
+            logger.warning(
+                "Page token lookup for %s returned %s",
+                page_id, data.get("error"),
+            )
+            return ""
+        return str(data.get("access_token") or "").strip()
+
+    @staticmethod
+    def _page_token_from_accounts(page_id, token):
+        url = f"{FB_GRAPH_URL}/me/accounts"
+        params = {
+            "fields": "id,access_token",
+            "limit": 100,
+            "access_token": token,
+        }
+        wanted = str(page_id)
+        while url:
+            try:
+                resp = requests.get(url, params=params, timeout=30)
+                data = resp.json()
+            except Exception as exc:
+                logger.warning("me/accounts page-token lookup failed: %s", exc)
+                return ""
+            if data.get("error"):
+                logger.warning(
+                    "me/accounts page-token lookup returned %s",
+                    data.get("error"),
+                )
+                return ""
+            for page in data.get("data") or []:
+                if str(page.get("id") or "").strip() == wanted:
+                    resolved = str(page.get("access_token") or "").strip()
+                    if resolved:
+                        return resolved
+            url = (data.get("paging") or {}).get("next")
+            params = None
+        return ""
 
     def upload_photo(self, media_url, caption, product_id=""):
         url = f"{FB_GRAPH_URL}/{self.page_id}/photos"

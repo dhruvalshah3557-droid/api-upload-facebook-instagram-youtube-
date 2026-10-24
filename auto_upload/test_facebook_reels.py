@@ -93,6 +93,37 @@ class FacebookReelsTests(unittest.TestCase):
             post.call_args.kwargs["files"]["source"][1], b"landscape-video"
         )
 
+    def test_page_token_uses_me_accounts_when_direct_lookup_fails(self):
+        import facebook_uploader
+
+        facebook_uploader._PAGE_TOKEN_CACHE.clear()
+        responses = [
+            _Response({"error": {"message": "(#100) Tried accessing nonexisting field (access_token)"}}),
+            _Response({
+                "data": [
+                    {"id": "other-page", "access_token": "wrong"},
+                    {"id": "page-123", "access_token": "page-scoped-token"},
+                ]
+            }),
+        ]
+        with mock.patch("facebook_uploader.requests.get", side_effect=responses) as get:
+            resolved = FacebookUploader._resolve_page_token("page-123", "user-token")
+        self.assertEqual(resolved, "page-scoped-token")
+        self.assertEqual(facebook_uploader._PAGE_TOKEN_CACHE["page-123"], "page-scoped-token")
+        self.assertTrue(get.call_args_list[0].args[0].endswith("/page-123"))
+        self.assertTrue(get.call_args_list[1].args[0].endswith("/me/accounts"))
+
+    def test_unresolved_page_token_does_not_fall_back_to_user_token(self):
+        import facebook_uploader
+
+        facebook_uploader._PAGE_TOKEN_CACHE.clear()
+        with mock.patch(
+            "facebook_uploader.requests.get",
+            return_value=_Response({"data": [{"id": "other-page", "access_token": "x"}]}),
+        ):
+            with self.assertRaisesRegex(Exception, "could not resolve a page-scoped access token"):
+                FacebookUploader._resolve_page_token("page-123", "user-token")
+
 
 if __name__ == "__main__":
     unittest.main()
