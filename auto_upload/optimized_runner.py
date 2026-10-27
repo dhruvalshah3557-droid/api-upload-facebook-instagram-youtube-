@@ -1147,9 +1147,12 @@ def _accept_healthy_job(
 
     selection = str(job.get("media_selection", "") or "")
     force_video = (
-        str(job.get("format", "") or "").strip().lower() == "video"
-        or selection == "product_video"
+        selection == "product_video"
         or selection.startswith("model_video:")
+        or (
+            str(job.get("format", "") or "").strip().lower() == "video"
+            and not selection.startswith("model_photo:")
+        )
     )
     media_problem = _media_preflight_reason(media, force_video=force_video)
     if media_problem:
@@ -1447,12 +1450,17 @@ def _healthy_candidates(
         1 for job in selected
         if str(job.get("platform", "") or "").lower() == "instagram"
     )
+    youtube_used = sum(
+        1 for job in selected
+        if str(job.get("platform", "") or "").lower() == "youtube"
+    )
     if leftover > 0:
         leftover, housekeeping = _fill_model_media_leftover(
             leftover, selected, jobs_by_account, accounts, sources, sheets,
             reserved_fingerprints, seen_fingerprints, housekeeping, limit,
             instagram_cooldown, instagram_cap, instagram_used,
             recent_upload_activity, facebook_auth_dead,
+            youtube_auth_dead=youtube_auth_dead, youtube_used=youtube_used,
         )
         if leftover:
             main.logger.info(
@@ -1467,14 +1475,15 @@ def _fill_model_media_leftover(
     leftover, selected, jobs_by_account, accounts, sources, sheets,
     reserved_fingerprints, seen_fingerprints, housekeeping, limit,
     instagram_cooldown, instagram_cap, instagram_used, recent_upload_activity,
-    facebook_auth_dead=None,
+    facebook_auth_dead=None, youtube_auth_dead=None, youtube_used=0,
 ):
-    """Spend unused YouTube/TikTok/Facebook budget on model photo/video only."""
+    """Spend unused budget on model photo/video, including YouTube Shorts."""
     if leftover <= 0:
         return leftover, housekeeping
     already_ids = {id(job) for job in selected}
     order = []
-    for platform in ("facebook", "instagram"):
+    youtube_cap = _youtube_run_cap(int(limit))
+    for platform in ("youtube", "facebook", "instagram"):
         if platform == "instagram" and instagram_cooldown:
             continue
         for account_id in _enabled_account_order(accounts, platform):
@@ -1485,6 +1494,8 @@ def _fill_model_media_leftover(
                 continue
             if platform == "facebook" and account_id in (facebook_auth_dead or ()):
                 continue
+            if platform == "youtube" and account_id in (youtube_auth_dead or ()):
+                continue
             if (
                 _minimum_delivery_priority(account_id, recent_upload_activity)[0] != 0
                 and not _local_slot_due(account_id, account, recent_upload_activity)
@@ -1492,10 +1503,12 @@ def _fill_model_media_leftover(
                 continue
             order.append((platform, account_id, account))
     order.sort(key=lambda item: (
+        0 if item[0] == "youtube" else 1,
         _minimum_delivery_priority(item[1], recent_upload_activity),
         item[1],
     ))
     instagram_selected = int(instagram_used or 0)
+    youtube_selected = int(youtube_used or 0)
     model_video_failures = {}
     progressed = True
     while leftover > 0 and len(selected) < limit and progressed:
@@ -1506,6 +1519,8 @@ def _fill_model_media_leftover(
             if platform == "instagram":
                 if instagram_cooldown or instagram_selected >= instagram_cap:
                     continue
+            if platform == "youtube" and youtube_selected >= youtube_cap:
+                continue
             account_jobs = [
                 job for job in jobs_by_account.get(account_id, [])
                 if is_model_media(job) and id(job) not in already_ids
@@ -1544,6 +1559,8 @@ def _fill_model_media_leftover(
             progressed = True
             if platform == "instagram":
                 instagram_selected += 1
+            if platform == "youtube":
+                youtube_selected += 1
             main.logger.info(
                 "Leftover model-media slot: %s (%s) %s",
                 account_id, platform, chosen.get("media_selection", ""),

@@ -13,7 +13,7 @@ from googleapiclient.http import MediaIoBaseUpload
 import io
 import mimetypes
 
-from media_prep import prepare_video
+from media_prep import media_kind, prepare_image_as_short, prepare_video
 
 logger = logging.getLogger(__name__)
 
@@ -135,16 +135,24 @@ class YouTubeUploader:
 
         return build("youtube", "v3", credentials=creds)
 
-    def _download_video(self, url):
+    def _download_video(self, url, selection_key=""):
         logger.info(f"Downloading video for YouTube: {url}")
-        name, content, content_type = prepare_video(
-            url, fill_9x16=True, platform="youtube"
-        )
+        if media_kind(url) != "video":
+            logger.info("Converting still image to YouTube Short: %s", url)
+            name, content, content_type = prepare_image_as_short(
+                url, selection_key=selection_key or url, platform="youtube",
+            )
+        else:
+            name, content, content_type = prepare_video(
+                url, fill_9x16=True, selection_key=selection_key, platform="youtube",
+            )
         return io.BytesIO(content), content_type
 
-    def upload(self, media_url, title, description="", tags=None):
+    def upload(self, media_url, title, description="", tags=None, selection_key=""):
         logger.info("Uploading to YouTube...")
-        video_content, content_type = self._download_video(media_url)
+        video_content, content_type = self._download_video(
+            media_url, selection_key=selection_key,
+        )
 
         body = {
             "snippet": {

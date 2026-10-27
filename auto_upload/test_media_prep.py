@@ -269,6 +269,35 @@ class MusicRotationTests(unittest.TestCase):
         remux.assert_called_once()
         self.assertEqual(content, b"aac-original-sound")
 
+    def test_prepare_image_as_short_builds_vertical_video(self):
+        response = mock.Mock(
+            content=b"jpeg-bytes",
+            headers={"Content-Type": "image/jpeg"},
+        )
+        response.raise_for_status.return_value = None
+
+        def fake_run(cmd, check=False, capture_output=True):
+            out = cmd[-1]
+            Path(out).write_bytes(b"short-bytes")
+            return mock.Mock(returncode=0, stdout="", stderr=b"")
+
+        with mock.patch("media_prep.shutil.which", return_value="/usr/bin/ffmpeg"), \
+             mock.patch("media_prep.requests.get", return_value=response), \
+             mock.patch("media_prep._resolve_music", return_value="/tmp/music.mp3"), \
+             mock.patch("media_prep._probe_dimensions", return_value=(1080, 1920)), \
+             mock.patch("media_prep.audio_state", return_value="audible"), \
+             mock.patch("media_prep.subprocess.run", side_effect=fake_run) as run:
+            name, content, content_type = media_prep.prepare_image_as_short(
+                "https://media.example/100_model.jpg",
+                selection_key="youtube|YT-CD|https://media.example/100_model.jpg",
+            )
+        command = " ".join(run.call_args.args[0])
+        self.assertIn("-loop 1", command)
+        self.assertIn("setdar=9/16", command)
+        self.assertEqual(name, "100_model.mp4")
+        self.assertEqual(content, b"short-bytes")
+        self.assertEqual(content_type, "video/mp4")
+
     def test_display_rotation_uses_side_data(self):
         stream = {
             "width": 1920,

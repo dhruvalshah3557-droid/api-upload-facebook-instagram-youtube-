@@ -63,6 +63,7 @@ _VIDEO_TYPES = (
 )
 
 REELS_WIDTH, REELS_HEIGHT = 1080, 1920
+SHORTS_IMAGE_DURATION = 8.0
 # Only replace a soundtrack when it is genuinely inaudible.  The previous
 # -45 dB cutoff treated quiet camera/ambient audio as silence and replaced the
 # model video's original sound.
@@ -523,6 +524,74 @@ def _ensure_playable_audio(video_path, out_path):
         return False
     logger.info("Remuxed original soundtrack to AAC so Meta will play it")
     return True
+
+
+def prepare_image_as_short(media_url, selection_key="", platform="youtube"):
+    """Turn a still image into a 9:16 Short with background music."""
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise RuntimeError("ffmpeg is required to publish still images as YouTube Shorts")
+    suffix = Path(str(media_url).split("?")[0]).suffix or ".jpg"
+    fd, tmp_path = tempfile.mkstemp(suffix=suffix)
+    os.close(fd)
+    temp_paths = [tmp_path]
+    try:
+        resp = _request_get(_fresh_media_url(media_url), timeout=180, headers=DOWNLOAD_HEADERS)
+        with open(tmp_path, "wb") as handle:
+            handle.write(resp.content)
+        music_key = selection_key or media_url
+        music_path = _resolve_music(music_key, temp_paths)
+        fitted = tmp_path + ".short.mp4"
+        temp_paths.append(fitted)
+        dest = str(platform or "youtube").strip().lower()
+        fg_w, fg_h = _foreground_canvas(dest)
+        duration = SHORTS_IMAGE_DURATION
+        fade_out_start = max(0.0, duration - 0.8)
+        filter_complex = (
+            "[0:v]split=2[bgsrc][fgsrc];"
+            f"[bgsrc]scale={REELS_WIDTH}:{REELS_HEIGHT}:force_original_aspect_ratio=increase,"
+            f"crop={REELS_WIDTH}:{REELS_HEIGHT},boxblur=24:8[bg];"
+            f"[fgsrc]scale={fg_w}:{fg_h}:force_original_aspect_ratio=decrease[fg];"
+            "[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1,setdar=9/16,fps=30[v];"
+            f"[1:a]loudnorm=I=-16:TP=-1.5:LRA=11,volume=0.72,"
+            f"afade=t=in:st=0:d=0.35,afade=t=out:st={fade_out_start}:d=0.8[a]"
+        )
+        cmd = [
+            ffmpeg, "-y",
+            "-loop", "1", "-t", str(duration), "-i", tmp_path,
+            "-stream_loop", "-1", "-i", music_path,
+            "-filter_complex", filter_complex,
+            "-map", "[v]", "-map", "[a]",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
+            "-pix_fmt", "yuv420p", "-r", "30", "-t", str(duration),
+            *_audio_encode_args(),
+            "-movflags", "+faststart",
+            fitted,
+        ]
+        proc = subprocess.run(cmd, check=False, capture_output=True)
+        if proc.returncode != 0:
+            detail = (proc.stderr or b"").decode(errors="ignore")[-800:]
+            raise RuntimeError(f"Image-to-Short conversion failed: {detail}")
+        dimensions = _probe_dimensions(fitted)
+        if dimensions and dimensions != (REELS_WIDTH, REELS_HEIGHT):
+            raise RuntimeError(
+                f"Short conversion produced {dimensions[0]}x{dimensions[1]}, "
+                f"expected {REELS_WIDTH}x{REELS_HEIGHT}"
+            )
+        if audio_state(fitted) in ("missing", "silent"):
+            raise RuntimeError("Image-to-Short conversion produced a silent video")
+        name = f"{Path(str(media_url).split('?')[0]).stem or 'short'}.mp4"
+        logger.info(
+            "Converted still image to YouTube Short: %s duration=%ss",
+            name, duration,
+        )
+        return name, Path(fitted).read_bytes(), "video/mp4"
+    finally:
+        for path in temp_paths:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
 
 
 def prepare_video(media_url, fill_9x16=False, selection_key="", platform=""):

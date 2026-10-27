@@ -990,6 +990,7 @@ def test_youtube_jobs_are_queued_when_only_product_images_mismatch():
     assert ("YT-CD", "product_video") in selections, jobs
     assert ("YT-CD", "model_video:0") in selections, jobs
     assert ("YT-CD", "model_video:1") not in selections, jobs
+    assert ("YT-CD", "model_photo:0") not in selections, jobs
     assert ("FB-CD", "model_video:0") in selections, jobs
     assert ("FB-CD", "model_video:1") not in selections, jobs
     assert ("FB-CD", "carousel") not in selections, jobs
@@ -999,6 +1000,45 @@ def test_youtube_jobs_are_queued_when_only_product_images_mismatch():
     assert _is_clean_source(source, {"media_selection": "model_video:0", "platform": "facebook"})[0] is True
     assert _is_clean_source(source, {"media_selection": "model_video:1", "platform": "facebook"})[0] is False
     print("OK test_youtube_jobs_are_queued_when_only_product_images_mismatch")
+
+
+def test_youtube_queues_model_photos_like_instagram():
+    from job_generator import generate_jobs
+
+    source = _source("100")
+    source["model_images"] = ["http://example.com/100_model.jpg"]
+    accounts = [
+        _account("IG-CD", "instagram"),
+        _account("YT-CD", "youtube"),
+    ]
+    jobs = generate_jobs({"100": source}, accounts)
+    selections = {
+        (job["account_id"], job["media_selection"], job["format"])
+        for job in jobs
+        if job["status"] != "needs_review"
+    }
+    assert ("IG-CD", "model_photo:0", "carousel") in selections, jobs
+    assert ("YT-CD", "model_photo:0", "video") in selections, jobs
+    assert ("YT-CD", "model_video:0", "video") in selections, jobs
+    assert ("YT-CD", "product_video", "video") in selections, jobs
+    assert not any(
+        job["account_id"] == "YT-CD" and job["media_selection"] == "carousel"
+        for job in jobs
+    ), jobs
+    print("OK test_youtube_queues_model_photos_like_instagram")
+
+
+def test_youtube_title_and_tags_match_instagram_copy():
+    source = _source("298")
+    source["product_name"] = "Fancy Yellow Diamond Ring"
+    job = {"platform": "youtube", "title": ""}
+    title = main._youtube_title(job, source, "#diamond #jewellery")
+    assert title.endswith("#Shorts"), title
+    assert title.startswith("Fancy Yellow Diamond Ring"), title
+    tags = main._youtube_tags("#diamond #jewellery #Shorts", source)
+    assert tags[:2] == ["diamond", "jewellery"], tags
+    assert "298" in tags, tags
+    print("OK test_youtube_title_and_tags_match_instagram_copy")
 
 
 def test_dns_and_integrity_preflight_failures_are_retried():
@@ -1055,6 +1095,8 @@ if __name__ == "__main__":
     test_glued_model_photo_and_video_links_use_model_photo_video_origin()
     test_dead_cdn_hosts_are_rewritten_onto_live_origin()
     test_youtube_jobs_are_queued_when_only_product_images_mismatch()
+    test_youtube_queues_model_photos_like_instagram()
+    test_youtube_title_and_tags_match_instagram_copy()
     test_dns_and_integrity_preflight_failures_are_retried()
     test_ffprobe_timeout_is_not_broken_media()
     print("All pipeline tests passed.")

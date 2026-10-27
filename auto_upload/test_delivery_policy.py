@@ -431,6 +431,64 @@ class DeliveryPolicyTests(unittest.TestCase):
             ["yt-5", "yt-4", "yt-3", "yt-2", "yt-1"],
         )
 
+    def test_leftover_slots_prefer_youtube_model_photos(self):
+        accounts = {
+            "FB-A": _primary("FB-A", "facebook"),
+            "YT-CD": _primary("YT-CD", "youtube"),
+        }
+        jobs = [{
+            "job_id": "100-FB-A-carousel",
+            "account_id": "FB-A",
+            "platform": "facebook",
+            "sku": "100",
+            "row": 1,
+            "attempts": 0,
+            "notes": "",
+            "media_selection": "carousel",
+            "format": "carousel",
+        }]
+        sources = {"100": {"sku": "100"}}
+        for idx in range(1, 4):
+            sku = "yt-photo-%s" % idx
+            sources[sku] = {"sku": sku}
+            jobs.append({
+                "job_id": "%s-YT-CD-model_photo-0" % sku,
+                "media_selection": "model_photo:0",
+                "format": "video",
+                "account_id": "YT-CD",
+                "platform": "youtube",
+                "sku": sku,
+                "row": idx,
+                "attempts": 0,
+                "notes": "",
+            })
+        sheets = type("Sheets", (), {"update_job": staticmethod(lambda *a, **k: None)})()
+        activity = {
+            "FB-A": {"count": 8, "last": None, "success_times": []},
+            "YT-CD": {"count": 0, "last": None, "success_times": []},
+        }
+
+        def resolve(job, source):
+            if str(job.get("media_selection", "")).startswith("model_photo:"):
+                return ["https://example.com/%s.jpg" % job.get("sku")]
+            return ["https://example.com/%s.jpg" % job.get("sku")]
+
+        with patch("optimized_runner.resolve_media_fixed", side_effect=resolve), \
+             patch("optimized_runner._dns_resolves", return_value=True), \
+             patch("optimized_runner.main._classify_media_url", return_value="image"), \
+             patch("optimized_runner._local_slot_due", return_value=False), \
+             patch("optimized_runner._video_validation_reason", return_value=""), \
+             patch.dict("os.environ", {"YT_MAX_JOBS_PER_RUN": "6"}, clear=False):
+            selected = optimized_runner._healthy_candidates(
+                jobs, accounts, sources, sheets, limit=6,
+                recent_upload_activity=activity,
+            )
+        youtube_jobs = [job for job in selected if job["account_id"] == "YT-CD"]
+        self.assertGreaterEqual(len(youtube_jobs), 3)
+        self.assertTrue(all(
+            job["media_selection"] == "model_photo:0" for job in youtube_jobs
+        ))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -161,9 +161,12 @@ def _probe_job_media(job, media):
     strict = []
     selection = str(job.get("media_selection", "") or "")
     expects_video = (
-        str(job.get("format", "") or "").strip().lower() == "video"
-        or selection == "product_video"
+        selection == "product_video"
         or selection.startswith("model_video:")
+        or (
+            str(job.get("format", "") or "").strip().lower() == "video"
+            and not selection.startswith("model_photo:")
+        )
     )
     for url in media:
         # Product/model video jobs are videos by contract even when their CDN
@@ -509,6 +512,33 @@ _BLANK_PRODUCT_CAPTION_RE = re.compile(
 )
 
 
+def _youtube_title(job, source, caption=""):
+    """Build a Shorts-friendly title from the same product copy Instagram uses."""
+    title = str(job.get("title") or "").strip()
+    if not title:
+        title = _product_title(source)
+    title = re.sub(r"\s+", " ", title.replace("\n", " ")).strip() or "Diamond Jewelry"
+    if "#shorts" not in title.lower():
+        suffix = " #Shorts"
+        title = title[: max(1, 100 - len(suffix))].rstrip() + suffix
+    return title[:100]
+
+
+def _youtube_tags(caption, source):
+    tags = []
+    seen = set()
+    for match in re.findall(r"#([A-Za-z0-9_]+)", str(caption or "")):
+        key = match.lower()
+        if key in seen or key == "shorts":
+            continue
+        seen.add(key)
+        tags.append(match)
+    sku = str((source or {}).get("sku") or "").strip()
+    if sku and sku.lower() not in seen:
+        tags.append(sku)
+    return tags[:15]
+
+
 def _product_title(source):
     name = str((source or {}).get("product_name") or "").strip()
     if name:
@@ -634,7 +664,11 @@ def build_caption(job, source, account):
         elif platform in ("instagram", "line"):
             caption = source.get("instagram_caption", "")
         elif platform == "youtube":
-            caption = source.get("youtube_shorts_caption", "") or source.get("facebook_caption", "")
+            caption = (
+                source.get("youtube_shorts_caption", "")
+                or source.get("instagram_caption", "")
+                or source.get("facebook_caption", "")
+            )
         elif platform in ("tiktok", "x", "twitch", "shopee", "lazada"):
             caption = source.get("instagram_caption", "") or source.get("facebook_caption", "")
         elif platform == "linkedin":
@@ -763,9 +797,17 @@ def publish_job(job, source, account):
             if not all(client_kwargs.values()):
                 raise Exception("ColourDiamondss requires its dedicated YouTube client ID and secret")
         uploader = YouTubeUploader(refresh_token=yt_token, **client_kwargs)
-        title = (job.get("title") or source.get("product_name") or "Video")[:100]
+        title = _youtube_title(job, source, caption)
         description = caption
-        response = uploader.upload(media[0], title, description)
+        if "#shorts" not in description.lower():
+            description = f"{description}\n\n#Shorts".strip()
+        response = uploader.upload(
+            media[0],
+            title,
+            description,
+            tags=_youtube_tags(caption, source),
+            selection_key=f"youtube|{account.get('account_id', '')}|{media[0]}",
+        )
         post_id = response.get("id", "")
         url = f"https://youtu.be/{post_id}"
         return post_id, url
