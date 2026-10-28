@@ -4,7 +4,7 @@ import sys
 import types
 import unittest
 from unittest.mock import patch
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -1250,7 +1250,8 @@ class FullRepairTests(unittest.TestCase):
         )
 
     def test_recent_facebook_permission_failure_skips_page_not_instagram(self):
-        now = datetime(2026, 10, 24, 12, 0, tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        recent_attempt = (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
         jobs = [
             {
                 "job_id": "6009-FB-VNM-product_video",
@@ -1263,7 +1264,7 @@ class FullRepairTests(unittest.TestCase):
                 "attempts": 1,
                 "notes": "",
                 "error_message": "(#100) No permission to publish the video",
-                "last_attempt_at": "2026-10-24T11:00:00Z",
+                "last_attempt_at": recent_attempt,
             },
             {
                 "job_id": "6010-FB-VNM-product_video",
