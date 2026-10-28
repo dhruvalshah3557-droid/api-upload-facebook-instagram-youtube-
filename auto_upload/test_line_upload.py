@@ -21,8 +21,7 @@ def _install(name, attrs=None):
 
 gspread = _install("gspread", {})
 gspread.exceptions = types.SimpleNamespace(APIError=Exception)
-_install("oauth2client")
-_install("oauth2client.service_account", {"ServiceAccountCredentials": lambda *a, **k: None})
+gspread.service_account = lambda *a, **k: None
 _install("dotenv", {"load_dotenv": lambda *a, **k: None})
 _install("requests", {
     "get": lambda *a, **k: None,

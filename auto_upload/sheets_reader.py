@@ -10,7 +10,6 @@ from urllib.parse import quote, unquote, urlparse
 
 import gspread
 from config import Config
-from oauth2client.service_account import ServiceAccountCredentials
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +74,7 @@ def _retry_gsheet(func):
 
 class SheetsReader:
     SCOPE = [
-        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive",
     ]
     SOURCE_HEADER_ROW = 1
@@ -218,8 +217,7 @@ class SheetsReader:
         creds_path = Config.GOOGLE_SHEET_CREDENTIALS
         if not os.path.exists(creds_path):
             raise FileNotFoundError(f"Service account credentials not found at: {creds_path}")
-        creds = ServiceAccountCredentials.from_json_keyfile_name(creds_path, self.SCOPE)
-        return gspread.authorize(creds)
+        return gspread.service_account(filename=creds_path, scopes=self.SCOPE)
 
     @staticmethod
     def _col_map(worksheet, header_row=1):
