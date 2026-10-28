@@ -1248,6 +1248,129 @@ class FullRepairTests(unittest.TestCase):
             set(),
         )
 
+    def test_missing_youtube_token_skips_channel_without_burning_slot(self):
+        now = datetime(2026, 10, 28, 13, 30, tzinfo=timezone.utc)
+        jobs = [
+            {
+                "job_id": "2379-YT-TREND-product_video",
+                "account_id": "YT-TREND",
+                "platform": "youtube",
+                "sku": "2379",
+                "media_selection": "model_video:0",
+                "format": "video",
+                "row": 1,
+                "attempts": 1,
+                "notes": "",
+                "error_message": (
+                    "No YouTube OAuth refresh token configured for "
+                    "YOUTUBE_OAUTH_REFRESH_TOKEN_TRENDINGJEWELS "
+                    "(a per-account token must be set; refusing to fall back to the shared token)"
+                ),
+                "last_attempt_at": "2026-10-28T13:26:37Z",
+            },
+            {
+                "job_id": "2056-YT-CD-model_video-0",
+                "account_id": "YT-CD",
+                "platform": "youtube",
+                "sku": "2056",
+                "media_selection": "model_video:0",
+                "format": "video",
+                "row": 2,
+                "attempts": 0,
+                "notes": "",
+                "error_message": "",
+            },
+        ]
+        accounts = {
+            "YT-TREND": {
+                "enabled": True,
+                "platform": "youtube",
+                "platform_account_id": "UCWSGpmJfBIzcA9O9kFWaRNw",
+                "timezone": "Asia/Bangkok",
+                "credential_property_key": "YOUTUBE_OAUTH_REFRESH_TOKEN_TRENDINGJEWELS",
+            },
+            "YT-CD": {
+                "enabled": True,
+                "platform": "youtube",
+                "platform_account_id": "UCTWbcY-YtvAx2QUZKXt230A",
+                "timezone": "Asia/Bangkok",
+                "credential_property_key": "YOUTUBE_OAUTH_REFRESH_TOKEN_COLOURDIAMONDSS",
+            },
+        }
+        sources = {
+            "2379": {"sku": "2379", "model_videos": ["https://media.example/trend.mp4"]},
+            "2056": {"sku": "2056", "model_videos": ["https://media.example/cd.mp4"]},
+        }
+        sheets = types.SimpleNamespace(update_job=lambda *args, **kwargs: None)
+        env = {
+            "YOUTUBE_OAUTH_REFRESH_TOKEN_COLOURDIAMONDSS": "cd-token",
+            "YT_MAX_JOBS_PER_RUN": "6",
+        }
+        with patch.dict("os.environ", env, clear=False), \
+             patch("optimized_runner._platform_limits", return_value={"facebook": 0, "instagram": 0, "youtube": 1, "line": 0}), \
+             patch("optimized_runner._local_slot_due", return_value=True), \
+             patch("optimized_runner._rotation_rank", side_effect=lambda aid, *a, **k: 0 if aid == "YT-TREND" else 1), \
+             patch("optimized_runner._is_clean_source", return_value=(True, "")), \
+             patch("optimized_runner.resolve_media_fixed", side_effect=lambda job, source: source.get("model_videos") or []), \
+             patch("optimized_runner._dns_resolves", return_value=True), \
+             patch("optimized_runner.main._classify_media_url", return_value="video"), \
+             patch("optimized_runner._video_validation_reason", return_value=""):
+            self.assertEqual(
+                optimized_runner._youtube_auth_dead_accounts(jobs, now=now, accounts=accounts),
+                {"YT-TREND"},
+            )
+            selected = optimized_runner._healthy_candidates(
+                jobs, accounts, sources, sheets, limit=1,
+            )
+        self.assertEqual([job["account_id"] for job in selected], ["YT-CD"])
+
+    def test_missing_youtube_token_jobs_are_revived_once_secret_is_wired(self):
+        updates = []
+        records = [{
+            "status": "pending",
+            "platform": "youtube",
+            "account_id": "YT-TREND",
+            "error_message": (
+                "No YouTube OAuth refresh token configured for "
+                "YOUTUBE_OAUTH_REFRESH_TOKEN_TRENDINGJEWELS "
+                "(a per-account token must be set; refusing to fall back to the shared token)"
+            ),
+            "notes": "",
+        }, {
+            "status": "failed",
+            "platform": "youtube",
+            "account_id": "YT-CD",
+            "error_message": "invalid_grant: Token has been expired or revoked.",
+            "notes": "",
+        }]
+        sheets = types.SimpleNamespace(
+            queue_header_row=1,
+            queue_ws=types.SimpleNamespace(get_all_records=lambda head=1: records),
+            update_job=lambda job, payload: updates.append((job, payload)),
+        )
+        accounts = {
+            "YT-TREND": {
+                "enabled": True,
+                "platform": "youtube",
+                "credential_property_key": "YOUTUBE_OAUTH_REFRESH_TOKEN_TRENDINGJEWELS",
+            },
+            "YT-CD": {
+                "enabled": True,
+                "platform": "youtube",
+                "credential_property_key": "YOUTUBE_OAUTH_REFRESH_TOKEN_COLOURDIAMONDSS",
+            },
+        }
+        env = {
+            "YOUTUBE_OAUTH_REFRESH_TOKEN_TRENDINGJEWELS": "trend-token",
+            "YOUTUBE_OAUTH_REFRESH_TOKEN_COLOURDIAMONDSS": "cd-token",
+        }
+        with patch.dict("os.environ", env, clear=False):
+            revived = optimized_runner._revive_youtube_oauth_jobs(sheets, accounts)
+        self.assertEqual(revived, 1)
+        self.assertEqual(updates[0][1]["status"], "pending")
+        self.assertEqual(updates[0][1]["attempts"], 0)
+        self.assertIn("YouTube OAuth token wiring", updates[0][1]["notes"])
+
     def test_recent_facebook_permission_failure_skips_page_not_instagram(self):
         now = datetime.now(timezone.utc)
         recent_attempt = (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -1322,7 +1445,7 @@ class FullRepairTests(unittest.TestCase):
              patch("optimized_runner._media_preflight_reason", return_value=""), \
              patch("optimized_runner.main.build_caption", return_value="ok"):
             selected = optimized_runner._healthy_candidates(
-                jobs, accounts, sources, sheets, limit=2,
+                jobs, accounts, sources, sheets, limit=2, now=now,
             )
         self.assertEqual([job["account_id"] for job in selected], ["IG-VNM"])
 

@@ -67,6 +67,7 @@ _UNUSABLE_PENDING_MARKERS = (
     "unauthorized for url",
     "token has been expired or revoked",
 )
+_YOUTUBE_MISSING_TOKEN_MARKER = "no youtube oauth refresh token configured"
 YOUTUBE_AUTH_DEAD_HOURS = 12
 FACEBOOK_AUTH_DEAD_HOURS = 12
 _RETRIABLE_PREFLIGHT_MARKERS = (
@@ -144,18 +145,47 @@ def _facebook_auth_dead_accounts(jobs, now=None):
     return dead
 
 
-def _youtube_auth_dead_accounts(jobs, now=None):
-    """YouTube accounts whose latest OAuth error is still fresh.
+def _youtube_token_configured(account):
+    """True when this YouTube account can authenticate in the current run.
 
-    One invalid_grant on YT-JIYA used to burn the only YouTube slot every run
-    while @colourdiamondss (YT-CD) never got a turn. Skip the dead channel
-    until its token is repaired; older historical errors do not quarantine.
+    A blank credential_property_key uses the shared refresh token path and is
+    treated as configured so tests and legacy rows keep working. A named key
+    must be present in the environment; otherwise the channel is skipped.
+    """
+    key = str((account or {}).get("credential_property_key", "") or "").strip()
+    if not key:
+        return True
+    return bool(str(os.getenv(key) or "").strip())
+
+
+def _youtube_missing_token_error(job):
+    blob = " ".join((
+        str((job or {}).get("error_message", "") or ""),
+        str((job or {}).get("notes", "") or ""),
+    )).lower()
+    return _YOUTUBE_MISSING_TOKEN_MARKER in blob
+
+
+def _youtube_auth_dead_accounts(jobs, now=None, accounts=None):
+    """YouTube accounts that cannot consume a production slot this run.
+
+    Skip a channel when its per-account refresh token is missing from the
+    environment so it cannot burn the YouTube slot. Recent invalid_grant /
+    invalid_client still quarantine for 12 hours. A missing-token error is
+    not treated as dead OAuth once the env mapping is present.
     """
     now = now or datetime.now(timezone.utc)
     cutoff = now - timedelta(hours=YOUTUBE_AUTH_DEAD_HOURS)
     dead = set()
+    for account_id, account in (accounts or {}).items():
+        if str((account or {}).get("platform", "") or "").strip().lower() != "youtube":
+            continue
+        if account.get("enabled") and not _youtube_token_configured(account):
+            dead.add(account_id)
     for job in jobs or ():
         if str(job.get("platform", "") or "").strip().lower() != "youtube":
+            continue
+        if _youtube_missing_token_error(job):
             continue
         if not _known_unusable_pending(job):
             continue
@@ -560,6 +590,14 @@ def _account_publish_ready(account):
     if account.get("platform") == "tiktok":
         return bool(account.get("platform_account_id") and (
             os.getenv(account.get("credential_property_key", "")) or os.getenv("ZERNIO_API_KEY")))
+    if account.get("platform") == "youtube":
+        if _youtube_token_configured(account):
+            return True
+        main.logger.warning(
+            "Active YouTube account %s has no OAuth refresh token in this run; skipping",
+            account.get("account_id", ""),
+        )
+        return False
     if account.get("platform") != "instagram" or account.get("platform_account_id"):
         return True
 
@@ -945,6 +983,53 @@ def _revive_unfetchable_media_jobs(sheets, accounts):
     return revived
 
 
+def _revive_youtube_oauth_jobs(sheets, accounts):
+    """Requeue YouTube jobs that failed only because the env mapping was missing.
+
+    TREND tokens were never injected into production, so those rows recorded
+    a missing-token error. Once the secret is present, clear the error and
+    retry. Real invalid_grant / invalid_client failures stay quarantined.
+    """
+    enabled = {
+        aid for aid, a in accounts.items()
+        if a.get("enabled") and str(a.get("platform", "") or "").strip().lower() == "youtube"
+        and _youtube_token_configured(a)
+    }
+    if not enabled:
+        return 0
+    records = sheets.queue_ws.get_all_records(head=sheets.queue_header_row)
+    revived = 0
+    for idx, rec in enumerate(records, start=sheets.queue_header_row + 1):
+        if revived >= REVIVE_LIMIT:
+            break
+        if str(rec.get("platform", "") or "").strip().lower() != "youtube":
+            continue
+        status = str(rec.get("status", "")).strip().lower()
+        if status not in (
+            "", "pending", Config.JOB_STATUS_FAILED, Config.JOB_STATUS_NEEDS_REVIEW,
+        ):
+            continue
+        account_id = str(rec.get("account_id", "") or "").strip()
+        if account_id not in enabled:
+            continue
+        blob = " ".join((
+            str(rec.get("error_message", "") or ""),
+            str(rec.get("notes", "") or ""),
+        )).lower()
+        if _YOUTUBE_MISSING_TOKEN_MARKER not in blob:
+            continue
+        sheets.update_job({"row": idx}, {
+            "status": "pending",
+            "attempts": 0,
+            "error_message": "",
+            "notes": "Auto-revived after YouTube OAuth token wiring",
+        })
+        revived += 1
+    if revived:
+        main.logger.info("Revived %s YouTube OAuth job(s)", revived)
+    return revived
+
+
 def _revive_skipped_model_jobs(sheets, accounts):
     """Requeue model photo/video jobs skipped by a product-media duplicate lock.
 
@@ -1210,7 +1295,7 @@ def _accept_healthy_job(
 
 def _healthy_candidates(
     jobs, accounts, sources, sheets, limit, reserved_fingerprints=None,
-    recent_upload_activity=None,
+    recent_upload_activity=None, now=None,
 ):
     """Pick one healthy job per enabled account without cross-platform starvation.
 
@@ -1240,13 +1325,14 @@ def _healthy_candidates(
             "TikTok selection skipped: Zernio returned unauthorized/401; "
             "not consuming a production slot until the token is repaired"
         )
-    youtube_auth_dead = _youtube_auth_dead_accounts(jobs)
+    now = now or datetime.now(timezone.utc)
+    youtube_auth_dead = _youtube_auth_dead_accounts(jobs, now=now, accounts=accounts)
     if youtube_auth_dead:
         main.logger.warning(
             "YouTube account(s) skipped until OAuth is repaired: %s",
             ", ".join(sorted(youtube_auth_dead)),
         )
-    facebook_auth_dead = set(_CACHED_FACEBOOK_AUTH_DEAD) | _facebook_auth_dead_accounts(jobs)
+    facebook_auth_dead = set(_CACHED_FACEBOOK_AUTH_DEAD) | _facebook_auth_dead_accounts(jobs, now=now)
     if facebook_auth_dead:
         main.logger.warning(
             "Facebook account(s) skipped until a page-scoped token is resolved: %s",
@@ -1341,11 +1427,11 @@ def _healthy_candidates(
             account = accounts.get(account_id)
             if not account or not account.get("enabled"):
                 continue
-            if not _account_publish_ready(account):
-                continue
             if platform == "youtube" and account_id in youtube_auth_dead:
                 continue
             if platform == "facebook" and account_id in facebook_auth_dead:
+                continue
+            if not _account_publish_ready(account):
                 continue
 
             account_jobs = [
@@ -1490,11 +1576,11 @@ def _fill_model_media_leftover(
             account = accounts.get(account_id)
             if not account or not account.get("enabled"):
                 continue
-            if not _account_publish_ready(account):
-                continue
             if platform == "facebook" and account_id in (facebook_auth_dead or ()):
                 continue
             if platform == "youtube" and account_id in (youtube_auth_dead or ()):
+                continue
+            if not _account_publish_ready(account):
                 continue
             if (
                 _minimum_delivery_priority(account_id, recent_upload_activity)[0] != 0
@@ -1656,6 +1742,7 @@ def process_optimized():
     _revive_unfetchable_media_jobs(sheets, accounts)
     _revive_pre_publish_holds(sheets, accounts)
     _revive_skipped_model_jobs(sheets, accounts)
+    _revive_youtube_oauth_jobs(sheets, accounts)
     jobs = sheets.get_pending_jobs()
     if not jobs:
         main.logger.info("No pending jobs")

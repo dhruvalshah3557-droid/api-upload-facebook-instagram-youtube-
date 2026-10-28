@@ -104,7 +104,7 @@ def main():
         "--suffix",
         default="",
         help="Account suffix for the secret key, e.g. JIYA -> "
-        "YOUTUBE_OAUTH_REFRESH_TOKEN_JIYA",
+        "YOUTUBE_OAUTH_REFRESH_TOKEN_JIYA, TRENDINGJEWELS, TREND",
     )
     parser.add_argument(
         "--local",

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Enable YT-CD and YT-JIYA on the Accounts sheet without rewriting other rows."""
+"""Enable YT-CD, YT-JIYA, YT-TREND and YT-TRENDJEWEL without rewriting other rows."""
 import sys
 
 from sheets_reader import SheetsReader
@@ -78,6 +78,80 @@ ACCOUNTS = (
             "notes": (
                 "YouTube jiyasdelight channel enabled. Uses "
                 "YOUTUBE_OAUTH_REFRESH_TOKEN_JIYA."
+            ),
+        },
+    },
+    {
+        "account_id": "YT-TREND",
+        "updates": {
+            "enabled": "Yes",
+            "credential_property_key": "YOUTUBE_OAUTH_REFRESH_TOKEN_TRENDINGJEWELS",
+            "approval_required": "No",
+            "notes": (
+                "YouTube Trendingjewels channel enabled. Uses "
+                "YOUTUBE_OAUTH_REFRESH_TOKEN_TRENDINGJEWELS."
+            ),
+        },
+        "new_row": {
+            "account_id": "YT-TREND",
+            "platform": "YouTube",
+            "account_name": "Trendingjewels YouTube",
+            "platform_account_id": "UCWSGpmJfBIzcA9O9kFWaRNw",
+            "username_or_channel": "trendingjewels",
+            "primary_language": "en-GB",
+            "fallback_language": "en-GB",
+            "timezone": "Asia/Bangkok",
+            "enabled": "Yes",
+            "allowed_formats": "YouTube Video, YouTube Short",
+            "caption_style": "Search-friendly luxury education",
+            "hashtag_set": "YouTube keywords; 3-5 hashtags",
+            "cta_rule": "Product link in description",
+            "posting_window": "12:00-21:00 local",
+            "min_gap_minutes": "180",
+            "product_tagging": "No",
+            "catalog_or_store_id": "",
+            "credential_property_key": "YOUTUBE_OAUTH_REFRESH_TOKEN_TRENDINGJEWELS",
+            "approval_required": "No",
+            "notes": (
+                "YouTube Trendingjewels channel enabled. Uses "
+                "YOUTUBE_OAUTH_REFRESH_TOKEN_TRENDINGJEWELS."
+            ),
+        },
+    },
+    {
+        "account_id": "YT-TRENDJEWEL",
+        "updates": {
+            "enabled": "Yes",
+            "credential_property_key": "YOUTUBE_OAUTH_REFRESH_TOKEN_TREND",
+            "approval_required": "No",
+            "notes": (
+                "YouTube Trending Jewel channel enabled. Uses "
+                "YOUTUBE_OAUTH_REFRESH_TOKEN_TREND."
+            ),
+        },
+        "new_row": {
+            "account_id": "YT-TRENDJEWEL",
+            "platform": "YouTube",
+            "account_name": "Trending Jewel YouTube",
+            "platform_account_id": "UCiOkTy5C8_dZw-TlzYKeOVA",
+            "username_or_channel": "trendingjewel",
+            "primary_language": "en-GB",
+            "fallback_language": "en-GB",
+            "timezone": "Asia/Bangkok",
+            "enabled": "Yes",
+            "allowed_formats": "YouTube Video, YouTube Short",
+            "caption_style": "Search-friendly luxury education",
+            "hashtag_set": "YouTube keywords; 3-5 hashtags",
+            "cta_rule": "Product link in description",
+            "posting_window": "12:00-21:00 local",
+            "min_gap_minutes": "180",
+            "product_tagging": "No",
+            "catalog_or_store_id": "",
+            "credential_property_key": "YOUTUBE_OAUTH_REFRESH_TOKEN_TREND",
+            "approval_required": "No",
+            "notes": (
+                "YouTube Trending Jewel channel enabled. Uses "
+                "YOUTUBE_OAUTH_REFRESH_TOKEN_TREND."
             ),
         },
     },
