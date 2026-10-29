@@ -67,11 +67,27 @@ def _localized_script(record, language):
     header = LANG_DESCRIPTION_HEADERS.get(code, "")
     return preview_script(record.get(header) or record.get(header.title()) or record.get("PRODUCT DESCRIPTION") or record.get("DETAILS") or "")
 
+def _duplicate_safe_records(worksheet):
+    """Read rows while tolerating repeated/blank headers in the legacy sheet."""
+    values = worksheet.get_all_values()
+    if not values:
+        return []
+    headers, unique = values[0], []
+    seen = {}
+    for index, raw in enumerate(headers):
+        header = str(raw or "").strip() or f"column_{index + 1}"
+        count = seen.get(header.casefold(), 0) + 1
+        seen[header.casefold()] = count
+        unique.append(header if count == 1 else f"{header}__duplicate_{count}")
+    return [dict(zip(unique, row + [""] * (len(unique) - len(row)))) for row in values[1:]]
+
 def generate(sku, language="en-GB", client=None, auto_approve=True):
     client = client or _client()
     now = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     ws = _worksheet(client)
-    records = client.open_by_url(Config.MODEL_MEDIA_SHEET_URL).worksheet("jewellery stock ").get_all_records()
+    records = _duplicate_safe_records(
+        client.open_by_url(Config.MODEL_MEDIA_SHEET_URL).worksheet("jewellery stock ")
+    )
     record = next((r for r in records if _normalize_sku(r.get("SKU","")) == _normalize_sku(sku)), None)
     if not record: raise ValueError(f"SKU {sku} not found")
     extras = str(record.get("multiple video link") or "").replace("\r","\n").split("\n")
@@ -118,11 +134,15 @@ def generate_automatic(limit=2):
         candidates.append(pair)
         if len(candidates) >= max(1, int(limit)):
             break
+    errors = []
     for sku, language in candidates:
         try:
             generate(sku, language, client=client, auto_approve=True)
         except Exception as exc:
             logger.exception("Automatic preview failed for %s/%s: %s", sku, language, exc)
+            errors.append(f"{sku}/{language}: {exc}")
+    if candidates and len(errors) == len(candidates):
+        raise RuntimeError("All automatic voice previews failed: " + "; ".join(errors))
 
 if __name__ == "__main__":
     parser=argparse.ArgumentParser(); parser.add_argument("--sku"); parser.add_argument("--language",default="en-GB"); parser.add_argument("--auto-limit",type=int,default=2); args=parser.parse_args()
