@@ -2,6 +2,10 @@ name: Generate Voice Previews
 on:
   schedule:
     - cron: "7,27,47 * * * *"
+  push:
+    branches: [master]
+    paths:
+      - .github/voice-preview-trigger.txt
   workflow_dispatch:
     inputs:
       sku: {description: SKU from Main Data, required: true}
