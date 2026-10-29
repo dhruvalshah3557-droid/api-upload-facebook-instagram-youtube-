@@ -85,11 +85,17 @@ def generate(sku, language="en-GB", client=None, auto_approve=True):
     client = client or _client()
     now = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     ws = _worksheet(client)
-    records = _duplicate_safe_records(
-        client.open_by_url(Config.MODEL_MEDIA_SHEET_URL).worksheet("jewellery stock ")
-    )
-    record = next((r for r in records if _normalize_sku(r.get("SKU","")) == _normalize_sku(sku)), None)
-    if not record: raise ValueError(f"SKU {sku} not found")
+    source_book = client.open_by_url(Config.MODEL_MEDIA_SHEET_URL)
+    record = None
+    for tab_name in ("jewellery stock ", "diamond stock "):
+        records = _duplicate_safe_records(source_book.worksheet(tab_name))
+        record = next(
+            (r for r in records if _normalize_sku(r.get("SKU", r.get("STK", ""))) == _normalize_sku(sku)),
+            None,
+        )
+        if record:
+            break
+    if not record: raise ValueError(f"SKU {sku} not found in jewellery stock or diamond stock")
     extras = str(record.get("multiple video link") or "").replace("\r","\n").split("\n")
     media_urls = list(dict.fromkeys(u.strip() for u in [record.get("video link"), *extras] if str(u or "").strip()))
     script = _localized_script(record, language)
