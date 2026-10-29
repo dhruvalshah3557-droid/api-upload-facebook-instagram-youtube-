@@ -110,11 +110,20 @@ def generate(sku, language="en-GB", client=None, auto_approve=True):
             if audio_state(str(video)) == "audible":
                 ws.append_row([f"{sku}-{language_code(language)}-{media_key}-original",now,sku,media_url,language,"","",script,"","Original Audio Preserved",now,"",""])
                 continue
-            for index, voice in enumerate(choose_voices(language), 1):
+            voices = choose_voices(language)
+            # Rotate the automatically selected voice across videos/accounts,
+            # but keep the result deterministic for the same media URL. This
+            # avoids every Reel sounding like Libby while preventing a retry
+            # from unexpectedly changing an already approved narration.
+            selected_index = int(
+                hashlib.sha256(f"{media_url}|{language_code(language)}".encode("utf-8")).hexdigest()[:8],
+                16,
+            ) % max(1, len(voices))
+            for index, voice in enumerate(voices, 1):
                 preview_id = f"{sku}-{language_code(language)}-{media_key}-{index}"
                 output = Path(folder)/f"{preview_id}.mp3"; synthesize(script, voice["ShortName"], output)
                 url = _release_asset(output, output.name)
-                selected = auto_approve and index == 1
+                selected = auto_approve and (index - 1) == selected_index
                 status = "Approved" if selected else "Pending Approval"
                 ws.append_row([preview_id,now,sku,media_url,language,voice["ShortName"],voice.get("Gender",""),script,url,status,now if selected else "","",""])
                 logger.info("Created %s", url)
