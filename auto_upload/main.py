@@ -161,7 +161,7 @@ def _probe_job_media(job, media):
     strict = []
     selection = str(job.get("media_selection", "") or "")
     expects_video = (
-        selection == "product_video"
+        selection.startswith("product_video")
         or selection.startswith("model_video:")
         or (
             str(job.get("format", "") or "").strip().lower() == "video"
@@ -294,6 +294,13 @@ def resolve_media(job, source):
 
     if selection == "product_video":
         return [source["video_url"]] if source["video_url"] else []
+    if selection.startswith("product_video:"):
+        try:
+            idx = int(selection.split(":", 1)[1])
+            videos = source.get("product_videos", [])
+            return [videos[idx]] if 0 <= idx < len(videos) else []
+        except (ValueError, IndexError):
+            return []
     if selection.startswith("model_photo:"):
         try:
             idx = int(selection.split(":", 1)[1])
@@ -723,6 +730,7 @@ def publish_job(job, source, account):
     platform = job.get("platform", "")
     format_type = job.get("format", "")
     caption = build_caption(job, source, account)
+    voiceover = job.get("_approved_voiceover")
 
     media = _filter_valid_media(media)
     if not media:
@@ -752,7 +760,7 @@ def publish_job(job, source, account):
             else:
                 post = uploader.upload_carousel(images, caption, tag)
         else:
-            post = uploader.upload(media[0], caption, tag)
+            post = uploader.upload(media[0], caption, tag, voiceover=voiceover)
         post_id = post.get("id", "")
         url = uploader.permalink_url(post_id) or _facebook_post_url(
             account["platform_account_id"], post_id
@@ -770,6 +778,7 @@ def publish_job(job, source, account):
             post = uploader.upload(
                 media[0], caption, tag, cover_url=source.get("main_image", ""),
                 force_video=(format_type == "video"),
+                voiceover=voiceover,
             )
         post_id = post.get("id", "")
         url = uploader.permalink(post_id) or f"https://www.instagram.com/p/{post_id}"
@@ -807,6 +816,7 @@ def publish_job(job, source, account):
             description,
             tags=_youtube_tags(caption, source),
             selection_key=f"youtube|{account.get('account_id', '')}|{media[0]}",
+            voiceover=voiceover,
         )
         post_id = response.get("id", "")
         url = f"https://youtu.be/{post_id}"
@@ -1077,6 +1087,12 @@ def process_pending(sheets=None):
             post_id, url = "", ""
             try:
                 caption = build_caption(job, source, account)
+                media_for_voice = resolve_media(job, source)
+                if hasattr(sheets, "get_approved_voiceover"):
+                    job["_approved_voiceover"] = sheets.get_approved_voiceover(
+                        job.get("sku", ""), account.get("primary_language", "en"),
+                        media_for_voice[0] if media_for_voice else "",
+                    )
                 post_id, url = publish_job(job, source, account)
                 updates = {
                     "status": Config.JOB_STATUS_UPLOADED,

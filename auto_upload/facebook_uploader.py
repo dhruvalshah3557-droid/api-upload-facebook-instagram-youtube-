@@ -124,7 +124,7 @@ class FacebookUploader:
                 }
             }
 
-    def upload_video(self, media_url, caption, product_id=""):
+    def upload_video(self, media_url, caption, product_id="", voiceover=None):
         """Publish original video bytes. Vertical uses Reels; landscape/square use Page video."""
         logger.info(
             f"[{self.page_name}] Preparing Facebook video with original size and sound"
@@ -134,6 +134,7 @@ class FacebookUploader:
             fill_9x16=True,
             selection_key=f"facebook|{self.page_id}|{media_url}",
             platform="facebook",
+            voiceover=voiceover,
         )
         layout = video_layout_from_bytes(content)
         if layout != "vertical":
@@ -257,10 +258,10 @@ class FacebookUploader:
         logger.error(f"[{self.page_name}] Carousel failed: {result}")
         raise Exception(result.get("error", {}).get("message", str(result)))
 
-    def upload(self, media_url, caption, product_id=""):
+    def upload(self, media_url, caption, product_id="", voiceover=None):
         is_video = any(ext in media_url.lower() for ext in [".mp4", ".mov", ".avi", ".mkv", ".webm"])
         if is_video:
-            return self.upload_video(media_url, caption, product_id)
+            return self.upload_video(media_url, caption, product_id, voiceover=voiceover)
         return self.upload_photo(media_url, caption, product_id)
 
     @staticmethod

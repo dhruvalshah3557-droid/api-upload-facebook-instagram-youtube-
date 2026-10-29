@@ -1,0 +1,29 @@
+name: Generate Voice Previews
+on:
+  workflow_dispatch:
+    inputs:
+      sku: {description: SKU from Main Data, required: true}
+      language: {description: "Locale such as fr-FR, ur-PK, zh-HK", required: true, default: en-GB}
+permissions: {contents: write}
+concurrency:
+  group: voice-preview-${{ inputs.sku }}-${{ inputs.language }}
+  cancel-in-progress: false
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    defaults: {run: {working-directory: auto_upload}}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: {python-version: "3.12", cache: pip, cache-dependency-path: auto_upload/requirements.txt}
+      - run: sudo apt-get update -y && sudo apt-get install -y --no-install-recommends ffmpeg
+      - run: pip install -r requirements.txt
+      - name: Write Google credentials
+        env: {GOOGLE_SHEET_CREDENTIALS_JSON: "${{ secrets.GOOGLE_SHEET_CREDENTIALS_JSON }}"}
+        run: echo "$GOOGLE_SHEET_CREDENTIALS_JSON" > credentials/service_account.json
+      - name: Generate listenable previews
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          MODEL_MEDIA_SHEET_URL: https://docs.google.com/spreadsheets/d/1kAD1ASXaaqrBmNHDVMYgj_cfW8pFJPEiRCY8ENutAvQ/edit
+          GOOGLE_SHEET_CREDENTIALS: credentials/service_account.json
+        run: python voice_preview.py --sku '${{ inputs.sku }}' --language '${{ inputs.language }}'

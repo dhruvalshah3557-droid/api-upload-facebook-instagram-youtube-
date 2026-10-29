@@ -88,6 +88,7 @@ jobs:
           MAX_GENERATE_JOBS: "80"
           UPLOAD_INTERVAL_SECONDS: "45"
           AUTO_ADD_AUDIO: "true"
+          APPROVED_VOICEOVER_ENABLED: "true"
           # Audible model videos keep their original sound; music is added only when silent.
           TRENDING_AUDIO_URL: ${{ secrets.TRENDING_AUDIO_URL }}
           # Optional comma-separated licensed library. When unset, the pinned

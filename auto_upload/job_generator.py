@@ -48,7 +48,7 @@ def _job_is_video_only(job):
     if platform not in ("youtube", "twitch"):
         return False
     selection = str((job or {}).get("media_selection", "") or "")
-    return selection.startswith("model_video:") or selection == "product_video"
+    return selection.startswith("model_video:") or selection.startswith("product_video")
 
 
 def _indexed_source_url(source, field, selection):
@@ -133,7 +133,7 @@ def model_media_priority(job):
         return 0
     if selection.startswith("model_photo:"):
         return 1
-    if selection == "product_video":
+    if selection.startswith("product_video"):
         return 2
     return 3
 
@@ -148,6 +148,14 @@ def _append_model_jobs(
     if photos:
         for i in range(len(source.get("model_images", []))):
             jobs.append(_make_job(sku, account_id, platform, photo_format, f"model_photo:{i}", account))
+
+def _append_product_video_jobs(jobs, sku, account_id, platform, account, source):
+    videos = list(source.get("product_videos") or [])
+    if not videos and source.get("video_url"):
+        videos = [source["video_url"]]
+    for index, _url in enumerate(videos):
+        selection = "product_video" if index == 0 else f"product_video:{index}"
+        jobs.append(_make_job(sku, account_id, platform, "video", selection, account))
 
 
 def _make_review_job(sku, account, reason):
@@ -235,8 +243,7 @@ def generate_jobs(sources, accounts):
 
             if platform in ("facebook", "instagram", "line", "wechat", "pinterest", "x", "linkedin", "tiktok"):
                 _append_model_jobs(jobs, sku, account_id, platform, account, source)
-                if source["video_url"]:
-                    jobs.append(_make_job(sku, account_id, platform, "video", "product_video", account))
+                _append_product_video_jobs(jobs, sku, account_id, platform, account, source)
                 if has_carousel_media:
                     jobs.append(_make_job(sku, account_id, platform, "carousel", "carousel", account))
             elif platform == "youtube":
@@ -262,10 +269,7 @@ def generate_jobs(sources, accounts):
                         jobs, sku, account_id, platform, account, source,
                         photo_format="video",
                     )
-                    if source["video_url"]:
-                        jobs.append(_make_job(
-                            sku, account_id, platform, "video", "product_video", account,
-                        ))
+                    _append_product_video_jobs(jobs, sku, account_id, platform, account, source)
             elif platform == "twitch":
                 for i, url in enumerate(source.get("model_videos") or []):
                     if not integrity_error or _video_url_matches_sku(source, url):
@@ -276,7 +280,10 @@ def generate_jobs(sources, accounts):
                 if source["video_url"] and (
                     not integrity_error or _video_url_matches_sku(source)
                 ):
-                    jobs.append(_make_job(sku, account_id, platform, "video", "product_video", account))
+                    if integrity_error:
+                        jobs.append(_make_job(sku, account_id, platform, "video", "product_video", account))
+                    else:
+                        _append_product_video_jobs(jobs, sku, account_id, platform, account, source)
             elif platform in ("shopee", "lazada"):
                 if has_carousel_media:
                     jobs.append(_make_job(sku, account_id, platform, "carousel", "carousel", account))

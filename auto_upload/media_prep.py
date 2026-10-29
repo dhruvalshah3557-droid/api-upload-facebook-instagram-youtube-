@@ -594,7 +594,7 @@ def prepare_image_as_short(media_url, selection_key="", platform="youtube"):
                 pass
 
 
-def prepare_video(media_url, fill_9x16=False, selection_key="", platform=""):
+def prepare_video(media_url, fill_9x16=False, selection_key="", platform="", voiceover=None):
     """Return (name, bytes, content_type) for a video upload.
 
     Production rule: silent/muted videos MUST receive audio automatically.
@@ -631,7 +631,15 @@ def prepare_video(media_url, fill_9x16=False, selection_key="", platform=""):
         )
         if auto_audio and state in ("missing", "silent"):
             music_key = selection_key or media_url
-            music_path = _resolve_music(music_key, temp_paths)
+            voiceover = voiceover or {}
+            if voiceover.get("script") and voiceover.get("voice_name"):
+                from voiceover import synthesize
+                music_path = tmp_path + ".voice.mp3"
+                temp_paths.append(music_path)
+                synthesize(voiceover["script"], voiceover["voice_name"], music_path)
+                logger.info("Using approved voice preview %s", voiceover.get("preview_id", ""))
+            else:
+                music_path = _resolve_music(music_key, temp_paths)
             mixed_path = tmp_path + ".mixed.mp4"
             temp_paths.append(mixed_path)
             current = _mix_music(tmp_path, music_path, mixed_path, music_key)

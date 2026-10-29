@@ -1232,7 +1232,7 @@ def _accept_healthy_job(
 
     selection = str(job.get("media_selection", "") or "")
     force_video = (
-        selection == "product_video"
+        selection.startswith("product_video")
         or selection.startswith("model_video:")
         or (
             str(job.get("format", "") or "").strip().lower() == "video"
@@ -1681,6 +1681,13 @@ def guarded_publish(job, source, account):
     sheets = _CURRENT_SHEETS
     if sheets is None:
         return ORIGINAL_PUBLISH_JOB(job, source, account)
+
+    media = main.resolve_media(job, source)
+    if hasattr(sheets, "get_approved_voiceover"):
+        job["_approved_voiceover"] = sheets.get_approved_voiceover(
+            job.get("sku", ""), account.get("primary_language", "en"),
+            media[0] if media else "",
+        )
 
     old_notes = str(job.get("notes", "") or "")
     marker = _fingerprint_marker(job, source)

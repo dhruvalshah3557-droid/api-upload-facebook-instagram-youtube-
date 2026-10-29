@@ -188,12 +188,17 @@ class SheetsReader:
         self.queue_ws = sheet.worksheet(Config.QUEUE_SHEET)
         self.log_ws = sheet.worksheet(Config.LOG_SHEET)
         self.model_media_ws = None
+        self.voice_preview_ws = None
         self.mirror_log_ws = None
         self.mirror_log_header_row = None
         if Config.MODEL_MEDIA_SHEET_URL:
             try:
                 model_sheet = self.client.open_by_url(Config.MODEL_MEDIA_SHEET_URL)
                 self.model_media_ws = model_sheet.worksheet(Config.MODEL_MEDIA_SOURCE_SHEET)
+                try:
+                    self.voice_preview_ws = model_sheet.worksheet("Voice Previews")
+                except gspread.WorksheetNotFound:
+                    pass
             except Exception as exc:
                 # The primary workbook must remain usable if the supplemental
                 # workbook is temporarily unavailable or has not yet been
@@ -627,6 +632,9 @@ class SheetsReader:
                     f"product link belongs to another SKU ({product_link})"
                 )
             details = self._pick(rec, "DETAILS", "Details")
+            video_url = str(rec.get("video link", "")).strip()
+            multiple_video = self._split_lines(rec.get("multiple video link", ""))
+            product_videos = list(dict.fromkeys(url for url in [video_url, *multiple_video] if url))
             sources[sku] = {
                 "row": idx,
                 "sku": sku,
@@ -641,8 +649,10 @@ class SheetsReader:
                 "images": images,
                 "main_image": main_image,
                 "side_images": side_images,
-                "video_url": str(rec.get("video link", "")).strip(),
-                "multiple_video": self._split_lines(rec.get("multiple video link", "")),
+                "video_url": video_url,
+                "multiple_video": multiple_video,
+                "product_videos": product_videos,
+                "product_description": self._pick(rec, "PRODUCT DESCRIPTION", "Product Description"),
                 "model_images": model_images,
                 "model_videos": model_videos,
                 "facebook_caption": self._pick(rec, "FACEBOOK CAPTION", "Facebook Caption"),
@@ -656,6 +666,24 @@ class SheetsReader:
             }
         self._merge_model_media_rows(sources)
         return sources
+
+    def get_approved_voiceover(self, sku, language, media_url=""):
+        """Return the one approved preview for this SKU/language/media."""
+        if self.voice_preview_ws is None:
+            return None
+        lang = str(language or "en").strip().lower().split("-", 1)[0]
+        for row in reversed(self.voice_preview_ws.get_all_records()):
+            if str(row.get("status", "")).strip().lower() != "approved":
+                continue
+            if str(row.get("sku", "")).strip() != str(sku).strip():
+                continue
+            row_lang = str(row.get("language", "en")).strip().lower().split("-", 1)[0]
+            if row_lang != lang:
+                continue
+            if media_url and str(row.get("media_url", "")).strip() not in ("", str(media_url).strip()):
+                continue
+            return {"preview_id": row.get("preview_id", ""), "voice_name": row.get("voice_name", ""), "script": row.get("script", "")}
+        return None
 
     def _merge_model_media_rows(self, sources):
         """Merge supplemental model media by SKU without creating new products.

@@ -135,7 +135,7 @@ class YouTubeUploader:
 
         return build("youtube", "v3", credentials=creds)
 
-    def _download_video(self, url, selection_key=""):
+    def _download_video(self, url, selection_key="", voiceover=None):
         logger.info(f"Downloading video for YouTube: {url}")
         if media_kind(url) != "video":
             logger.info("Converting still image to YouTube Short: %s", url)
@@ -144,14 +144,14 @@ class YouTubeUploader:
             )
         else:
             name, content, content_type = prepare_video(
-                url, fill_9x16=True, selection_key=selection_key, platform="youtube",
+                url, fill_9x16=True, selection_key=selection_key, platform="youtube", voiceover=voiceover,
             )
         return io.BytesIO(content), content_type
 
-    def upload(self, media_url, title, description="", tags=None, selection_key=""):
+    def upload(self, media_url, title, description="", tags=None, selection_key="", voiceover=None):
         logger.info("Uploading to YouTube...")
         video_content, content_type = self._download_video(
-            media_url, selection_key=selection_key,
+            media_url, selection_key=selection_key, voiceover=voiceover,
         )
 
         body = {
