@@ -1,1 +1,1 @@
-Deterministic Libby, Maisie and Ryan voice rotation: 2026-10-29T09:47:00Z
+Regional translation plus round-robin native voices: 2026-10-29T09:53:00Z

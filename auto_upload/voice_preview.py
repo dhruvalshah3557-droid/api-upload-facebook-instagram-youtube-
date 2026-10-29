@@ -9,6 +9,7 @@ from pathlib import Path
 import gspread
 import requests
 from google.oauth2.service_account import Credentials
+from deep_translator import GoogleTranslator
 from config import Config
 from media_prep import DOWNLOAD_HEADERS, _request_get, audio_state
 from voiceover import choose_voices, language_code, preview_script, synthesize
@@ -25,6 +26,13 @@ LANG_DESCRIPTION_HEADERS = {
     "ru":"Russian Description", "sv":"sweden description", "th":"Thai Description",
     "tl":"Filipino Description", "tr":"turkish description", "ur":"urdu description",
     "vi":"Vietnamese Description", "zh":"Chinese Description", "zh-hant":"Chinese Description",
+}
+TRANSLATION_TARGETS = {
+    "ar":"ar", "cs":"cs", "da":"da", "de":"de", "el":"el", "es":"es",
+    "fil":"tl", "fr":"fr", "he":"iw", "id":"id", "it":"it", "ja":"ja",
+    "ko":"ko", "lb":"ar", "my":"my", "pl":"pl", "ru":"ru", "sv":"sv",
+    "th":"th", "tl":"tl", "tr":"tr", "ur":"ur", "vi":"vi", "zh":"zh-CN",
+    "zh-hant":"zh-TW",
 }
 
 def _worksheet(client):
@@ -65,7 +73,19 @@ def _normalize_sku(value):
 def _localized_script(record, language):
     code = language_code(language)
     header = LANG_DESCRIPTION_HEADERS.get(code, "")
-    return preview_script(record.get(header) or record.get(header.title()) or record.get("PRODUCT DESCRIPTION") or record.get("DETAILS") or "")
+    localized = str(record.get(header) or record.get(header.title()) or "").strip()
+    if localized:
+        return preview_script(localized)
+    english = preview_script(record.get("PRODUCT DESCRIPTION") or record.get("DETAILS") or "")
+    if code == "en" or not english:
+        return english
+    target = TRANSLATION_TARGETS.get(code)
+    if not target:
+        raise ValueError(f"No translation target configured for regional language {language}")
+    translated = GoogleTranslator(source="auto", target=target).translate(english)
+    if not translated or str(translated).strip().casefold() == english.casefold():
+        raise RuntimeError(f"Regional translation failed for {language}; refusing English narration")
+    return preview_script(translated)
 
 def _duplicate_safe_records(worksheet):
     """Read rows while tolerating repeated/blank headers in the legacy sheet."""
@@ -101,6 +121,12 @@ def generate(sku, language="en-GB", client=None, auto_approve=True):
     script = _localized_script(record, language)
     if not media_urls or not script: raise ValueError(f"SKU {sku} needs video in S/U and PRODUCT DESCRIPTION in AE")
     existing = ws.get_all_records()
+    approved_count = sum(
+        1 for row in existing
+        if str(row.get("status", "")).strip().lower() == "approved"
+        and str(row.get("voice_name", "")).strip()
+    )
+    rotation_offset = 0
     for media_url in media_urls:
         with tempfile.TemporaryDirectory() as folder:
             video = Path(folder)/"source.mp4"; video.write_bytes(_request_get(media_url, timeout=180, headers=DOWNLOAD_HEADERS).content)
@@ -111,14 +137,11 @@ def generate(sku, language="en-GB", client=None, auto_approve=True):
                 ws.append_row([f"{sku}-{language_code(language)}-{media_key}-original",now,sku,media_url,language,"","",script,"","Original Audio Preserved",now,"",""])
                 continue
             voices = choose_voices(language)
-            # Rotate the automatically selected voice across videos/accounts,
-            # but keep the result deterministic for the same media URL. This
-            # avoids every Reel sounding like Libby while preventing a retry
-            # from unexpectedly changing an already approved narration.
-            selected_index = int(
-                hashlib.sha256(f"{media_url}|{language_code(language)}".encode("utf-8")).hexdigest()[:8],
-                16,
-            ) % max(1, len(voices))
+            # True round-robin across approved previews: Libby -> Maisie ->
+            # Ryan -> repeat. Existing media is skipped above, so reruns keep
+            # their approved voice while new videos do not sound repetitive.
+            selected_index = (approved_count + rotation_offset) % max(1, len(voices))
+            rotation_offset += 1
             for index, voice in enumerate(voices, 1):
                 preview_id = f"{sku}-{language_code(language)}-{media_key}-{index}"
                 output = Path(folder)/f"{preview_id}.mp3"; synthesize(script, voice["ShortName"], output)

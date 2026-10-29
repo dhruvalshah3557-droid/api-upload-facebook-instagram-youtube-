@@ -7,3 +7,4 @@ Pillow==13.0.0
 google-api-python-client==2.201.0
 google-auth-oauthlib==1.5.0
 edge-tts>=7.0,<8
+deep-translator>=1.11,<2
