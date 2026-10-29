@@ -21,6 +21,59 @@ def _account(account_id, platform, enabled=True, platform_account_id="123"):
 
 
 class WatchdogDeliveryTests(unittest.TestCase):
+    def test_manual_review_title_ignores_per_run_log_timestamp(self):
+        first = (
+            "2026-10-28T21:52:00.123Z ##[error]Meta token preflight failed: "
+            "code=190 subcode=459"
+        )
+        second = (
+            "2026-10-29T01:44:00Z ##[error]Meta token preflight failed: "
+            "code=190 subcode=459"
+        )
+        self.assertEqual(
+            watchdog.manual_review_title(first),
+            watchdog.manual_review_title(second),
+        )
+
+    def test_find_manual_review_issue_reuses_legacy_timestamped_title(self):
+        key = (
+            "2026-10-29T01:44:00Z ##[error]Meta token preflight failed: "
+            "code=190 subcode=459 message=checkpoint"
+        )
+        legacy_title = (
+            "[manual-review] 2026-10-28T21:52:00Z ##[error]Meta token "
+            "preflight failed: code=190"
+        )
+        issues = [
+            {"number": 23, "title": legacy_title},
+            {"number": 21, "title": legacy_title},
+        ]
+        with patch.object(watchdog, "list_open_issues", return_value=issues):
+            issue = watchdog.find_manual_review_issue("token", key)
+        self.assertEqual(issue["number"], 21)
+
+    def test_escalate_manual_review_normalizes_legacy_issue(self):
+        key = (
+            "2026-10-29T01:44:00Z ##[error]Meta token preflight failed: "
+            "code=190 subcode=459"
+        )
+        issue = {
+            "number": 21,
+            "title": "[manual-review] 2026-10-28T21:52:00Z ##[error]Meta token",
+            "body": "Affected runs:\n40734808872",
+        }
+        failed_runs = [{"id": 40734808872}, {"id": 40788520625}]
+        with patch.object(
+            watchdog, "find_manual_review_issue", return_value=issue
+        ), patch.object(watchdog, "gh_api", return_value=(200, {})) as api:
+            result = watchdog.escalate_manual_review("token", key, failed_runs)
+        self.assertIn("40788520625", result)
+        payload = api.call_args.args[3]
+        self.assertEqual(payload["title"], watchdog.manual_review_title(key))
+        self.assertNotIn("2026-10-29", payload["body"])
+        self.assertIn("40734808872", payload["body"])
+        self.assertIn("40788520625", payload["body"])
+
     def test_records_from_matrix_map_headers(self):
         matrix = [
             ["account_id", "platform", "enabled", "platform_account_id"],

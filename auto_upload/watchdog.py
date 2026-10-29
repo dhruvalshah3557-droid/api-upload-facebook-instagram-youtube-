@@ -40,6 +40,10 @@ IN_FLIGHT_STATUSES = {"queued", "in_progress", "waiting", "pending", "requested"
 LEDGER_TITLE = "Watchdog Ledger"
 AUTO_FIX_LABEL = "auto-fix"
 MANUAL_REVIEW_LABEL = "manual-review"
+MANUAL_REVIEW_TITLE_PREFIX = "[manual-review] "
+LOG_TIMESTAMP_PREFIX_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\s+"
+)
 CONSECUTIVE_FAILURE_THRESHOLD = 3
 ZERO_UPLOAD_STALL_THRESHOLD = 2
 ZERO_UPLOAD_RE = re.compile(
@@ -446,9 +450,36 @@ def find_auto_fix_issue(token, signature):
     return find_issue_by_title(token, title)
 
 
+def normalize_manual_review_key(key):
+    """Remove per-run log metadata from a credential failure signature."""
+    value = re.sub(r"\s+", " ", str(key or "").strip())
+    return LOG_TIMESTAMP_PREFIX_RE.sub("", value)
+
+
+def manual_review_title(key):
+    return MANUAL_REVIEW_TITLE_PREFIX + normalize_manual_review_key(key)[:80]
+
+
 def find_manual_review_issue(token, key):
-    title = "[manual-review] %s" % key[:80]
-    return find_issue_by_title(token, title)
+    expected_title = manual_review_title(key)
+    expected_key = normalize_manual_review_key(key)
+    legacy_matches = []
+    for issue in list_open_issues(token):
+        title = str(issue.get("title", "") or "")
+        if title == expected_title:
+            return issue
+        if not title.startswith(MANUAL_REVIEW_TITLE_PREFIX):
+            continue
+        candidate = normalize_manual_review_key(
+            title[len(MANUAL_REVIEW_TITLE_PREFIX):]
+        )
+        # Old titles were truncated after a timestamp, so their remaining
+        # stable fragment is shorter than the new normalized title.
+        if len(candidate) >= 32 and expected_key.startswith(candidate):
+            legacy_matches.append(issue)
+    if legacy_matches:
+        return min(legacy_matches, key=lambda issue: issue.get("number", 0))
+    return None
 
 
 def parse_run_ids(body):
@@ -475,7 +506,7 @@ def manual_review_body(key, run_ids):
         "\n"
         "Affected runs:\n"
         "%s"
-    ) % (key, "\n".join(sorted(run_ids, key=int)))
+    ) % (normalize_manual_review_key(key), "\n".join(sorted(run_ids, key=int)))
     return body
 
 
@@ -489,19 +520,25 @@ def escalate_manual_review(token, key, failed_runs):
     if issue:
         existing = parse_run_ids(issue.get("body"))
         added = sorted(run_ids - existing, key=int)
-        if added:
+        stable_title = manual_review_title(key)
+        if added or issue.get("title") != stable_title:
             new_body = manual_review_body(key, existing | run_ids)
-            gh_api(token, "PATCH", "/issues/%s" % issue["number"],
-                   {"body": new_body})
+            gh_api(token, "PATCH", "/issues/%s" % issue["number"], {
+                "title": stable_title,
+                "body": new_body,
+            })
+        if added:
             return "updated manual-review issue #%s with run(s) %s" % (
                 issue["number"], ", ".join(added))
+        if issue.get("title") != stable_title:
+            return "normalized manual-review issue #%s title" % issue["number"]
         return "manual-review issue #%s already up to date" % issue["number"]
 
     legacy = find_auto_fix_issue(token, key)
     if legacy:
         number = legacy["number"]
         gh_api(token, "PATCH", "/issues/%s" % number, {
-            "title": "[manual-review] %s" % key[:80],
+            "title": manual_review_title(key),
             "body": manual_review_body(
                 key, parse_run_ids(legacy.get("body")) | run_ids),
         })
@@ -511,7 +548,7 @@ def escalate_manual_review(token, key, failed_runs):
                {"labels": [MANUAL_REVIEW_LABEL]})
         return "converted auto-fix issue #%s to manual review" % number
 
-    title = "[manual-review] %s" % key[:80]
+    title = manual_review_title(key)
     status, data = gh_api(token, "POST", "/issues", {
         "title": title,
         "body": manual_review_body(key, run_ids),
