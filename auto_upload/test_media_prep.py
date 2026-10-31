@@ -307,6 +307,99 @@ class MusicRotationTests(unittest.TestCase):
         }
         self.assertEqual(media_prep._stream_rotation(stream), 90)
 
+    def test_compress_for_upload_scales_to_platform_cap(self):
+        completed = mock.Mock(returncode=0)
+        with mock.patch("media_prep.shutil.which", return_value="/usr/bin/ffmpeg"), \
+             mock.patch("media_prep.audio_state", return_value="audible"), \
+             mock.patch("media_prep._file_size", return_value=12 * 1024 * 1024), \
+             mock.patch("media_prep.subprocess.run", return_value=completed) as run:
+            media_prep._compress_for_upload("in.mp4", "out.mp4", layout="landscape", crf=23)
+        command = " ".join(run.call_args.args[0])
+        self.assertIn("scale='min(1920,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease", command)
+        self.assertIn("-crf 23", command)
+        self.assertIn("-c:a aac", command)
+
+    def test_prepare_video_compresses_4k_landscape_before_upload(self):
+        response = mock.Mock(
+            content=b"4k-original-bytes",
+            headers={"Content-Type": "video/mp4"},
+        )
+        response.raise_for_status.return_value = None
+
+        def fake_compress(src, dest, layout="", crf=23):
+            Path(dest).write_bytes(b"capped-1080p")
+            return dest
+
+        def fake_dims(path):
+            return (1920, 1080) if ".cap" in str(path) else (3840, 2160)
+
+        with mock.patch("media_prep.requests.get", return_value=response), \
+             mock.patch("media_prep.audio_state", return_value="audible"), \
+             mock.patch("media_prep._probe_dimensions", side_effect=fake_dims), \
+             mock.patch("media_prep.video_layout", return_value="landscape"), \
+             mock.patch("media_prep._to_9x16_fill") as convert, \
+             mock.patch("media_prep._ensure_playable_audio", return_value=False), \
+             mock.patch("media_prep._compress_for_upload", side_effect=fake_compress) as compress, \
+             mock.patch("media_prep._file_size", return_value=18 * 1024 * 1024), \
+             mock.patch.dict(media_prep.os.environ, {"AUTO_ADD_AUDIO": "true"}, clear=True):
+            _, content, _ = media_prep.prepare_video(
+                "https://media.example/4k.mp4", fill_9x16=True, platform="facebook",
+            )
+        convert.assert_not_called()
+        compress.assert_called_once()
+        self.assertEqual(compress.call_args.kwargs.get("layout"), "landscape")
+        self.assertEqual(content, b"capped-1080p")
+
+    def test_prepare_video_recompresses_files_over_upload_cap(self):
+        response = mock.Mock(
+            content=b"huge-original-bytes",
+            headers={"Content-Type": "video/mp4"},
+        )
+        response.raise_for_status.return_value = None
+
+        def fake_compress(src, dest, layout="", crf=23):
+            Path(dest).write_bytes(b"under-95mb")
+            return dest
+
+        with mock.patch("media_prep.requests.get", return_value=response), \
+             mock.patch("media_prep.audio_state", return_value="audible"), \
+             mock.patch("media_prep._probe_dimensions", return_value=(1920, 1080)), \
+             mock.patch("media_prep.video_layout", return_value="landscape"), \
+             mock.patch("media_prep._to_9x16_fill"), \
+             mock.patch("media_prep._ensure_playable_audio", return_value=False), \
+             mock.patch("media_prep._compress_for_upload", side_effect=fake_compress) as compress, \
+             mock.patch(
+                 "media_prep._file_size",
+                 side_effect=[200 * 1024 * 1024, 40 * 1024 * 1024],
+             ), \
+             mock.patch.dict(media_prep.os.environ, {"AUTO_ADD_AUDIO": "true"}, clear=True):
+            _, content, _ = media_prep.prepare_video(
+                "https://media.example/huge.mp4", fill_9x16=True, platform="youtube",
+            )
+        compress.assert_called_once()
+        self.assertEqual(content, b"under-95mb")
+
+    def test_fit_upload_limits_retries_higher_crf_when_still_too_large(self):
+        src = "/tmp/src.mp4"
+        sizes = {
+            src: 200 * 1024 * 1024,
+            f"{src}.cap23.mp4": 120 * 1024 * 1024,
+            f"{src}.cap28.mp4": 40 * 1024 * 1024,
+        }
+
+        def fake_compress(src_path, dest, layout="", crf=23):
+            Path(dest).write_bytes(b"x")
+            return dest
+
+        with mock.patch("media_prep._file_size", side_effect=lambda path: sizes[path]), \
+             mock.patch("media_prep._probe_dimensions", return_value=(1920, 1080)), \
+             mock.patch("media_prep._compress_for_upload", side_effect=fake_compress) as compress:
+            result = media_prep._fit_upload_limits(
+                src, [], layout="landscape", dims=(1920, 1080),
+            )
+        self.assertEqual(result, f"{src}.cap28.mp4")
+        self.assertEqual([call.kwargs["crf"] for call in compress.call_args_list], [23, 28])
+
 
 if __name__ == "__main__":
     unittest.main()

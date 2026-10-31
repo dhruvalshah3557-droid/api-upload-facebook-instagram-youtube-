@@ -63,6 +63,10 @@ _VIDEO_TYPES = (
 )
 
 REELS_WIDTH, REELS_HEIGHT = 1080, 1920
+MAX_LANDSCAPE_WIDTH, MAX_LANDSCAPE_HEIGHT = 1920, 1080
+MAX_SQUARE_EDGE = 1080
+MAX_UPLOAD_BYTES = 95 * 1024 * 1024
+_COMPRESS_CRF_STEPS = (23, 28, 32)
 SHORTS_IMAGE_DURATION = 8.0
 # Only replace a soundtrack when it is genuinely inaudible.  The previous
 # -45 dB cutoff treated quiet camera/ambient audio as silence and replaced the
@@ -429,6 +433,91 @@ def _audio_encode_args():
     return ["-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2"]
 
 
+def _file_size(path):
+    return Path(path).stat().st_size
+
+
+def _max_pixels(layout):
+    if layout == "vertical":
+        return REELS_WIDTH, REELS_HEIGHT
+    if layout == "square":
+        return MAX_SQUARE_EDGE, MAX_SQUARE_EDGE
+    return MAX_LANDSCAPE_WIDTH, MAX_LANDSCAPE_HEIGHT
+
+
+def _exceeds_pixel_cap(dims, layout):
+    if not dims:
+        return False
+    max_w, max_h = _max_pixels(layout)
+    return dims[0] > max_w or dims[1] > max_h
+
+
+def _compress_for_upload(video_path, out_path, layout="", crf=23):
+    """Re-encode so pixel size and file size stay within upload limits."""
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise RuntimeError("ffmpeg is required to compress oversized video")
+    max_w, max_h = _max_pixels(layout)
+    vf = (
+        f"scale='min({max_w},iw)':'min({max_h},ih)':force_original_aspect_ratio=decrease,"
+        "scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1"
+    )
+    input_audio = audio_state(video_path)
+    cmd = [
+        ffmpeg, "-y", "-i", video_path,
+        "-vf", vf,
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", str(crf),
+        "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+    ]
+    if input_audio == "missing":
+        cmd.append("-an")
+    else:
+        cmd.extend(_audio_encode_args())
+    cmd.append(out_path)
+    proc = subprocess.run(cmd, check=False, capture_output=True)
+    if proc.returncode != 0:
+        detail = (proc.stderr or b"").decode(errors="ignore")[-800:]
+        raise RuntimeError(f"Upload-size compression failed: {detail}")
+    output_audio = audio_state(out_path)
+    if input_audio == "audible" and output_audio != "audible":
+        raise RuntimeError(
+            f"Upload-size compression did not preserve audible audio (output={output_audio})"
+        )
+    logger.info(
+        "Compressed upload video crf=%s layout=%s bytes=%d",
+        crf, layout or "unknown", _file_size(out_path),
+    )
+    return out_path
+
+
+def _fit_upload_limits(video_path, temp_paths, layout="", dims=None):
+    """Scale 4K/oversize sources and recompress files above the upload cap."""
+    needs_pixels = _exceeds_pixel_cap(dims, layout)
+    needs_bytes = _file_size(video_path) > MAX_UPLOAD_BYTES
+    if not needs_pixels and not needs_bytes:
+        return video_path
+    current = video_path
+    last_error = None
+    for crf in _COMPRESS_CRF_STEPS:
+        fitted = f"{video_path}.cap{crf}.mp4"
+        temp_paths.append(fitted)
+        try:
+            _compress_for_upload(current, fitted, layout=layout, crf=crf)
+        except RuntimeError as exc:
+            last_error = exc
+            continue
+        current = fitted
+        fitted_dims = _probe_dimensions(current) or dims
+        if not _exceeds_pixel_cap(fitted_dims, layout) and _file_size(current) <= MAX_UPLOAD_BYTES:
+            return current
+    if last_error:
+        raise last_error
+    raise RuntimeError(
+        f"Video still exceeds upload limits after compression "
+        f"({_file_size(current)} bytes)"
+    )
+
+
 def _foreground_canvas(platform):
     """Instagram Reels UI covers more of the frame than Facebook Reels."""
     if str(platform or "").strip().lower() == "instagram":
@@ -678,6 +767,12 @@ def prepare_video(media_url, fill_9x16=False, selection_key="", platform="", voi
             temp_paths.append(remuxed)
             if _ensure_playable_audio(current, remuxed):
                 current = remuxed
+
+        current_dims = _probe_dimensions(current) or current_dims
+        current_layout = video_layout(current) if current != tmp_path else current_layout
+        current = _fit_upload_limits(
+            current, temp_paths, layout=current_layout, dims=current_dims,
+        )
 
         content = Path(current).read_bytes()
         output_name = f"{Path(name).stem}.mp4"
