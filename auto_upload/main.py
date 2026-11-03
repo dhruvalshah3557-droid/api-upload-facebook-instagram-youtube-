@@ -519,9 +519,28 @@ _BLANK_PRODUCT_CAPTION_RE = re.compile(
 )
 
 
+def _youtube_title_from_caption(caption):
+    labels = {str(value).casefold() for value in _PRODUCT_LINK_LABELS.values()}
+    labels.add("view product")
+    for raw in str(caption or "").splitlines():
+        line = re.sub(r"#\S+", " ", raw)
+        line = re.sub(r"https?://\S+", " ", line)
+        line = re.sub(r"\s+", " ", line).strip(" -:•")
+        if not line:
+            continue
+        if line.rstrip(":").strip().casefold() in labels:
+            continue
+        return line
+    return ""
+
+
 def _youtube_title(job, source, caption=""):
     """Build a Shorts-friendly title from the same product copy Instagram uses."""
     title = str(job.get("title") or "").strip()
+    if not title:
+        title = _youtube_title_from_caption(caption)
+    if not title:
+        title = _youtube_title_from_caption((source or {}).get("instagram_caption", ""))
     if not title:
         title = _product_title(source)
     title = re.sub(r"\s+", " ", title.replace("\n", " ")).strip() or "Diamond Jewelry"
@@ -534,12 +553,15 @@ def _youtube_title(job, source, caption=""):
 def _youtube_tags(caption, source):
     tags = []
     seen = set()
-    for match in re.findall(r"#([A-Za-z0-9_]+)", str(caption or "")):
-        key = match.lower()
+    for match in re.findall(r"#([^\s#]+)", str(caption or "")):
+        token = re.sub(r"[^\w]", "", match, flags=re.UNICODE)
+        if not token:
+            continue
+        key = token.casefold()
         if key in seen or key == "shorts":
             continue
         seen.add(key)
-        tags.append(match)
+        tags.append(token)
     sku = str((source or {}).get("sku") or "").strip()
     if sku and sku.lower() not in seen:
         tags.append(sku)
@@ -668,13 +690,9 @@ def build_caption(job, source, account):
     if not caption_text:
         if platform in ("facebook", "wechat", "pinterest"):
             caption = source.get("facebook_caption", "")
-        elif platform in ("instagram", "line"):
-            caption = source.get("instagram_caption", "")
-        elif platform == "youtube":
-            caption = (
-                source.get("youtube_shorts_caption", "")
-                or source.get("instagram_caption", "")
-                or source.get("facebook_caption", "")
+        elif platform in ("instagram", "line", "youtube"):
+            caption = source.get("instagram_caption", "") or source.get(
+                "youtube_shorts_caption", ""
             )
         elif platform in ("tiktok", "x", "twitch", "shopee", "lazada"):
             caption = source.get("instagram_caption", "") or source.get("facebook_caption", "")

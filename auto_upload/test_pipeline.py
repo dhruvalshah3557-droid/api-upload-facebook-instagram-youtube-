@@ -1027,14 +1027,33 @@ def test_youtube_queues_model_photos_like_instagram():
 def test_youtube_title_and_tags_match_instagram_copy():
     source = _source("298")
     source["product_name"] = "Fancy Yellow Diamond Ring"
+    source["instagram_caption"] = "Sparkling yellow diamond ring"
+    source["youtube_shorts_caption"] = "Different YouTube caption"
     job = {"platform": "youtube", "title": ""}
-    title = main._youtube_title(job, source, "#diamond #jewellery")
+    caption = "Sparkling yellow diamond ring\n\n#diamond #jewellery"
+    title = main._youtube_title(job, source, caption)
     assert title.endswith("#Shorts"), title
-    assert title.startswith("Fancy Yellow Diamond Ring"), title
+    assert title.startswith("Sparkling yellow diamond ring"), title
     tags = main._youtube_tags("#diamond #jewellery #Shorts", source)
     assert tags[:2] == ["diamond", "jewellery"], tags
     assert "298" in tags, tags
     print("OK test_youtube_title_and_tags_match_instagram_copy")
+
+
+def test_youtube_caption_matches_instagram():
+    source = _source("298")
+    source["instagram_caption"] = "Sparkling yellow diamond ring"
+    source["youtube_shorts_caption"] = "Different YouTube caption"
+    source["facebook_caption"] = "Facebook copy"
+    source["hashtags"] = "#diamond #jewellery"
+    account = _account("YT-CD", "youtube")
+    yt = main.build_caption({"platform": "youtube", "account_id": "YT-CD"}, source, account)
+    ig = main.build_caption({"platform": "instagram", "account_id": "IG-CD"}, source, account)
+    assert yt == ig, (yt, ig)
+    assert "Sparkling yellow diamond ring" in yt
+    assert "Different YouTube caption" not in yt
+    assert "Facebook copy" not in yt
+    print("OK test_youtube_caption_matches_instagram")
 
 
 def test_dns_and_integrity_preflight_failures_are_retried():
@@ -1093,6 +1112,7 @@ if __name__ == "__main__":
     test_youtube_jobs_are_queued_when_only_product_images_mismatch()
     test_youtube_queues_model_photos_like_instagram()
     test_youtube_title_and_tags_match_instagram_copy()
+    test_youtube_caption_matches_instagram()
     test_dns_and_integrity_preflight_failures_are_retried()
     test_ffprobe_timeout_is_not_broken_media()
     print("All pipeline tests passed.")

@@ -127,6 +127,11 @@ class RegionalLanguageTests(unittest.TestCase):
         self.assertNotIn("English Instagram caption", caption)
         self.assertNotIn("#diamond", caption)
 
+        yt = main.build_caption({"platform": "youtube"}, source, account)
+        self.assertIn("#KimCương", yt)
+        self.assertNotIn("English YouTube caption", yt)
+        self.assertNotIn("English Instagram caption", yt)
+
     def test_greece_generates_native_fallback_when_source_has_no_greek_column(self):
         source = {
             "lang_captions": {},
@@ -540,6 +545,30 @@ class RegionalLanguageTests(unittest.TestCase):
             caption = main.build_caption({"platform": "facebook"}, source, account)
             self.assertIn(tag, caption, language)
             self.assertNotIn("#diamond", caption)
+
+    def test_youtube_english_copy_matches_instagram_not_youtube_shorts_column(self):
+        source = {
+            "sku": "298",
+            "instagram_caption": "Sparkling yellow diamond ring",
+            "youtube_shorts_caption": "Different YouTube caption",
+            "facebook_caption": "Facebook copy",
+            "hashtags": "#diamond #jewellery",
+            "lang_captions": {},
+            "lang_hashtags": {},
+            "product_link": "",
+            "product_name": "Fancy Yellow Diamond Ring",
+        }
+        account = {
+            "primary_language": "en-GB",
+            "account_name": "Colour Diam",
+        }
+        ig = main.build_caption({"platform": "instagram"}, source, account)
+        yt = main.build_caption({"platform": "youtube"}, source, account)
+        self.assertEqual(yt, ig)
+        self.assertIn("Sparkling yellow diamond ring", yt)
+        self.assertNotIn("Different YouTube caption", yt)
+        tags = main._youtube_tags(yt, source)
+        self.assertEqual(tags[:2], ["diamond", "jewellery"])
 
     def test_all_regional_languages_have_local_product_link_labels(self):
         regional_codes = set(SheetsReader.LANG_CAPTION_COLS) - {"en"}
