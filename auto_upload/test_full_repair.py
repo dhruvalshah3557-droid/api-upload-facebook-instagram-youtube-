@@ -1481,6 +1481,96 @@ class FullRepairTests(unittest.TestCase):
         self.assertEqual(revived, 0)
         self.assertEqual(updates, [])
 
+    def test_meta_checkpoint_skips_facebook_instagram_but_keeps_youtube(self):
+        now = datetime.now(timezone.utc)
+        jobs = [
+            {
+                "job_id": "6009-FB-CD-model_video-0",
+                "account_id": "FB-CD",
+                "platform": "facebook",
+                "sku": "6009",
+                "media_selection": "model_video:0",
+                "format": "video",
+                "row": 1,
+                "attempts": 0,
+                "notes": "",
+                "error_message": "",
+            },
+            {
+                "job_id": "6009-IG-CD-model_video-0",
+                "account_id": "IG-CD",
+                "platform": "instagram",
+                "sku": "6009",
+                "media_selection": "model_video:0",
+                "format": "video",
+                "row": 2,
+                "attempts": 0,
+                "notes": "",
+                "error_message": "",
+            },
+            {
+                "job_id": "6009-YT-CD-model_video-0",
+                "account_id": "YT-CD",
+                "platform": "youtube",
+                "sku": "6009",
+                "media_selection": "model_video:0",
+                "format": "video",
+                "row": 3,
+                "attempts": 0,
+                "notes": "",
+                "error_message": "",
+            },
+        ]
+        accounts = {
+            "FB-CD": {
+                "enabled": True,
+                "platform": "facebook",
+                "platform_account_id": "111",
+                "timezone": "Asia/Bangkok",
+            },
+            "IG-CD": {
+                "enabled": True,
+                "platform": "instagram",
+                "platform_account_id": "222",
+                "timezone": "Asia/Bangkok",
+            },
+            "YT-CD": {
+                "enabled": True,
+                "platform": "youtube",
+                "platform_account_id": "UCtest",
+                "timezone": "Asia/Bangkok",
+            },
+        }
+        sources = {
+            "6009": {"sku": "6009", "model_videos": ["https://media.example/model.mp4"]},
+        }
+        sheets = types.SimpleNamespace(update_job=lambda *args, **kwargs: None)
+        optimized_runner._CACHED_FACEBOOK_AUTH_DEAD = set()
+        optimized_runner._CACHED_META_BLOCKED = None
+        with patch("optimized_runner._meta_token_blocked", return_value=True), \
+             patch("optimized_runner._platform_limits", return_value={"facebook": 1, "instagram": 1, "youtube": 1, "tiktok": 0, "line": 0}), \
+             patch("optimized_runner._local_slot_due", return_value=True), \
+             patch("optimized_runner._rotation_rank", return_value=0), \
+             patch("optimized_runner._is_clean_source", return_value=(True, "")), \
+             patch("optimized_runner.resolve_media_fixed", side_effect=lambda job, source: source.get("model_videos") or []), \
+             patch("optimized_runner._media_preflight_reason", return_value=""), \
+             patch("optimized_runner.main.build_caption", return_value="ok"):
+            selected = optimized_runner._healthy_candidates(
+                jobs, accounts, sources, sheets, limit=3, now=now,
+            )
+        self.assertEqual([job["account_id"] for job in selected], ["YT-CD"])
+
+    def test_meta_token_blocked_detects_checkpoint_report(self):
+        self.assertTrue(optimized_runner._meta_token_blocked({
+            "token_valid": False,
+            "error": "Meta token preflight failed: code=190 subcode=459 message=You cannot access the app till you log in to www.facebook.com and follow the instructions given.",
+        }))
+        self.assertFalse(optimized_runner._meta_token_blocked({
+            "token_valid": True,
+            "error": "",
+        }))
+        self.assertFalse(optimized_runner._meta_token_blocked({}))
+
     def test_youtube_token_cache_is_isolated_per_client(self):
         from youtube_uploader import token_cache_path
         colour = token_cache_path("colour-client", "colour-refresh")

@@ -58,6 +58,8 @@ jobs:
         run: echo "$YOUTUBE_CLIENT_SECRET_JSON" > credentials/youtube_client_secret.json
 
       - name: Preflight Meta token and discover new pages
+        id: meta_sync
+        continue-on-error: true
         env:
           GOOGLE_SHEET_CREDENTIALS: credentials/service_account.json
           GOOGLE_SHEET_URL: ${{ secrets.GOOGLE_SHEET_URL }}
@@ -69,6 +71,11 @@ jobs:
           LOG_SHEET: Publishing Log
           FB_ACCESS_TOKEN: ${{ secrets.FACEBOOKTOKEN }}
         run: python meta_account_sync.py
+
+      - name: Note Meta checkpoint without aborting the run
+        if: steps.meta_sync.outcome == 'failure'
+        run: |
+          echo "::warning::Meta token preflight failed; Facebook/Instagram will be skipped this run. YouTube/TikTok will still publish until FACEBOOKTOKEN is refreshed."
 
       - name: Reset Google Sheets quota window
         run: sleep 65

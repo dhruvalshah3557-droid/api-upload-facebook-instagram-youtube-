@@ -16,9 +16,11 @@ API quota is exhausted. Maintenance writes remain capped so Google Sheets
 quota has comfortable headroom.
 """
 import hashlib
+import json
 import os
 import socket
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import requests
@@ -90,6 +92,7 @@ _LIVE_MEDIA_HOSTS = (
 )
 _REWRITE_LOGGED = set()
 _CACHED_FACEBOOK_AUTH_DEAD = set()
+_CACHED_META_BLOCKED = None
 
 
 def _known_unusable_pending(job):
@@ -109,6 +112,51 @@ _FACEBOOK_PERMISSION_MARKERS = (
     "(#200) permissions error",
     "pages_manage_posts",
 )
+
+
+def _meta_sync_report():
+    path = Path(os.getenv("META_SYNC_REPORT", "/tmp/meta_sync_report.json"))
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _meta_token_blocked(report=None):
+    """True when Meta Graph is checkpointed or the user token is invalid.
+
+    Facebook and Instagram cannot publish until FACEBOOKTOKEN is refreshed.
+    YouTube and TikTok must keep running instead of aborting the whole batch.
+    """
+    global _CACHED_META_BLOCKED
+    use_cache = report is None
+    if use_cache and _CACHED_META_BLOCKED is not None:
+        return _CACHED_META_BLOCKED
+    report = _meta_sync_report() if use_cache else (report or {})
+    if report.get("token_valid"):
+        blocked = False
+    else:
+        blob = str(report.get("error", "") or "").lower()
+        blocked = bool(blob) and any(
+            marker in blob
+            for marker in (
+                "code=190",
+                "subcode=459",
+                "subcode=460",
+                "cannot access the app",
+                "log in to www.facebook.com",
+                "session has been invalidated",
+                "error validating access token",
+                "checkpoint",
+                "fb_access_token is empty",
+            )
+        )
+    if use_cache:
+        _CACHED_META_BLOCKED = blocked
+    return blocked
 
 
 def _facebook_permission_error(job):
@@ -1332,6 +1380,17 @@ def _healthy_candidates(
             "YouTube account(s) skipped until OAuth is repaired: %s",
             ", ".join(sorted(youtube_auth_dead)),
         )
+    meta_blocked = _meta_token_blocked()
+    if meta_blocked:
+        slots["facebook"] = 0
+        slots["instagram"] = 0
+        remaining = max(0, int(limit) - int(slots.get("line", 0) or 0))
+        ready = _ready_platform_counts(accounts) if accounts is not None else None
+        slots = _fill_youtube_leftover(slots, remaining, ready)
+        main.logger.warning(
+            "Facebook/Instagram selection skipped: Meta token is checkpointed "
+            "(code 190). Slots moved to YouTube/TikTok until FACEBOOKTOKEN is refreshed"
+        )
     facebook_auth_dead = set(_CACHED_FACEBOOK_AUTH_DEAD) | _facebook_auth_dead_accounts(jobs, now=now)
     if facebook_auth_dead:
         main.logger.warning(
@@ -1343,8 +1402,9 @@ def _healthy_candidates(
             slots["facebook"] = 0
             remaining = max(0, int(limit) - int(slots.get("line", 0) or 0))
             ready = _ready_platform_counts(accounts) if accounts is not None else None
-            instagram_cap = _instagram_run_cap()
-            slots = _fill_instagram_leftover(slots, remaining, ready, instagram_cap)
+            if not meta_blocked:
+                instagram_cap = _instagram_run_cap()
+                slots = _fill_instagram_leftover(slots, remaining, ready, instagram_cap)
             slots = _fill_youtube_leftover(slots, remaining, ready)
             main.logger.warning(
                 "Facebook selection skipped: page-token/permission errors are still fresh; "
@@ -1388,6 +1448,8 @@ def _healthy_candidates(
     )
 
     for platform in ("facebook", "instagram", "youtube", "tiktok", "line"):
+        if platform in ("facebook", "instagram") and meta_blocked:
+            continue
         if platform == "instagram" and instagram_cooldown:
             main.logger.warning(
                 "Instagram selection deferred for %ss: Meta application cooldown active",
@@ -1547,6 +1609,7 @@ def _healthy_candidates(
             instagram_cooldown, instagram_cap, instagram_used,
             recent_upload_activity, facebook_auth_dead,
             youtube_auth_dead=youtube_auth_dead, youtube_used=youtube_used,
+            meta_blocked=meta_blocked,
         )
         if leftover:
             main.logger.info(
@@ -1562,6 +1625,7 @@ def _fill_model_media_leftover(
     reserved_fingerprints, seen_fingerprints, housekeeping, limit,
     instagram_cooldown, instagram_cap, instagram_used, recent_upload_activity,
     facebook_auth_dead=None, youtube_auth_dead=None, youtube_used=0,
+    meta_blocked=False,
 ):
     """Spend unused budget on model photo/video, including YouTube Shorts."""
     if leftover <= 0:
@@ -1570,6 +1634,8 @@ def _fill_model_media_leftover(
     order = []
     youtube_cap = _youtube_run_cap(int(limit))
     for platform in ("youtube", "facebook", "instagram"):
+        if platform in ("facebook", "instagram") and meta_blocked:
+            continue
         if platform == "instagram" and instagram_cooldown:
             continue
         for account_id in _enabled_account_order(accounts, platform):
