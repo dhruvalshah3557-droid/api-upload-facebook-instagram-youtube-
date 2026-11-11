@@ -39,10 +39,17 @@ jobs:
 
       - name: Install ffmpeg only if missing
         run: |
-          if ! command -v ffmpeg >/dev/null 2>&1; then
-            sudo apt-get update -y
-            sudo apt-get install -y --no-install-recommends ffmpeg
+          if command -v ffmpeg >/dev/null 2>&1; then
+            exit 0
           fi
+          for attempt in 1 2 3 4 5; do
+            if sudo apt-get update -y && sudo apt-get install -y --no-install-recommends ffmpeg; then
+              exit 0
+            fi
+            echo "ffmpeg install attempt ${attempt} failed; retrying..."
+            sleep $((attempt * 8))
+          done
+          command -v ffmpeg >/dev/null 2>&1
 
       - name: Install dependencies
         run: pip install -r requirements.txt

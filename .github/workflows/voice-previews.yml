@@ -22,7 +22,19 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with: {python-version: "3.12", cache: pip, cache-dependency-path: auto_upload/requirements.txt}
-      - run: sudo apt-get update -y && sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: Install ffmpeg with retries
+        run: |
+          if command -v ffmpeg >/dev/null 2>&1; then
+            exit 0
+          fi
+          for attempt in 1 2 3 4 5; do
+            if sudo apt-get update -y && sudo apt-get install -y --no-install-recommends ffmpeg; then
+              exit 0
+            fi
+            echo "ffmpeg install attempt ${attempt} failed; retrying..."
+            sleep $((attempt * 8))
+          done
+          command -v ffmpeg >/dev/null 2>&1
       - run: pip install -r requirements.txt
       - name: Write Google credentials
         env: {GOOGLE_SHEET_CREDENTIALS_JSON: "${{ secrets.GOOGLE_SHEET_CREDENTIALS_JSON }}"}
