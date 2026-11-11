@@ -151,6 +151,11 @@ def generate(sku, language="en-GB", client=None, auto_approve=True):
                 ws.append_row([preview_id,now,sku,media_url,language,voice["ShortName"],voice.get("Gender",""),script,url,status,now if selected else "","",""])
                 logger.info("Created %s", url)
 
+def _incomplete_preview_error(exc):
+    message = str(exc).lower()
+    return "needs video in s/u" in message or "not found in jewellery stock" in message or "not found in diamond stock" in message
+
+
 def generate_automatic(limit=2):
     """Generate and auto-select pleasant voices for pending product-video jobs."""
     client = _client()
@@ -162,25 +167,42 @@ def generate_automatic(limit=2):
     }
     book = client.open_by_url(Config.GOOGLE_SHEET_URL)
     queue = book.worksheet(Config.QUEUE_SHEET).get_all_records()
-    candidates = []
+    target = max(1, int(limit))
+    max_attempts = max(8, target * 4)
+    generated = 0
+    attempts = 0
+    skipped_pairs = set()
+    skipped_skus = set()
+    errors = []
     for row in queue:
+        if generated >= target or attempts >= max_attempts:
+            break
         status = str(row.get("status") or "pending").strip().lower()
         selection = str(row.get("media_selection") or "")
-        pair = (_normalize_sku(row.get("sku")), language_code(row.get("language") or "en"))
-        if status not in {"", "pending", "retry"} or not selection.startswith("product_video") or pair in existing_pairs or pair in candidates:
+        sku = _normalize_sku(row.get("sku"))
+        language = language_code(row.get("language") or "en")
+        pair = (sku, language)
+        if status not in {"", "pending", "retry"} or not selection.startswith("product_video") or not sku:
             continue
-        candidates.append(pair)
-        if len(candidates) >= max(1, int(limit)):
-            break
-    errors = []
-    for sku, language in candidates:
+        if pair in existing_pairs or pair in skipped_pairs or sku in skipped_skus:
+            continue
+        attempts += 1
         try:
             generate(sku, language, client=client, auto_approve=True)
+            generated += 1
+            existing_pairs.add(pair)
         except Exception as exc:
+            skipped_pairs.add(pair)
+            if _incomplete_preview_error(exc):
+                skipped_skus.add(sku)
+                logger.warning("Skipping automatic preview for %s/%s: %s", sku, language, exc)
+                continue
             logger.exception("Automatic preview failed for %s/%s: %s", sku, language, exc)
             errors.append(f"{sku}/{language}: {exc}")
-    if candidates and len(errors) == len(candidates):
+    if generated == 0 and errors:
         raise RuntimeError("All automatic voice previews failed: " + "; ".join(errors))
+    if generated == 0:
+        logger.info("No complete product videos were ready for automatic voice previews")
 
 if __name__ == "__main__":
     parser=argparse.ArgumentParser(); parser.add_argument("--sku"); parser.add_argument("--language",default="en-GB"); parser.add_argument("--auto-limit",type=int,default=2); args=parser.parse_args()

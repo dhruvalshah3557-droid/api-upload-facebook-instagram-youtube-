@@ -895,7 +895,7 @@ class SheetsReader:
         return "UNKNOWN_ERROR" if message else ""
 
     def log_entry(self, job, result, error_message="", api_error_code="", notes=""):
-        now = datetime.datetime.utcnow().isoformat()
+        now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat()
         normalized_code = self._normalize_api_error_code(error_message, api_error_code)
         return {
             "job_id": job.get("job_id", ""),
