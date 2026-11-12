@@ -390,6 +390,28 @@ def _normalize_hashtags(value):
     return " ".join(normalized)
 
 
+def _merge_hashtags(*groups, limit=10):
+    """Dedupe hashtag groups in priority order so products keep distinct tags."""
+    merged = []
+    seen = set()
+    for group in groups:
+        if not group:
+            continue
+        if isinstance(group, (list, tuple)):
+            raw = " ".join(str(item) for item in group)
+        else:
+            raw = str(group)
+        for tag in _normalize_hashtags(raw).split():
+            key = tag.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(tag)
+            if len(merged) >= limit:
+                return " ".join(merged)
+    return " ".join(merged)
+
+
 _REGIONAL_FALLBACK_HASHTAGS = {
     "ar": "#ألماس #مجوهرات #مجوهرات_فاخرة",
     "vi": "#KimCương #TrangSức #TrangSứcCaoCấp",
@@ -587,6 +609,125 @@ def _product_title(source):
     return f"STK {sku} Diamond Jewelry" if sku else "Diamond Jewelry"
 
 
+_JEWELLERY_TYPE_TAGS = (
+    ("earrings", "Earrings"),
+    ("earring", "Earrings"),
+    ("necklace", "Necklace"),
+    ("pendant", "Pendant"),
+    ("bracelet", "Bracelet"),
+    ("bangle", "Bangle"),
+    ("ring", "Ring"),
+)
+_COLOUR_TAGS = (
+    ("fancy intense yellow", "FancyIntenseYellow"),
+    ("fancy vivid yellow", "FancyVividYellow"),
+    ("fancy deep pink", "FancyDeepPink"),
+    ("fancy intense pink", "FancyIntensePink"),
+    ("fancy vivid pink", "FancyVividPink"),
+    ("fancy yellow", "FancyYellow"),
+    ("fancy pink", "FancyPink"),
+    ("fancy blue", "FancyBlue"),
+    ("fancy green", "FancyGreen"),
+    ("light green yellow", "LightGreenYellow"),
+    ("bluish gray", "BluishGray"),
+    ("canary", "CanaryYellow"),
+    ("yellow", "YellowDiamond"),
+    ("pink", "PinkDiamond"),
+    ("blue", "BlueDiamond"),
+    ("green", "GreenDiamond"),
+    ("white", "WhiteDiamond"),
+    ("black", "BlackDiamond"),
+)
+_GENERIC_HASHTAG_KEYS = {
+    "colourdiam", "diamond", "diamonds", "jewellery", "jewelry",
+    "finejewelry", "luxury", "elegance", "gia",
+}
+
+
+def _product_hashtag_keywords(source):
+    """Build product-specific hashtag tokens from title, details and SKU."""
+    fields = SheetsReader._details_fields((source or {}).get("details", ""))
+    title = _product_title(source)
+    haystack = " ".join(
+        [
+            title,
+            str((source or {}).get("details") or ""),
+            str((source or {}).get("product_description") or ""),
+        ]
+    ).casefold()
+    keywords = []
+
+    shape = _product_shape(source)
+    if shape:
+        keywords.append(shape.capitalize())
+
+    colour_token = ""
+    colour = str(fields.get("colour") or fields.get("color") or "").strip()
+    if colour:
+        colour_token = colour.replace("-", " ").title().replace(" ", "")
+        keywords.append(colour_token)
+    else:
+        for needle, token in _COLOUR_TAGS:
+            if needle in haystack:
+                colour_token = token
+                keywords.append(token)
+                break
+
+    jewellery_token = ""
+    for needle, token in _JEWELLERY_TYPE_TAGS:
+        if re.search(r"(?<![a-z0-9])" + re.escape(needle) + r"(?![a-z0-9])", haystack):
+            jewellery_token = token
+            keywords.append(token)
+            break
+    if not jewellery_token and _is_loose_diamond(source):
+        keywords.append("LooseDiamond")
+
+    if shape and colour_token:
+        keywords.append(f"{colour_token}{shape.capitalize()}")
+
+    clarity = str(fields.get("clarity") or "").strip()
+    if clarity:
+        keywords.append(clarity.upper())
+    elif re.search(r"(?<![a-z0-9])gia(?![a-z0-9])", haystack):
+        keywords.append("GIA")
+    return keywords
+
+
+def _product_specific_hashtags(source, lang, account_name=""):
+    """Native market tags plus product attributes so each SKU is unique."""
+    product_info = {
+        "title": _product_title(source),
+        "keywords": _product_hashtag_keywords(source),
+    }
+    generated = generate_hashtags(product_info, account_name, lang)
+    if lang == "en":
+        return generated
+    market = _REGIONAL_FALLBACK_HASHTAGS.get(lang, "")
+    return _merge_hashtags(market, generated, limit=10)
+
+
+def _sheet_hashtags_are_generic(value):
+    tags = _normalize_hashtags(value)
+    if not tags:
+        return True
+    tokens = [tag.lstrip("#").casefold() for tag in tags.split()]
+    return bool(tokens) and all(token in _GENERIC_HASHTAG_KEYS for token in tokens)
+
+
+def _caption_hashtags(source, lang, account_name=""):
+    """Prefer unique product tags; keep native market tags for regional pages."""
+    product_tags = _product_specific_hashtags(source, lang, account_name)
+    if lang == "en":
+        sheet_tags = _normalize_hashtags(source.get("hashtags", ""))
+        if sheet_tags and not _sheet_hashtags_are_generic(sheet_tags):
+            return _merge_hashtags(sheet_tags, product_tags, limit=10)
+        return product_tags
+    localized = _normalize_hashtags((source.get("lang_hashtags") or {}).get(lang))
+    if localized and not _sheet_hashtags_are_generic(localized):
+        return _merge_hashtags(localized, product_tags, limit=10)
+    return product_tags
+
+
 def _caption_has_blank_product(caption_text):
     text = re.sub(r"\s+", " ", str(caption_text or "")).strip()
     return bool(_BLANK_PRODUCT_CAPTION_RE.search(text))
@@ -645,17 +786,22 @@ def _generated_product_caption(source, account, lang):
 def build_caption(job, source, account):
     """Build a localized caption and always append the product page URL.
 
-    Regional accounts require their primary-language translation and use a
-    guaranteed native hashtag set. English accounts retain the normal platform
-    fallback behavior. The direct product page label is localized too.
+    Regional accounts require their primary-language translation and keep a
+    native hashtag set, then add product-specific tags so SKUs do not share
+    one generic list. English accounts retain platform copy but replace a
+    repeated generic tag set with product attributes.
     """
     platform = job.get("platform", "")
     lang = _lang_code(account.get("primary_language", ""))
     fallback = _lang_code(account.get("fallback_language", ""))
+    account_name = account.get("account_name", "")
 
     lang_captions = source.get("lang_captions", {})
-    lang_hashtags = source.get("lang_hashtags", {})
-    hashtags = _normalize_hashtags(source.get("hashtags", ""))
+    tags = _caption_hashtags(source, lang, account_name)
+    if lang != "en" and lang not in _REGIONAL_FALLBACK_HASHTAGS:
+        raise ValueError(
+            f"Missing required {lang} regional hashtags; refusing English fallback"
+        )
 
     caption_text = ""
     if lang != "en":
@@ -672,12 +818,7 @@ def build_caption(job, source, account):
             # column; other regional headers can also be blank. Always generate
             # native copy in the account language instead of mixing English.
             localized_caption, _ = _generated_product_caption(source, account, lang)
-        tags = _REGIONAL_FALLBACK_HASHTAGS.get(lang, "")
-        if not tags:
-            raise ValueError(
-                f"Missing required {lang} regional hashtags; refusing English fallback"
-            )
-        caption_text = f"{localized_caption}\n\n{tags}"
+        caption_text = f"{localized_caption}\n\n{tags}" if tags else localized_caption
     else:
         for code in (lang, fallback):
             candidate = str(lang_captions.get(code, "") or "").strip()
@@ -689,7 +830,6 @@ def build_caption(job, source, account):
                     code, source.get("sku", ""),
                 )
                 continue
-            tags = _normalize_hashtags(lang_hashtags.get(code)) or hashtags
             caption_text = f"{candidate}\n\n{tags}" if tags else candidate
             break
 
@@ -709,21 +849,14 @@ def build_caption(job, source, account):
 
         if _caption_has_blank_product(caption) or _caption_product_mismatch_reason(caption, source):
             caption = ""
-        if caption and hashtags:
-            caption_text = f"{caption}\n\n{hashtags}"
+        if caption and tags:
+            caption_text = f"{caption}\n\n{tags}"
         elif caption:
             caption_text = caption
 
     if not caption_text or _caption_product_mismatch_reason(caption_text, source):
-        auto_caption, product_info = _generated_product_caption(source, account, lang)
-        auto_hashtags = generate_hashtags(
-            product_info, account.get("account_name", ""), lang
-        )
-        if lang != "en":
-            tags = _REGIONAL_FALLBACK_HASHTAGS.get(lang) or auto_hashtags
-            caption_text = f"{auto_caption}\n\n{tags}"
-        else:
-            caption_text = f"{auto_caption}\n\n{auto_hashtags}"
+        auto_caption, _ = _generated_product_caption(source, account, lang)
+        caption_text = f"{auto_caption}\n\n{tags}" if tags else auto_caption
 
     _validate_caption_product_match(caption_text, source)
     return _append_product_link(

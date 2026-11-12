@@ -1076,6 +1076,7 @@ def test_youtube_caption_matches_instagram():
     source["youtube_shorts_caption"] = "Different YouTube caption"
     source["facebook_caption"] = "Facebook copy"
     source["hashtags"] = "#diamond #jewellery"
+    source["product_name"] = "Fancy Yellow Diamond Ring"
     account = _account("YT-CD", "youtube")
     yt = main.build_caption({"platform": "youtube", "account_id": "YT-CD"}, source, account)
     ig = main.build_caption({"platform": "instagram", "account_id": "IG-CD"}, source, account)
@@ -1083,6 +1084,8 @@ def test_youtube_caption_matches_instagram():
     assert "Sparkling yellow diamond ring" in yt
     assert "Different YouTube caption" not in yt
     assert "Facebook copy" not in yt
+    assert "#FancyYellow" in yt
+    assert "#diamond" not in yt
     print("OK test_youtube_caption_matches_instagram")
 
 

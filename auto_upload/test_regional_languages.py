@@ -116,10 +116,11 @@ class RegionalLanguageTests(unittest.TestCase):
             "account_name": "Colour Diam Italy",
         }
         caption = main.build_caption({"platform": "instagram"}, source, account)
-        self.assertEqual(
-            caption,
-            "Descrizione italiana\n\n#Diamanti #Gioielli #AltaGioielleria",
-        )
+        self.assertIn("Descrizione italiana", caption)
+        self.assertIn("#gioielli", caption)
+        self.assertIn("#Diamanti", caption)
+        self.assertIn("#Ring", caption)
+        self.assertNotIn("#diamond", caption)
 
         account["primary_language"] = "vi-VN"
         caption = main.build_caption({"platform": "instagram"}, source, account)
@@ -310,11 +311,10 @@ class RegionalLanguageTests(unittest.TestCase):
             "account_name": "Colour Diam Vietnam",
         }
         caption = main.build_caption({"platform": "instagram"}, source, account)
-        self.assertEqual(
-            caption,
-            "Mô tả tiếng Việt\n\n"
-            "#KimCương #TrangSức #TrangSứcCaoCấp",
-        )
+        self.assertIn("Mô tả tiếng Việt", caption)
+        self.assertIn("#KimCương", caption)
+        self.assertIn("#KimCuongThienNhien", caption)
+        self.assertNotIn("#diamond", caption)
 
     def test_existing_space_separated_hashtags_stay_valid(self):
         self.assertEqual(
@@ -335,10 +335,9 @@ class RegionalLanguageTests(unittest.TestCase):
             "account_name": "Colour Diam Vietnam",
         }
         caption = main.build_caption({"platform": "facebook"}, source, account)
-        self.assertEqual(
-            caption,
-            "Mô tả tiếng Việt\n\n#KimCương #TrangSức #TrangSứcCaoCấp",
-        )
+        self.assertIn("Mô tả tiếng Việt", caption)
+        self.assertIn("#KimCương", caption)
+        self.assertIn("#TrangSức", caption)
         self.assertNotIn("#diamond", caption)
 
     def test_each_configured_region_has_native_fallback_hashtags(self):
@@ -567,12 +566,58 @@ class RegionalLanguageTests(unittest.TestCase):
         self.assertEqual(yt, ig)
         self.assertIn("Sparkling yellow diamond ring", yt)
         self.assertNotIn("Different YouTube caption", yt)
+        self.assertNotIn("#diamond", yt)
+        self.assertIn("#FancyYellow", yt)
+        self.assertIn("#Ring", yt)
         tags = main._youtube_tags(yt, source)
-        self.assertEqual(tags[:2], ["diamond", "jewellery"])
+        self.assertIn("FancyYellow", tags)
+        self.assertIn("Ring", tags)
 
     def test_all_regional_languages_have_local_product_link_labels(self):
         regional_codes = set(SheetsReader.LANG_CAPTION_COLS) - {"en"}
         self.assertTrue(regional_codes <= set(main._PRODUCT_LINK_LABELS))
+
+    def test_different_products_do_not_share_the_same_hashtag_set(self):
+        account = {
+            "primary_language": "vi-VN",
+            "account_name": "Colour Diam Vietnam",
+        }
+        ring = {
+            "sku": "100",
+            "product_name": "1.00 Ct Fancy Yellow Oval Diamond Ring",
+            "details": "Sku - 100\nWeight - 1.00\nColour - Fancy Yellow\nShape - Oval",
+            "hashtags": "#diamond #jewellery",
+            "lang_captions": {"vi": "Nhẫn kim cương vàng oval"},
+            "lang_hashtags": {},
+            "product_link": "",
+        }
+        pear = {
+            "sku": "200",
+            "product_name": "0.50 Ct Fancy Pink Pear Diamond",
+            "details": "Sku - 200\nWeight - 0.50\nColour - Fancy Pink\nShape - Pear",
+            "hashtags": "#diamond #jewellery",
+            "lang_captions": {"vi": "Kim cương hồng hình lê"},
+            "lang_hashtags": {},
+            "product_link": "https://colourdiam.com/Product/Diamond/200/",
+        }
+        ring_caption = main.build_caption({"platform": "instagram"}, ring, account)
+        pear_caption = main.build_caption({"platform": "instagram"}, pear, account)
+        self.assertIn("#Oval", ring_caption)
+        self.assertIn("#FancyYellow", ring_caption)
+        self.assertIn("#Ring", ring_caption)
+        self.assertIn("#Pear", pear_caption)
+        self.assertIn("#FancyPink", pear_caption)
+        self.assertNotIn("#diamond", ring_caption)
+        ring_tags = {token for token in ring_caption.split() if token.startswith("#")}
+        pear_tags = {token for token in pear_caption.split() if token.startswith("#")}
+        self.assertNotEqual(ring_tags, pear_tags)
+
+        english = {"primary_language": "en-GB", "account_name": "Colour Diam"}
+        en_ring = main.build_caption({"platform": "facebook"}, ring, english)
+        en_pear = main.build_caption({"platform": "facebook"}, pear, english)
+        self.assertIn("#FancyYellow", en_ring)
+        self.assertIn("#FancyPink", en_pear)
+        self.assertNotEqual(en_ring, en_pear)
 
 
 if __name__ == "__main__":

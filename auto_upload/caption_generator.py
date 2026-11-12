@@ -295,11 +295,20 @@ def generate_hashtags(product_info, page_name="", language=""):
     value = str(language or "").strip().lower()
     lang = "zh-hant" if value in {"zh-hk", "zh-tw", "zh-mo", "zh-hant"} else value.split("-")[0]
     lang = lang or get_lang(page_name)
-    base_tags = HASHTAG_TEMPLATES.get(lang, HASHTAG_TEMPLATES["en"])
-    keywords = product_info.get("keywords", [])
+    base_tags = list(HASHTAG_TEMPLATES.get(lang, HASHTAG_TEMPLATES["en"]))
     extra = []
-    for kw in keywords[:3]:
-        clean = kw.replace(" ", "").replace("-", "")
-        if clean:
-            extra.append(f"#{clean}")
-    return " ".join(base_tags[:4] + extra[:3])
+    seen = {tag.casefold() for tag in base_tags}
+    for kw in product_info.get("keywords", [])[:8]:
+        text = str(kw or "").strip().lstrip("#")
+        if not text or (" " in text and len(text) > 20):
+            continue
+        clean = "".join(ch for ch in text.replace("-", "") if ch.isalnum())
+        if not clean:
+            continue
+        tag = f"#{clean}"
+        key = tag.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        extra.append(tag)
+    return " ".join(base_tags[:3] + extra[:6])
