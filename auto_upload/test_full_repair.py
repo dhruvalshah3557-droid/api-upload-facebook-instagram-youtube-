@@ -47,6 +47,22 @@ import optimized_runner
 from job_generator import is_model_media
 
 
+class _allow_model_videos:
+    def __enter__(self):
+        self._patches = (
+            patch("optimized_runner.model_video_uploads_enabled", return_value=True),
+            patch("job_generator.model_video_uploads_enabled", return_value=True),
+        )
+        for item in self._patches:
+            item.start()
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        for item in self._patches:
+            item.stop()
+        return False
+
+
 class FullRepairTests(unittest.TestCase):
     def test_model_photo_is_resolved_as_independent_upload(self):
         source = {
@@ -102,7 +118,8 @@ class FullRepairTests(unittest.TestCase):
             },
         }
         sheets = types.SimpleNamespace(update_job=lambda *args: None)
-        with patch("optimized_runner._platform_limits", return_value={"facebook": 1, "instagram": 0, "youtube": 0, "line": 0}), \
+        with _allow_model_videos(), \
+             patch("optimized_runner._platform_limits", return_value={"facebook": 1, "instagram": 0, "youtube": 0, "line": 0}), \
              patch("optimized_runner._local_slot_due", return_value=True), \
              patch("optimized_runner._rotation_rank", return_value=0), \
              patch("optimized_runner._is_clean_source", return_value=(True, "")), \
@@ -111,6 +128,39 @@ class FullRepairTests(unittest.TestCase):
                 jobs, accounts, sources, sheets, limit=1
             )
         self.assertEqual(selected[0]["media_selection"], "model_video:0")
+
+    def test_model_video_uploads_are_stopped_by_default(self):
+        jobs = [
+            {"job_id": "1-FB-CD-carousel", "sku": "1", "account_id": "FB-CD", "platform": "facebook", "format": "carousel", "media_selection": "carousel", "row": 40, "attempts": 0, "notes": ""},
+            {"job_id": "1-FB-CD-model_photo-0", "sku": "1", "account_id": "FB-CD", "platform": "facebook", "format": "carousel", "media_selection": "model_photo:0", "row": 20, "attempts": 0, "notes": ""},
+            {"job_id": "1-FB-CD-model_video-0", "sku": "1", "account_id": "FB-CD", "platform": "facebook", "format": "video", "media_selection": "model_video:0", "row": 10, "attempts": 0, "notes": ""},
+        ]
+        accounts = {"FB-CD": {"enabled": True, "platform": "facebook", "timezone": "Asia/Bangkok"}}
+        sources = {
+            "1": {
+                "main_image": "https://media.example/product.jpg",
+                "side_images": [],
+                "model_images": ["https://media.example/model.jpg"],
+                "model_videos": ["https://media.example/model.mp4"],
+            },
+        }
+        sheets = types.SimpleNamespace(update_job=lambda *args: None)
+        with patch("optimized_runner._platform_limits", return_value={"facebook": 2, "instagram": 0, "youtube": 0, "line": 0}), \
+             patch("optimized_runner._local_slot_due", return_value=True), \
+             patch("optimized_runner._rotation_rank", return_value=0), \
+             patch("optimized_runner._is_clean_source", return_value=(True, "")), \
+             patch("optimized_runner._media_preflight_reason", return_value=""):
+            selected = optimized_runner._healthy_candidates(
+                jobs, accounts, sources, sheets, limit=2
+            )
+        self.assertEqual(
+            [job["media_selection"] for job in selected],
+            ["model_photo:0"],
+        )
+        self.assertFalse(any(
+            str(job.get("media_selection", "")).startswith("model_video:")
+            for job in selected
+        ))
 
     def test_instagram_model_photo_outranks_product_carousel(self):
         jobs = [
@@ -700,7 +750,8 @@ class FullRepairTests(unittest.TestCase):
             }
         }
         sheets = types.SimpleNamespace(update_job=lambda *a, **k: None)
-        with patch("optimized_runner._local_slot_due", return_value=True), \
+        with _allow_model_videos(), \
+             patch("optimized_runner._local_slot_due", return_value=True), \
              patch("optimized_runner._rotation_rank", return_value=0), \
              patch("optimized_runner._is_clean_source", return_value=(True, "")), \
              patch("optimized_runner._media_preflight_reason", return_value=""):
@@ -734,7 +785,8 @@ class FullRepairTests(unittest.TestCase):
             "202": {"model_videos": ["https://media.example/202-model.mp4"]},
         }
         sheets = types.SimpleNamespace(update_job=lambda *args: None)
-        with patch("optimized_runner._platform_limits", return_value={"facebook": 1, "instagram": 1, "youtube": 0, "line": 0}), \
+        with _allow_model_videos(), \
+             patch("optimized_runner._platform_limits", return_value={"facebook": 1, "instagram": 1, "youtube": 0, "line": 0}), \
              patch("optimized_runner._local_slot_due", return_value=True), \
              patch("optimized_runner._rotation_rank", return_value=0), \
              patch("optimized_runner._is_clean_source", return_value=(True, "")), \
@@ -776,7 +828,8 @@ class FullRepairTests(unittest.TestCase):
             },
         }
         sheets = types.SimpleNamespace(update_job=lambda *args: None)
-        with patch("optimized_runner._platform_limits", return_value={"facebook": 3, "instagram": 0, "youtube": 0, "line": 0}), \
+        with _allow_model_videos(), \
+             patch("optimized_runner._platform_limits", return_value={"facebook": 3, "instagram": 0, "youtube": 0, "line": 0}), \
              patch("optimized_runner._local_slot_due", return_value=True), \
              patch("optimized_runner._rotation_rank", return_value=0), \
              patch("optimized_runner._is_clean_source", return_value=(True, "")), \
@@ -824,7 +877,8 @@ class FullRepairTests(unittest.TestCase):
             "9": {"model_videos": ["https://media.example/yt.mp4"]},
         }
         sheets = types.SimpleNamespace(update_job=lambda *args: None)
-        with patch("optimized_runner._platform_limits", return_value={"facebook": 1, "instagram": 0, "youtube": 2, "line": 0}), \
+        with _allow_model_videos(), \
+             patch("optimized_runner._platform_limits", return_value={"facebook": 1, "instagram": 0, "youtube": 2, "line": 0}), \
              patch("optimized_runner._local_slot_due", return_value=True), \
              patch("optimized_runner._rotation_rank", return_value=0), \
              patch("optimized_runner._is_clean_source", return_value=(True, "")), \
@@ -848,7 +902,8 @@ class FullRepairTests(unittest.TestCase):
             "job_id": "product-healthy",
             "media_selection": "carousel",
         })
-        sampled = optimized_runner._account_scan_jobs(jobs, limit=300)
+        with _allow_model_videos():
+            sampled = optimized_runner._account_scan_jobs(jobs, limit=300)
         self.assertIn("product-healthy", [job["job_id"] for job in sampled])
         self.assertLessEqual(len(sampled), 300)
         model_count = sum(
@@ -870,7 +925,8 @@ class FullRepairTests(unittest.TestCase):
             "job_id": "product-carousel",
             "media_selection": "carousel",
         })
-        sampled = optimized_runner._account_scan_jobs(jobs, limit=300)
+        with _allow_model_videos():
+            sampled = optimized_runner._account_scan_jobs(jobs, limit=300)
         sampled_ids = [job["job_id"] for job in sampled]
         self.assertIn("model-photo-late", sampled_ids)
         self.assertIn("product-carousel", sampled_ids)
@@ -925,7 +981,8 @@ class FullRepairTests(unittest.TestCase):
                 return ""
             return "video failed validation"
 
-        with patch("optimized_runner._platform_limits", return_value={"facebook": 1, "instagram": 0, "youtube": 0, "line": 0}), \
+        with _allow_model_videos(), \
+             patch("optimized_runner._platform_limits", return_value={"facebook": 1, "instagram": 0, "youtube": 0, "line": 0}), \
              patch("optimized_runner._local_slot_due", return_value=True), \
              patch("optimized_runner._rotation_rank", return_value=0), \
              patch("optimized_runner._is_clean_source", return_value=(True, "")), \
@@ -997,7 +1054,8 @@ class FullRepairTests(unittest.TestCase):
                 return ""
             return "video failed validation"
 
-        with patch("optimized_runner._platform_limits", return_value={"facebook": 2, "instagram": 0, "youtube": 0, "line": 0}), \
+        with _allow_model_videos(), \
+             patch("optimized_runner._platform_limits", return_value={"facebook": 2, "instagram": 0, "youtube": 0, "line": 0}), \
              patch("optimized_runner._local_slot_due", return_value=True), \
              patch("optimized_runner._rotation_rank", return_value=0), \
              patch("optimized_runner._is_clean_source", return_value=(True, "")), \
@@ -1051,7 +1109,8 @@ class FullRepairTests(unittest.TestCase):
                 return ""
             return "video failed validation"
 
-        with patch("optimized_runner._platform_limits", return_value={"facebook": 1, "instagram": 0, "youtube": 0, "line": 0}), \
+        with _allow_model_videos(), \
+             patch("optimized_runner._platform_limits", return_value={"facebook": 1, "instagram": 0, "youtube": 0, "line": 0}), \
              patch("optimized_runner._local_slot_due", return_value=True), \
              patch("optimized_runner._rotation_rank", return_value=0), \
              patch("optimized_runner._is_clean_source", return_value=(True, "")), \
@@ -1077,7 +1136,8 @@ class FullRepairTests(unittest.TestCase):
             update_job=lambda job, payload: updates.append((job, payload)),
         )
         accounts = {"FB-TURKEY": {"enabled": True, "platform": "facebook"}}
-        revived = optimized_runner._revive_skipped_model_jobs(sheets, accounts)
+        with _allow_model_videos():
+            revived = optimized_runner._revive_skipped_model_jobs(sheets, accounts)
         self.assertEqual(revived, 1)
         self.assertEqual(updates[0][1]["status"], "pending")
         self.assertIn("model media", updates[0][1]["notes"].lower())
@@ -1217,7 +1277,8 @@ class FullRepairTests(unittest.TestCase):
             "2056": {"sku": "2056", "model_videos": ["https://media.example/cd.mp4"]},
         }
         sheets = types.SimpleNamespace(update_job=lambda *args, **kwargs: None)
-        with patch("optimized_runner._youtube_auth_dead_accounts", return_value={"YT-JIYA"}), \
+        with _allow_model_videos(), \
+             patch("optimized_runner._youtube_auth_dead_accounts", return_value={"YT-JIYA"}), \
              patch("optimized_runner._platform_limits", return_value={"facebook": 0, "instagram": 0, "youtube": 1, "line": 0}), \
              patch("optimized_runner._local_slot_due", return_value=True), \
              patch("optimized_runner._rotation_rank", side_effect=lambda aid, *a, **k: 0 if aid == "YT-JIYA" else 1), \
@@ -1306,7 +1367,8 @@ class FullRepairTests(unittest.TestCase):
             "YOUTUBE_OAUTH_REFRESH_TOKEN_COLOURDIAMONDSS": "cd-token",
             "YT_MAX_JOBS_PER_RUN": "6",
         }
-        with patch.dict("os.environ", env, clear=False), \
+        with _allow_model_videos(), \
+             patch.dict("os.environ", env, clear=False), \
              patch("optimized_runner._platform_limits", return_value={"facebook": 0, "instagram": 0, "youtube": 1, "line": 0}), \
              patch("optimized_runner._local_slot_due", return_value=True), \
              patch("optimized_runner._rotation_rank", side_effect=lambda aid, *a, **k: 0 if aid == "YT-TREND" else 1), \
@@ -1547,7 +1609,8 @@ class FullRepairTests(unittest.TestCase):
         sheets = types.SimpleNamespace(update_job=lambda *args, **kwargs: None)
         optimized_runner._CACHED_FACEBOOK_AUTH_DEAD = set()
         optimized_runner._CACHED_META_BLOCKED = None
-        with patch("optimized_runner._meta_token_blocked", return_value=True), \
+        with _allow_model_videos(), \
+             patch("optimized_runner._meta_token_blocked", return_value=True), \
              patch("optimized_runner._platform_limits", return_value={"facebook": 1, "instagram": 1, "youtube": 1, "tiktok": 0, "line": 0}), \
              patch("optimized_runner._local_slot_due", return_value=True), \
              patch("optimized_runner._rotation_rank", return_value=0), \

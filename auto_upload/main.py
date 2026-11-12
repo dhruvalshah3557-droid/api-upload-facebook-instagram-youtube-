@@ -18,7 +18,13 @@ from instagram_uploader import (
     InstagramRateLimitError,
     InstagramUploader,
 )
-from job_generator import generate_jobs, is_model_media, model_media_priority
+from job_generator import (
+    generate_jobs,
+    is_model_media,
+    is_model_video,
+    model_media_priority,
+    model_video_uploads_enabled,
+)
 from line_uploader import LineUploader
 from linkedin_uploader import LinkedInUploader
 from media_prep import media_kind, validate_media_url
@@ -1041,6 +1047,8 @@ def _round_robin_jobs(jobs, limit):
     pending backlog sitting below newer IG/YT rows) starve the others, so
     those platforms never publish and produce no log entries.
     """
+    if not model_video_uploads_enabled():
+        jobs = [job for job in jobs if not is_model_video(job)]
     by_platform = {}
     order = []
     for job in jobs:
@@ -1087,6 +1095,9 @@ def process_pending(sheets=None):
         for job in _round_robin_jobs(jobs, Config.MAX_JOBS_PER_RUN):
             job_id = job["job_id"]
             logger.info(f"Job {job_id}: {job['platform']}/{job['format']} - {job['media_selection']} (SKU {job['sku']})")
+            if is_model_video(job) and not model_video_uploads_enabled():
+                logger.info(f"Job {job_id}: skipped this run - model video uploads disabled")
+                continue
 
             account = accounts.get(job["account_id"])
             if not account or not account.get("enabled"):

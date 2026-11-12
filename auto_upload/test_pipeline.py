@@ -269,8 +269,9 @@ def test_generate_queues_model_media_before_product_media():
         main.run_generate(fake)
     selections = [job["media_selection"] for job in fake.appended_jobs]
     assert set(selections) == {
-        "model_video:0", "model_photo:0", "product_video", "carousel"
+        "model_photo:0", "product_video", "carousel"
     }, selections
+    assert "model_video:0" not in selections, selections
     print("OK test_generate_queues_model_media_before_product_media")
 
 
@@ -279,12 +280,41 @@ def test_round_robin_prefers_model_media_within_platform():
         {"job_id": "fb-carousel", "platform": "facebook", "media_selection": "carousel", "attempts": 0, "row": 1},
         {"job_id": "fb-model", "platform": "facebook", "media_selection": "model_photo:0", "attempts": 0, "row": 2},
         {"job_id": "ig-product", "platform": "instagram", "media_selection": "product_video", "attempts": 0, "row": 3},
-        {"job_id": "ig-model", "platform": "instagram", "media_selection": "model_video:0", "attempts": 0, "row": 4},
+        {"job_id": "ig-model", "platform": "instagram", "media_selection": "model_photo:0", "attempts": 0, "row": 4},
     ]
     selected = main._round_robin_jobs(jobs, 2)
     picked = [job["job_id"] for job in selected]
     assert picked == ["fb-model", "ig-model"], picked
     print("OK test_round_robin_prefers_model_media_within_platform")
+
+
+def test_process_pending_skips_model_video_jobs():
+    accounts = [_account("FB-A")]
+    sources = {"100": _source("100")}
+    jobs = [
+        {"job_id": "100-FB-A-model_video-0", "sku": "100", "account_id": "FB-A",
+         "media_selection": "model_video:0", "platform": "facebook", "format": "video",
+         "status": "pending", "attempts": 0},
+        {"job_id": "100-FB-A-carousel", "sku": "100", "account_id": "FB-A",
+         "media_selection": "carousel", "platform": "facebook", "format": "carousel",
+         "status": "pending", "attempts": 0},
+    ]
+    fake = FakeSheets(sources, accounts, jobs)
+    calls = []
+
+    def fake_publish(job, source, account):
+        calls.append(job["job_id"])
+        return "111", "https://www.facebook.com/posts/111"
+
+    with patch.object(Config, "MAX_JOBS_PER_RUN", 40), \
+         patch("main.publish_job", side_effect=fake_publish), \
+         patch("main.time.sleep"):
+        main.process_pending(fake)
+    assert calls == ["100-FB-A-carousel"], calls
+    status_by_job = {job["job_id"]: job["status"] for job in fake.queue_rows}
+    assert status_by_job["100-FB-A-model_video-0"] == "pending"
+    assert status_by_job["100-FB-A-carousel"] == Config.JOB_STATUS_UPLOADED
+    print("OK test_process_pending_skips_model_video_jobs")
 
 
 def test_generate_is_idempotent():
@@ -296,8 +326,8 @@ def test_generate_is_idempotent():
     with patch.object(Config, "MAX_GENERATE_JOBS", 3):
         main.run_generate(fake)
         first_count = len(fake.appended_jobs)
-        # 1 FB account x (carousel + product_video + model_video:0) = 3 jobs
-        assert first_count == 3, f"expected 3 jobs, got {first_count}"
+        # 1 FB account x (carousel + product_video) = 2 jobs; model videos are not queued
+        assert first_count == 2, f"expected 2 jobs, got {first_count}"
 
         # Second identical run must append NOTHING new.
         main.run_generate(fake)
@@ -306,7 +336,7 @@ def test_generate_is_idempotent():
         # A brand-new SKU appears -> only its missing jobs are added.
         fake.source_rows["200"] = _source("200")
         main.run_generate(fake)
-        assert len(fake.appended_jobs) == first_count + 3
+        assert len(fake.appended_jobs) == first_count + 2
 
     # No duplicate unique keys ever.
     keys = [main.job_unique_key(j) for j in fake.appended_jobs]
@@ -462,8 +492,8 @@ def test_generate_new_platforms():
     with patch.object(Config, "MAX_GENERATE_JOBS", 40):
         main.run_generate(fake)
     jobs = fake.appended_jobs
-    # 3 platforms x (carousel + product_video + model_video:0) = 9 jobs
-    assert len(jobs) == 9, f"expected 9 jobs, got {len(jobs)}"
+    # 3 platforms x (carousel + product_video) = 6 jobs; model videos are not queued
+    assert len(jobs) == 6, f"expected 6 jobs, got {len(jobs)}"
     platforms = {j["platform"] for j in jobs}
     assert platforms == {"line", "wechat", "pinterest"}
     formats = {j["format"] for j in jobs}
@@ -473,7 +503,7 @@ def test_generate_new_platforms():
     # Idempotent on second run.
     with patch.object(Config, "MAX_GENERATE_JOBS", 40):
         main.run_generate(fake)
-    assert len(fake.appended_jobs) == 9, "duplicate jobs generated for new platforms"
+    assert len(fake.appended_jobs) == 6, "duplicate jobs generated for new platforms"
     print("OK test_generate_new_platforms")
 
 
@@ -984,10 +1014,10 @@ def test_youtube_jobs_are_queued_when_only_product_images_mismatch():
         if job["status"] != "needs_review"
     }
     assert ("YT-CD", "product_video") in selections, jobs
-    assert ("YT-CD", "model_video:0") in selections, jobs
+    assert ("YT-CD", "model_video:0") not in selections, jobs
     assert ("YT-CD", "model_video:1") not in selections, jobs
     assert ("YT-CD", "model_photo:0") not in selections, jobs
-    assert ("FB-CD", "model_video:0") in selections, jobs
+    assert ("FB-CD", "model_video:0") not in selections, jobs
     assert ("FB-CD", "model_video:1") not in selections, jobs
     assert ("FB-CD", "carousel") not in selections, jobs
     assert ("FB-CD", "product_video") not in selections, jobs
@@ -1015,7 +1045,7 @@ def test_youtube_queues_model_photos_like_instagram():
     }
     assert ("IG-CD", "model_photo:0", "carousel") in selections, jobs
     assert ("YT-CD", "model_photo:0", "video") in selections, jobs
-    assert ("YT-CD", "model_video:0", "video") in selections, jobs
+    assert ("YT-CD", "model_video:0", "video") not in selections, jobs
     assert ("YT-CD", "product_video", "video") in selections, jobs
     assert not any(
         job["account_id"] == "YT-CD" and job["media_selection"] == "carousel"
@@ -1084,6 +1114,7 @@ def test_ffprobe_timeout_is_not_broken_media():
 if __name__ == "__main__":
     test_generate_queues_model_media_before_product_media()
     test_round_robin_prefers_model_media_within_platform()
+    test_process_pending_skips_model_video_jobs()
     test_generate_is_idempotent()
     test_generate_uses_stable_job_id_when_mutable_key_drifted()
     test_generate_skips_unlinked_instagram_placeholders()

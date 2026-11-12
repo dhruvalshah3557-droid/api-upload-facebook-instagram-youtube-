@@ -40,7 +40,13 @@ from delivery_policy import (
     rolling_activity,
     slot_eligible,
 )
-from job_generator import _is_clean_source, is_model_media, model_media_priority
+from job_generator import (
+    _is_clean_source,
+    is_model_media,
+    is_model_video,
+    model_media_priority,
+    model_video_uploads_enabled,
+)
 from sheets_reader import SheetsReader
 PREFLIGHT_SCAN_LIMIT = 1000
 PER_ACCOUNT_SCAN_LIMIT = 300
@@ -1101,6 +1107,8 @@ def _revive_skipped_model_jobs(sheets, accounts):
             continue
         if not is_model_media(rec):
             continue
+        if is_model_video(rec) and not model_video_uploads_enabled():
+            continue
         account_id = str(rec.get("account_id", "") or "").strip()
         if account_id not in enabled:
             continue
@@ -1154,12 +1162,15 @@ def _account_scan_jobs(account_jobs, limit=PER_ACCOUNT_SCAN_LIMIT):
     photos and only a tiny fallback seat for product media.
     """
     jobs = list(account_jobs or ())
+    if not model_video_uploads_enabled():
+        jobs = [job for job in jobs if not is_model_video(job)]
     limit = max(1, int(limit))
     if len(jobs) <= limit:
         return jobs
     video_jobs = [
         job for job in jobs
-        if str(job.get("media_selection", "") or "").startswith("model_video:")
+        if model_video_uploads_enabled()
+        and str(job.get("media_selection", "") or "").startswith("model_video:")
     ]
     photo_jobs = [
         job for job in jobs
@@ -1542,6 +1553,9 @@ def _healthy_candidates(
                     if str(job.get("platform", "") or "").lower() != platform:
                         continue
                     selection = str(job.get("media_selection", "") or "")
+                    if is_model_video(job) and not model_video_uploads_enabled():
+                        tried_ids.add(id(job))
+                        continue
                     if (
                         selection.startswith("model_video:")
                         and model_video_failures >= MODEL_VIDEO_PREFLIGHT_BUDGET
@@ -1677,6 +1691,7 @@ def _fill_model_media_leftover(
                 job for job in jobs_by_account.get(account_id, [])
                 if is_model_media(job) and id(job) not in already_ids
                 and not _known_unusable_pending(job)
+                and (model_video_uploads_enabled() or not is_model_video(job))
             ]
             if not account_jobs:
                 continue

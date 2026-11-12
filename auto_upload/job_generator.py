@@ -120,6 +120,19 @@ def _make_job(sku, account_id, platform, fmt, media_selection, account):
     }
 
 
+MODEL_VIDEO_UPLOADS_ENABLED = False
+
+
+def model_video_uploads_enabled():
+    return bool(MODEL_VIDEO_UPLOADS_ENABLED)
+
+
+def is_model_video(job):
+    """True for standalone model-video jobs."""
+    selection = str((job or {}).get("media_selection", "") or "")
+    return selection.startswith("model_video:")
+
+
 def is_model_media(job):
     """True for standalone model video/photo jobs."""
     selection = str((job or {}).get("media_selection", "") or "")
@@ -130,7 +143,7 @@ def model_media_priority(job):
     """Always prefer model video, then model photo, over product media."""
     selection = str((job or {}).get("media_selection", "") or "")
     if selection.startswith("model_video:"):
-        return 0
+        return 0 if model_video_uploads_enabled() else 4
     if selection.startswith("model_photo:"):
         return 1
     if selection.startswith("product_video"):
@@ -142,7 +155,7 @@ def _append_model_jobs(
     jobs, sku, account_id, platform, account, source, photos=True, videos=True,
     photo_format="carousel",
 ):
-    if videos:
+    if videos and model_video_uploads_enabled():
         for i in range(len(source.get("model_videos", []))):
             jobs.append(_make_job(sku, account_id, platform, "video", f"model_video:{i}", account))
     if photos:
@@ -227,12 +240,13 @@ def generate_jobs(sources, accounts):
             account_id = account.get("account_id", "")
             if integrity_error and platform not in ("youtube", "twitch"):
                 if platform in ("facebook", "instagram", "line", "wechat", "pinterest", "x", "linkedin", "tiktok"):
-                    for i, url in enumerate(source.get("model_videos") or []):
-                        if _video_url_matches_sku(source, url):
-                            jobs.append(_make_job(
-                                sku, account_id, platform, "video",
-                                f"model_video:{i}", account,
-                            ))
+                    if model_video_uploads_enabled():
+                        for i, url in enumerate(source.get("model_videos") or []):
+                            if _video_url_matches_sku(source, url):
+                                jobs.append(_make_job(
+                                    sku, account_id, platform, "video",
+                                    f"model_video:{i}", account,
+                                ))
                     for i, url in enumerate(source.get("model_images") or []):
                         if _video_url_matches_sku(source, url):
                             jobs.append(_make_job(
@@ -248,12 +262,13 @@ def generate_jobs(sources, accounts):
                     jobs.append(_make_job(sku, account_id, platform, "carousel", "carousel", account))
             elif platform == "youtube":
                 if integrity_error:
-                    for i, url in enumerate(source.get("model_videos") or []):
-                        if _video_url_matches_sku(source, url):
-                            jobs.append(_make_job(
-                                sku, account_id, platform, "video",
-                                f"model_video:{i}", account,
-                            ))
+                    if model_video_uploads_enabled():
+                        for i, url in enumerate(source.get("model_videos") or []):
+                            if _video_url_matches_sku(source, url):
+                                jobs.append(_make_job(
+                                    sku, account_id, platform, "video",
+                                    f"model_video:{i}", account,
+                                ))
                     for i, url in enumerate(source.get("model_images") or []):
                         if _video_url_matches_sku(source, url):
                             jobs.append(_make_job(
@@ -271,12 +286,13 @@ def generate_jobs(sources, accounts):
                     )
                     _append_product_video_jobs(jobs, sku, account_id, platform, account, source)
             elif platform == "twitch":
-                for i, url in enumerate(source.get("model_videos") or []):
-                    if not integrity_error or _video_url_matches_sku(source, url):
-                        jobs.append(_make_job(
-                            sku, account_id, platform, "video",
-                            f"model_video:{i}", account,
-                        ))
+                if model_video_uploads_enabled():
+                    for i, url in enumerate(source.get("model_videos") or []):
+                        if not integrity_error or _video_url_matches_sku(source, url):
+                            jobs.append(_make_job(
+                                sku, account_id, platform, "video",
+                                f"model_video:{i}", account,
+                            ))
                 if source["video_url"] and (
                     not integrity_error or _video_url_matches_sku(source)
                 ):

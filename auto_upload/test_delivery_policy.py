@@ -414,7 +414,9 @@ class DeliveryPolicyTests(unittest.TestCase):
         def resolve(job, source):
             return ["https://example.com/%s.mp4" % job.get("sku")]
 
-        with patch("optimized_runner.resolve_media_fixed", side_effect=resolve), \
+        with patch("optimized_runner.model_video_uploads_enabled", return_value=True), \
+             patch("job_generator.model_video_uploads_enabled", return_value=True), \
+             patch("optimized_runner.resolve_media_fixed", side_effect=resolve), \
              patch("optimized_runner._dns_resolves", return_value=True), \
              patch("optimized_runner.main._classify_media_url", return_value="video"), \
              patch("optimized_runner._local_slot_due", return_value=False), \
