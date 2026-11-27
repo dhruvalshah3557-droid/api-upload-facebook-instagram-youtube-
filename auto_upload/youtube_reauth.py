@@ -20,7 +20,12 @@ from urllib.parse import parse_qs, urlsplit
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 
-SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+SCOPES = [
+    "https://www.googleapis.com/auth/youtube.upload",
+    # channels().list(mine=true) requires a read scope; upload alone returns
+    # "insufficient authentication scopes".
+    "https://www.googleapis.com/auth/youtube.readonly",
+]
 REDIRECT_URI = "http://127.0.0.1:8080/"
 
 CHANNELS = {
