@@ -1,0 +1,72 @@
+name: Dependabot Auto Merge
+
+# Keeps dependencies and GitHub Actions current without manual toil.
+# Dependabot opens the PR; this workflow approves and squash-merges it once the
+# required checks are green. Major version bumps are left open for human review
+# because they can contain breaking changes.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, labeled, ready_for_review]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: dependabot-auto-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  auto-merge:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@v3
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Decide whether the update is safe to auto-merge
+        id: policy
+        env:
+          UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
+          DEPENDENCY_TYPE: ${{ steps.metadata.outputs.dependency-type }}
+        run: |
+          set -euo pipefail
+          echo "update-type=${UPDATE_TYPE} dependency-type=${DEPENDENCY_TYPE}"
+          case "$UPDATE_TYPE" in
+            version-update:semver-patch|version-update:semver-minor)
+              echo "auto_merge=true" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "auto_merge=false" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
+      - name: Leave major updates for human review
+        if: steps.policy.outputs.auto_merge != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          gh pr comment "$PR_URL" --body "Skipping auto-merge: \`${{ steps.metadata.outputs.update-type }}\` updates require manual review." || true
+
+      - name: Approve and enable auto-merge
+        if: steps.policy.outputs.auto_merge == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          set -euo pipefail
+          gh pr review "$PR_URL" --approve --body "Auto-approved: ${{ steps.metadata.outputs.update-type }} dependency update." || true
+          # Enable GitHub auto-merge so the PR lands as soon as required checks pass.
+          if gh pr merge "$PR_URL" --auto --squash --delete-branch; then
+            echo "Auto-merge enabled for $PR_URL"
+            exit 0
+          fi
+          echo "Auto-merge is unavailable; waiting for checks and merging directly."
+          gh pr checks "$PR_URL" --watch --interval 30 || true
+          gh pr merge "$PR_URL" --squash --delete-branch

@@ -40,9 +40,10 @@ jobs:
                   assert (base / "pubspec.yaml").is_file(), directory
               else:
                   assert directory == "/" and list(Path(".github/workflows").glob("*.y*ml"))
-              assert update["schedule"]["interval"] == "weekly"
+              assert update["schedule"]["interval"] in {"daily", "weekly"}
               assert update["schedule"]["timezone"] == "Asia/Kolkata"
               assert 1 <= update["open-pull-requests-limit"] <= 5
+              assert "auto-merge" in update.get("labels", []), "Auto-merge label is required"
               for group in update.get("groups", {}).values():
                   assert set(group["update-types"]) == {"patch", "minor"}
           print(f"Validated {len(seen)} dependency update targets")
