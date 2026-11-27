@@ -79,11 +79,7 @@ jobs:
           AUTH_CODE: ${{ inputs.code }}
         working-directory: auto_upload
         run: |
-          python youtube_reauth.py --channel "${{ inputs.channel }}" --mode exchange --code "$AUTH_CODE" \
-            | tee /tmp/reauth.out
-          # Re-emit the token base64-encoded so GitHub masking does not corrupt it.
-          TOKEN_LINE="$(grep -E '^YOUTUBE_OAUTH_REFRESH_TOKEN_' /tmp/reauth.out | tail -1)"
-          if [[ -n "$TOKEN_LINE" ]]; then
-            echo "::add-mask::${TOKEN_LINE#*=}"
-            echo "SECRET_BASE64: $(printf '%s' "$TOKEN_LINE" | base64 -w0)"
-          fi
+          # Print the new token in cleartext. It is not a pre-existing secret, so
+          # GitHub does not mask it. Do NOT call ::add-mask:: here: that would
+          # register the value and redact the very line the operator needs.
+          python youtube_reauth.py --channel "${{ inputs.channel }}" --mode exchange --code "$AUTH_CODE"
