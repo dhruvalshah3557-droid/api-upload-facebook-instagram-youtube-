@@ -1,0 +1,84 @@
+name: YouTube Token Health
+
+# Runs daily and proactively probes every enabled YouTube refresh token.
+# Google caps refresh tokens from a "Testing"-mode OAuth consent screen at 7
+# days; a published consent screen issues tokens that do not expire from age.
+# This workflow opens (or updates) a single `manual-review` issue naming the
+# exact GitHub Secret to re-authorize, so a dead token is caught before it
+# silently drains the YouTube upload slots.
+
+on:
+  schedule:
+    - cron: "23 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: youtube-token-health
+  cancel-in-progress: false
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Probe YouTube refresh tokens
+        id: probe
+        continue-on-error: true
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_CLIENT_ID_COLOURDIAMONDSS: ${{ secrets.YOUTUBE_CLIENT_ID_COLOURDIAMONDSS }}
+          YOUTUBE_CLIENT_SECRET_COLOURDIAMONDSS: ${{ secrets.YOUTUBE_CLIENT_SECRET_COLOURDIAMONDSS }}
+          YOUTUBE_OAUTH_REFRESH_TOKEN_COLOURDIAMONDSS: ${{ secrets.YOUTUBE_OAUTH_REFRESH_TOKEN_COLOURDIAMONDSS }}
+          YOUTUBE_OAUTH_REFRESH_TOKEN_JIYA: ${{ secrets.YOUTUBE_OAUTH_REFRESH_TOKEN_JIYA }}
+          YOUTUBE_OAUTH_REFRESH_TOKEN_TRENDINGJEWELS: ${{ secrets.YOUTUBE_OAUTH_REFRESH_TOKEN_TRENDINGJEWELS }}
+          YOUTUBE_OAUTH_REFRESH_TOKEN_TREND: ${{ secrets.YOUTUBE_OAUTH_REFRESH_TOKEN_TREND }}
+        run: |
+          set -o pipefail
+          python auto_upload/youtube_token_health.py | tee /tmp/token-health.txt
+
+      - name: Open or update manual-review issue
+        if: steps.probe.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          TITLE="[manual-review] YouTube OAuth refresh token expired"
+          BODY_FILE=/tmp/token-health.txt
+          EXISTING="$(gh issue list --state open --search "$TITLE in:title" --json number,title --jq '.[] | select(.title=="'"$TITLE"'") | .number' | head -1)"
+          {
+            echo "The daily YouTube token health check found dead OAuth refresh tokens."
+            echo
+            echo '```'
+            cat "$BODY_FILE"
+            echo '```'
+            echo
+            echo "Re-authorize with the **Reauthorize YouTube Channel** workflow, then update the matching GitHub Secret."
+            echo
+            echo "Permanent fix: publish the OAuth consent screen in Google Cloud Console so tokens stop expiring every 7 days."
+          } > /tmp/issue-body.md
+          if [[ -n "$EXISTING" ]]; then
+            gh issue comment "$EXISTING" --body-file /tmp/issue-body.md
+            echo "Updated existing issue #$EXISTING"
+          else
+            gh issue create --title "$TITLE" --body-file /tmp/issue-body.md --label manual-review
+          fi
+
+      - name: Fail when tokens are dead
+        if: steps.probe.outcome == 'failure'
+        run: |
+          echo "::error::YouTube OAuth refresh tokens are dead; see the manual-review issue."
+          exit 1
