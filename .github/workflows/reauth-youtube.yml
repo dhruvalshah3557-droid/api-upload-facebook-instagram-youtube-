@@ -60,7 +60,14 @@ jobs:
           YOUTUBE_CLIENT_ID_COLOURDIAMONDSS: ${{ secrets.YOUTUBE_CLIENT_ID_COLOURDIAMONDSS }}
           YOUTUBE_CLIENT_SECRET_COLOURDIAMONDSS: ${{ secrets.YOUTUBE_CLIENT_SECRET_COLOURDIAMONDSS }}
         working-directory: auto_upload
-        run: python youtube_reauth.py --channel "${{ inputs.channel }}" --mode url
+        run: |
+          # GitHub masks secret substrings in logs, which corrupts the URL.
+          # Base64 the URL so it survives masking, then decode locally.
+          python youtube_reauth.py --channel "${{ inputs.channel }}" --mode url \
+            | base64 -w0 > /tmp/consent_url.b64
+          echo "CONSENT_URL_BASE64:"
+          cat /tmp/consent_url.b64
+          echo
 
       - name: Exchange code for refresh token
         if: inputs.mode == 'exchange'
@@ -74,9 +81,9 @@ jobs:
         run: |
           python youtube_reauth.py --channel "${{ inputs.channel }}" --mode exchange --code "$AUTH_CODE" \
             | tee /tmp/reauth.out
-          # Re-emit the token as a masked line so it is easy to copy.
+          # Re-emit the token base64-encoded so GitHub masking does not corrupt it.
           TOKEN_LINE="$(grep -E '^YOUTUBE_OAUTH_REFRESH_TOKEN_' /tmp/reauth.out | tail -1)"
           if [[ -n "$TOKEN_LINE" ]]; then
             echo "::add-mask::${TOKEN_LINE#*=}"
-            echo "COPY_THIS_SECRET: $TOKEN_LINE"
+            echo "SECRET_BASE64: $(printf '%s' "$TOKEN_LINE" | base64 -w0)"
           fi
