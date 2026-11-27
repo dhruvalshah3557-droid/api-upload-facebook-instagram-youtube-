@@ -1,14 +1,17 @@
 name: Reauthorize YouTube Channel
 
 # Exchanges a fresh Google OAuth authorization code for a new refresh token
-# using the existing client secrets. The token is printed as a masked log line
-# so it can be copied into GitHub Secrets. Client secrets are never printed.
+# using the existing client secrets. Outputs are written to files and uploaded
+# as a workflow artifact because GitHub masks secret substrings in logs, which
+# would corrupt the consent URL and the printed token.
 #
 # Usage:
-#   1. Run with mode=url and channel=<NAME>; open the printed URL, approve.
-#   2. Copy the full 127.0.0.1:8080 redirect URL from the browser.
+#   1. Run with mode=url and channel=<NAME>; download the `reauth-output`
+#      artifact and open consent.txt.
+#   2. Approve in the browser and copy the full 127.0.0.1:8080 redirect URL.
 #   3. Run again with mode=exchange, same channel, and paste that URL.
-#   4. Copy the printed YOUTUBE_OAUTH_REFRESH_TOKEN_* value into GitHub Secrets.
+#   4. Download the artifact and copy the YOUTUBE_OAUTH_REFRESH_TOKEN_* value
+#      from secret.txt into GitHub Secrets.
 
 on:
   workflow_dispatch:
@@ -61,13 +64,8 @@ jobs:
           YOUTUBE_CLIENT_SECRET_COLOURDIAMONDSS: ${{ secrets.YOUTUBE_CLIENT_SECRET_COLOURDIAMONDSS }}
         working-directory: auto_upload
         run: |
-          # GitHub masks secret substrings in logs, which corrupts the URL.
-          # Base64 the URL so it survives masking, then decode locally.
-          python youtube_reauth.py --channel "${{ inputs.channel }}" --mode url \
-            | base64 -w0 > /tmp/consent_url.b64
-          echo "CONSENT_URL_BASE64:"
-          cat /tmp/consent_url.b64
-          echo
+          python youtube_reauth.py --channel "${{ inputs.channel }}" --mode url > /tmp/reauth_url.txt
+          echo "Consent URL written to artifact (log masking would corrupt it)."
 
       - name: Exchange code for refresh token
         if: inputs.mode == 'exchange'
@@ -79,7 +77,15 @@ jobs:
           AUTH_CODE: ${{ inputs.code }}
         working-directory: auto_upload
         run: |
-          # Print the new token in cleartext. It is not a pre-existing secret, so
-          # GitHub does not mask it. Do NOT call ::add-mask:: here: that would
-          # register the value and redact the very line the operator needs.
-          python youtube_reauth.py --channel "${{ inputs.channel }}" --mode exchange --code "$AUTH_CODE"
+          python youtube_reauth.py --channel "${{ inputs.channel }}" --mode exchange --code "$AUTH_CODE" > /tmp/reauth_out.txt
+          echo "Refresh token written to artifact (log masking would corrupt it)."
+
+      - name: Upload reauth output
+        uses: actions/upload-artifact@v7
+        with:
+          name: reauth-output
+          path: |
+            /tmp/reauth_url.txt
+            /tmp/reauth_out.txt
+          if-no-files-found: ignore
+          retention-days: 1
