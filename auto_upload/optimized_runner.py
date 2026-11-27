@@ -1567,7 +1567,13 @@ def _healthy_candidates(
             # model photo/video so product carousels cannot consume leftover
             # slots. Unused YouTube/TikTok capacity is filled later.
             jobs_for_account = 1
-            if any(is_model_media(job) for job in scan_jobs):
+            if platform == "youtube":
+                # YouTube should fill its whole run budget. Model media is
+                # sorted first, so product videos only fill the remainder when
+                # no model media is publishable (for example the Model Photo
+                # Video folder is down).
+                jobs_for_account = max(1, wanted - platform_selected)
+            elif any(is_model_media(job) for job in scan_jobs):
                 jobs_for_account = max(1, wanted - platform_selected)
             account_selected = 0
             already_ids = {id(job) for job in selected}
@@ -1594,7 +1600,10 @@ def _healthy_candidates(
                     ):
                         tried_ids.add(id(job))
                         continue
-                    if not is_model_media(job):
+                    if not is_model_media(job) and platform != "youtube":
+                        # Facebook/Instagram cap product media at one job per
+                        # account turn so a single turn cannot burst the shared
+                        # Meta application quota. YouTube is handled above.
                         if account_selected > 0:
                             continue
                         if any(

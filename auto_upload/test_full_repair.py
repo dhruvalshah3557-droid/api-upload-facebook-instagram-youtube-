@@ -912,6 +912,69 @@ class FullRepairTests(unittest.TestCase):
         self.assertGreater(model_count, 0)
         self.assertLess(model_count, 300)
 
+    def test_youtube_fills_run_budget_with_product_videos_when_model_media_unavailable(self):
+        now = datetime(2026, 11, 27, 9, 0, tzinfo=timezone.utc)
+        jobs = [
+            {
+                "job_id": "100-YT-CD-model_video-0",
+                "sku": "100",
+                "account_id": "YT-CD",
+                "platform": "youtube",
+                "format": "video",
+                "media_selection": "model_video:0",
+                "row": 1,
+                "attempts": 0,
+                "notes": "",
+                "error_message": "",
+            },
+        ]
+        for sku in ("200", "201", "202"):
+            jobs.append({
+                "job_id": "%s-YT-CD-product_video" % sku,
+                "sku": sku,
+                "account_id": "YT-CD",
+                "platform": "youtube",
+                "format": "video",
+                "media_selection": "product_video",
+                "row": int(sku),
+                "attempts": 0,
+                "notes": "",
+                "error_message": "",
+            })
+        accounts = {
+            "YT-CD": {
+                "enabled": True,
+                "platform": "youtube",
+                "platform_account_id": "UCtest",
+                "timezone": "Asia/Bangkok",
+                "credential_property_key": "YOUTUBE_OAUTH_REFRESH_TOKEN_COLOURDIAMONDSS",
+            },
+        }
+        sources = {
+            "100": {"model_videos": ["https://media.example/model.mp4"]},
+            "200": {"video_url": "https://media.example/product200.mp4"},
+            "201": {"video_url": "https://media.example/product201.mp4"},
+            "202": {"video_url": "https://media.example/product202.mp4"},
+        }
+        sheets = types.SimpleNamespace(update_job=lambda *args, **kwargs: None)
+        with _allow_model_videos(), \
+             patch.dict("os.environ", {"YOUTUBE_OAUTH_REFRESH_TOKEN_COLOURDIAMONDSS": "tok"}, clear=False), \
+             patch("optimized_runner._platform_limits", return_value={"facebook": 0, "instagram": 0, "youtube": 3, "line": 0}), \
+             patch("optimized_runner._local_slot_due", return_value=True), \
+             patch("optimized_runner._rotation_rank", return_value=0), \
+             patch("optimized_runner._is_clean_source", return_value=(True, "")), \
+             patch("optimized_runner.resolve_media_fixed", side_effect=lambda job, source: source.get("model_videos") or ([source["video_url"]] if source.get("video_url") else [])), \
+             patch("optimized_runner._media_preflight_reason", side_effect=lambda media, force_video=False: "all media URLs are unavailable" if any("model" in str(u) for u in media) else ""), \
+             patch("optimized_runner.main.build_caption", return_value="ok"), \
+             patch("optimized_runner._youtube_auth_dead_accounts", return_value=set()):
+            selected = optimized_runner._healthy_candidates(
+                jobs, accounts, sources, sheets, limit=3, now=now,
+            )
+        self.assertEqual(
+            [job["media_selection"] for job in selected],
+            ["product_video", "product_video", "product_video"],
+        )
+
     def test_account_scan_keeps_model_photos_when_model_videos_fill_window(self):
         jobs = [
             {"job_id": "model-video-%s" % i, "media_selection": "model_video:0"}
