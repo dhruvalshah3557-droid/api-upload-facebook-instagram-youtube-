@@ -17,7 +17,7 @@ import os
 import sys
 from urllib.parse import parse_qs, urlsplit
 
-from google_auth_oauthlib.flow import InstalledAppFlow
+from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
@@ -77,7 +77,15 @@ def build_flow(spec):
             "redirect_uris": [REDIRECT_URI],
         }
     }
-    flow = InstalledAppFlow.from_client_config(config, SCOPES)
+    flow = Flow.from_client_config(
+        config,
+        SCOPES,
+        redirect_uri=REDIRECT_URI,
+        # PKCE verifiers are per-process. The URL and exchange steps run in
+        # separate workflow runs, so a generated verifier would be lost and the
+        # exchange would fail with invalid_grant. Disable it for stateless use.
+        autogenerate_code_verifier=False,
+    )
     flow.redirect_uri = REDIRECT_URI
     return flow
 
