@@ -124,7 +124,12 @@ def main():
 
     if args.mode == "url":
         auth_url, _ = flow.authorization_url(
-            access_type="offline", prompt="consent", include_granted_scopes="true"
+            # "select_account consent" forces the Google account chooser, so a
+            # multi-channel operator can pick the right login instead of the
+            # browser silently reusing the last account.
+            access_type="offline",
+            prompt="select_account consent",
+            include_granted_scopes="true",
         )
         print("=" * 70)
         print(f"Authorize {args.channel} - open this URL in a browser:")
