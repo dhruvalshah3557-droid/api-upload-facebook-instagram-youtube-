@@ -1,0 +1,82 @@
+name: Reauthorize YouTube Channel
+
+# Exchanges a fresh Google OAuth authorization code for a new refresh token
+# using the existing client secrets. The token is printed as a masked log line
+# so it can be copied into GitHub Secrets. Client secrets are never printed.
+#
+# Usage:
+#   1. Run with mode=url and channel=<NAME>; open the printed URL, approve.
+#   2. Copy the full 127.0.0.1:8080 redirect URL from the browser.
+#   3. Run again with mode=exchange, same channel, and paste that URL.
+#   4. Copy the printed YOUTUBE_OAUTH_REFRESH_TOKEN_* value into GitHub Secrets.
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Channel to authorize"
+        required: true
+        type: choice
+        options:
+          - COLOURDIAMONDSS
+          - JIYA
+          - TRENDINGJEWELS
+          - TREND
+      mode:
+        description: "url = print consent link, exchange = trade code for token"
+        required: true
+        type: choice
+        options:
+          - url
+          - exchange
+      code:
+        description: "Authorization code or full redirect URL (exchange mode only)"
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  reauth:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install google-auth-oauthlib google-api-python-client
+
+      - name: Print consent URL
+        if: inputs.mode == 'url'
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_CLIENT_ID_COLOURDIAMONDSS: ${{ secrets.YOUTUBE_CLIENT_ID_COLOURDIAMONDSS }}
+          YOUTUBE_CLIENT_SECRET_COLOURDIAMONDSS: ${{ secrets.YOUTUBE_CLIENT_SECRET_COLOURDIAMONDSS }}
+        working-directory: auto_upload
+        run: python youtube_reauth.py --channel "${{ inputs.channel }}" --mode url
+
+      - name: Exchange code for refresh token
+        if: inputs.mode == 'exchange'
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_CLIENT_ID_COLOURDIAMONDSS: ${{ secrets.YOUTUBE_CLIENT_ID_COLOURDIAMONDSS }}
+          YOUTUBE_CLIENT_SECRET_COLOURDIAMONDSS: ${{ secrets.YOUTUBE_CLIENT_SECRET_COLOURDIAMONDSS }}
+          AUTH_CODE: ${{ inputs.code }}
+        working-directory: auto_upload
+        run: |
+          python youtube_reauth.py --channel "${{ inputs.channel }}" --mode exchange --code "$AUTH_CODE" \
+            | tee /tmp/reauth.out
+          # Re-emit the token as a masked line so it is easy to copy.
+          TOKEN_LINE="$(grep -E '^YOUTUBE_OAUTH_REFRESH_TOKEN_' /tmp/reauth.out | tail -1)"
+          if [[ -n "$TOKEN_LINE" ]]; then
+            echo "::add-mask::${TOKEN_LINE#*=}"
+            echo "COPY_THIS_SECRET: $TOKEN_LINE"
+          fi
