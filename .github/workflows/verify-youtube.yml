@@ -23,6 +23,7 @@ jobs:
           YOUTUBE_OAUTH_REFRESH_TOKEN_COLOURDIAMONDSS: ${{ secrets.YOUTUBE_OAUTH_REFRESH_TOKEN_COLOURDIAMONDSS }}
           YOUTUBE_OAUTH_REFRESH_TOKEN_TRENDINGJEWELS: ${{ secrets.YOUTUBE_OAUTH_REFRESH_TOKEN_TRENDINGJEWELS }}
           YOUTUBE_OAUTH_REFRESH_TOKEN_TREND: ${{ secrets.YOUTUBE_OAUTH_REFRESH_TOKEN_TREND }}
+          YOUTUBE_OAUTH_REFRESH_TOKEN_ISRAEL: ${{ secrets.YOUTUBE_OAUTH_REFRESH_TOKEN_ISRAEL }}
         shell: bash
         run: |
           set -uo pipefail
@@ -66,5 +67,7 @@ jobs:
           verify_channel             "Trendingjewels"             "$YOUTUBE_CLIENT_ID"             "$YOUTUBE_CLIENT_SECRET"             "$YOUTUBE_OAUTH_REFRESH_TOKEN_TRENDINGJEWELS"             "UCWSGpmJfBIzcA9O9kFWaRNw" || failures=1
 
           verify_channel             "Trending Jewel"             "$YOUTUBE_CLIENT_ID"             "$YOUTUBE_CLIENT_SECRET"             "$YOUTUBE_OAUTH_REFRESH_TOKEN_TREND"             "UCiOkTy5C8_dZw-TlzYKeOVA" || failures=1
+
+          verify_channel             "Colour Diam Israel"             "$YOUTUBE_CLIENT_ID"             "$YOUTUBE_CLIENT_SECRET"             "$YOUTUBE_OAUTH_REFRESH_TOKEN_ISRAEL"             "UC1A8mQ_xH9fnPCuWE8nQN3A" || failures=1
 
           exit "$failures"

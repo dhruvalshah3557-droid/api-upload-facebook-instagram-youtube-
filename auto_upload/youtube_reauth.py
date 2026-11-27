@@ -53,6 +53,12 @@ CHANNELS = {
         "refresh_key": "YOUTUBE_OAUTH_REFRESH_TOKEN_TREND",
         "expected_id": "UCiOkTy5C8_dZw-TlzYKeOVA",
     },
+    "ISRAEL": {
+        "client_id": "YOUTUBE_CLIENT_ID",
+        "client_secret": "YOUTUBE_CLIENT_SECRET",
+        "refresh_key": "YOUTUBE_OAUTH_REFRESH_TOKEN_ISRAEL",
+        "expected_id": "UC1A8mQ_xH9fnPCuWE8nQN3A",
+    },
 }
 
 

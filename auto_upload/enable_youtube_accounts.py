@@ -155,6 +155,43 @@ ACCOUNTS = (
             ),
         },
     },
+    {
+        "account_id": "YT-ISRAEL",
+        "updates": {
+            "enabled": "Yes",
+            "credential_property_key": "YOUTUBE_OAUTH_REFRESH_TOKEN_ISRAEL",
+            "approval_required": "No",
+            "notes": (
+                "YouTube Colour Diam Israel channel enabled. Uses "
+                "YOUTUBE_OAUTH_REFRESH_TOKEN_ISRAEL."
+            ),
+        },
+        "new_row": {
+            "account_id": "YT-ISRAEL",
+            "platform": "YouTube",
+            "account_name": "Colour Diam Israel YouTube",
+            "platform_account_id": "UC1A8mQ_xH9fnPCuWE8nQN3A",
+            "username_or_channel": "colourdiamisrael",
+            "primary_language": "he-IL",
+            "fallback_language": "en-GB",
+            "timezone": "Asia/Jerusalem",
+            "enabled": "Yes",
+            "allowed_formats": "YouTube Video, YouTube Short",
+            "caption_style": "Search-friendly luxury education",
+            "hashtag_set": "YouTube keywords; 3-5 hashtags",
+            "cta_rule": "Product link in description",
+            "posting_window": "12:00-21:00 local",
+            "min_gap_minutes": "180",
+            "product_tagging": "No",
+            "catalog_or_store_id": "",
+            "credential_property_key": "YOUTUBE_OAUTH_REFRESH_TOKEN_ISRAEL",
+            "approval_required": "No",
+            "notes": (
+                "YouTube Colour Diam Israel channel enabled. Uses "
+                "YOUTUBE_OAUTH_REFRESH_TOKEN_ISRAEL."
+            ),
+        },
+    },
 )
 
 

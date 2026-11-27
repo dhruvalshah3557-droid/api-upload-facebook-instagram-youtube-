@@ -25,6 +25,7 @@ on:
           - JIYA
           - TRENDINGJEWELS
           - TREND
+          - ISRAEL
       mode:
         description: "url = print consent link, exchange = trade code for token"
         required: true

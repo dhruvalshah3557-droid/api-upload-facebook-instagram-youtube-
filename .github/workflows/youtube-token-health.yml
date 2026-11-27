@@ -45,6 +45,7 @@ jobs:
           YOUTUBE_OAUTH_REFRESH_TOKEN_JIYA: ${{ secrets.YOUTUBE_OAUTH_REFRESH_TOKEN_JIYA }}
           YOUTUBE_OAUTH_REFRESH_TOKEN_TRENDINGJEWELS: ${{ secrets.YOUTUBE_OAUTH_REFRESH_TOKEN_TRENDINGJEWELS }}
           YOUTUBE_OAUTH_REFRESH_TOKEN_TREND: ${{ secrets.YOUTUBE_OAUTH_REFRESH_TOKEN_TREND }}
+          YOUTUBE_OAUTH_REFRESH_TOKEN_ISRAEL: ${{ secrets.YOUTUBE_OAUTH_REFRESH_TOKEN_ISRAEL }}
         run: |
           set -o pipefail
           python auto_upload/youtube_token_health.py | tee /tmp/token-health.txt
