@@ -100,16 +100,25 @@ def verify_channel(creds, spec, label):
     items = service.channels().list(part="id,snippet", mine=True).execute().get("items", [])
     if not items:
         sys.exit("No YouTube channel found for the authorized Google account.")
-    channel = items[0]
-    channel_id = channel.get("id", "")
-    title = channel.get("snippet", {}).get("title", "")
-    if channel_id != spec["expected_id"]:
-        sys.exit(
-            f"Wrong channel authorized: {title} ({channel_id}). "
-            f"Expected {spec['expected_id']} for {label}. "
-            "Sign in with the Google account that owns this channel."
-        )
-    print(f"Verified channel: {title} ({channel_id})")
+    # A single Google account can own several brand channels. The consent flow
+    # binds the token to the channel selected in Google's picker, so match the
+    # expected id across every channel the token can see instead of assuming
+    # the first one.
+    for channel in items:
+        if channel.get("id", "") == spec["expected_id"]:
+            title = channel.get("snippet", {}).get("title", "")
+            print(f"Verified channel: {title} ({spec['expected_id']})")
+            return
+    available = ", ".join(
+        f"{c.get('snippet', {}).get('title', '?')} ({c.get('id', '?')})"
+        for c in items
+    )
+    sys.exit(
+        f"Token is bound to the wrong channel. Expected {spec['expected_id']} "
+        f"for {label}, but the authorized account only exposes: {available}. "
+        "Re-run mode=url and pick the correct channel in Google's channel "
+        "picker (not just the account picker)."
+    )
 
 
 def main():
