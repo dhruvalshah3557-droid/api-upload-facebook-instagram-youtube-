@@ -1309,6 +1309,75 @@ class FullRepairTests(unittest.TestCase):
             set(),
         )
 
+    def test_recent_invalid_grant_quarantines_dead_token(self):
+        optimized_runner._YOUTUBE_TOKEN_PROBE_CACHE.clear()
+        now = datetime(2026, 11, 27, 5, 0, tzinfo=timezone.utc)
+        jobs = [{
+            "account_id": "YT-JIYA",
+            "platform": "youtube",
+            "error_message": "invalid_grant: Bad Request",
+            "last_attempt_at": "2026-11-27T04:30:00Z",
+        }]
+        accounts = {
+            "YT-JIYA": {
+                "enabled": True,
+                "platform": "youtube",
+                "credential_property_key": "YOUTUBE_OAUTH_REFRESH_TOKEN_JIYA",
+            },
+        }
+        with patch.dict("os.environ", {"YOUTUBE_OAUTH_REFRESH_TOKEN_JIYA": "dead-token"}, clear=False), \
+             patch("youtube_token_health.check_token", return_value=(False, "invalid_grant")):
+            self.assertEqual(
+                optimized_runner._youtube_auth_dead_accounts(jobs, now=now, accounts=accounts),
+                {"YT-JIYA"},
+            )
+
+    def test_recent_invalid_grant_clears_once_token_is_reauthorized(self):
+        optimized_runner._YOUTUBE_TOKEN_PROBE_CACHE.clear()
+        now = datetime(2026, 11, 27, 5, 0, tzinfo=timezone.utc)
+        jobs = [{
+            "account_id": "YT-CD",
+            "platform": "youtube",
+            "error_message": "invalid_grant: Bad Request",
+            "last_attempt_at": "2026-11-27T04:30:00Z",
+        }]
+        accounts = {
+            "YT-CD": {
+                "enabled": True,
+                "platform": "youtube",
+                "credential_property_key": "YOUTUBE_OAUTH_REFRESH_TOKEN_COLOURDIAMONDSS",
+            },
+        }
+        with patch.dict("os.environ", {"YOUTUBE_OAUTH_REFRESH_TOKEN_COLOURDIAMONDSS": "live-token"}, clear=False), \
+             patch("youtube_token_health.check_token", return_value=(True, "ok")):
+            self.assertEqual(
+                optimized_runner._youtube_auth_dead_accounts(jobs, now=now, accounts=accounts),
+                set(),
+            )
+
+    def test_youtube_token_probe_fails_open_on_error(self):
+        optimized_runner._YOUTUBE_TOKEN_PROBE_CACHE.clear()
+        now = datetime(2026, 11, 27, 5, 0, tzinfo=timezone.utc)
+        jobs = [{
+            "account_id": "YT-CD",
+            "platform": "youtube",
+            "error_message": "invalid_grant: Bad Request",
+            "last_attempt_at": "2026-11-27T04:30:00Z",
+        }]
+        accounts = {
+            "YT-CD": {
+                "enabled": True,
+                "platform": "youtube",
+                "credential_property_key": "YOUTUBE_OAUTH_REFRESH_TOKEN_COLOURDIAMONDSS",
+            },
+        }
+        with patch.dict("os.environ", {"YOUTUBE_OAUTH_REFRESH_TOKEN_COLOURDIAMONDSS": "live-token"}, clear=False), \
+             patch("youtube_token_health.check_token", side_effect=RuntimeError("network down")):
+            self.assertEqual(
+                optimized_runner._youtube_auth_dead_accounts(jobs, now=now, accounts=accounts),
+                set(),
+            )
+
     def test_missing_youtube_token_skips_channel_without_burning_slot(self):
         now = datetime(2026, 10, 28, 13, 30, tzinfo=timezone.utc)
         jobs = [

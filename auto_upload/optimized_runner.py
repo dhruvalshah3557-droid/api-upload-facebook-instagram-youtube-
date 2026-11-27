@@ -220,18 +220,47 @@ def _youtube_missing_token_error(job):
     return _YOUTUBE_MISSING_TOKEN_MARKER in blob
 
 
+_YOUTUBE_TOKEN_PROBE_CACHE = {}
+
+
+def _youtube_token_alive(account):
+    """Probe a YouTube refresh token once per run; True when it still refreshes.
+
+    A recently recorded invalid_grant only quarantines the channel while the
+    token is genuinely dead. Once the operator re-authorizes the channel the
+    stale failure rows must stop blocking it immediately, so probe the live
+    token instead of trusting the 12-hour quarantine window. Probe failures
+    never quarantine (fail open) to avoid masking a working token.
+    """
+    key = str((account or {}).get("credential_property_key", "") or "").strip()
+    if not key:
+        return True
+    if key in _YOUTUBE_TOKEN_PROBE_CACHE:
+        return _YOUTUBE_TOKEN_PROBE_CACHE[key]
+    try:
+        from youtube_token_health import check_token
+        ok, _detail = check_token(key)
+    except Exception:
+        ok = True
+    _YOUTUBE_TOKEN_PROBE_CACHE[key] = ok
+    return ok
+
+
 def _youtube_auth_dead_accounts(jobs, now=None, accounts=None):
     """YouTube accounts that cannot consume a production slot this run.
 
     Skip a channel when its per-account refresh token is missing from the
     environment so it cannot burn the YouTube slot. Recent invalid_grant /
-    invalid_client still quarantine for 12 hours. A missing-token error is
-    not treated as dead OAuth once the env mapping is present.
+    invalid_client still quarantine for 12 hours *unless* the live token
+    refreshes successfully, so a freshly re-authorized channel recovers on the
+    next run instead of waiting out the window. A missing-token error is not
+    treated as dead OAuth once the env mapping is present.
     """
     now = now or datetime.now(timezone.utc)
     cutoff = now - timedelta(hours=YOUTUBE_AUTH_DEAD_HOURS)
+    accounts = accounts or {}
     dead = set()
-    for account_id, account in (accounts or {}).items():
+    for account_id, account in accounts.items():
         if str((account or {}).get("platform", "") or "").strip().lower() != "youtube":
             continue
         if account.get("enabled") and not _youtube_token_configured(account):
@@ -247,8 +276,11 @@ def _youtube_auth_dead_accounts(jobs, now=None, accounts=None):
         if attempted is None or attempted < cutoff or attempted > now:
             continue
         account_id = str(job.get("account_id", "") or "").strip()
-        if account_id:
-            dead.add(account_id)
+        if not account_id:
+            continue
+        if account_id in accounts and _youtube_token_alive(accounts.get(account_id)):
+            continue
+        dead.add(account_id)
     return dead
 
 
